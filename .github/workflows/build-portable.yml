@@ -1,0 +1,78 @@
+name: Build portable
+
+# Wersja portable: jeden plik (Windows .exe / Linux / macOS) bez instalacji. Dane (Finviz + yfinance) program pobiera sam
+# przyciskiem "Sync" do folderu data/ obok pliku. Gotowe pliki: Actions -> uruchomienie -> Artifacts (albo Releases po tagu v*).
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            name: Windows
+            ext: .exe
+            sep: ";"
+          - os: ubuntu-latest
+            name: Linux
+            ext: ""
+            sep: ":"
+          - os: macos-latest
+            name: macOS
+            ext: ""
+            sep: ":"
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Tk na Linuksie
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y python3-tk xvfb
+      - run: pip install -r requirements.txt -r requirements-dev.txt
+      - name: Testy
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = "Linux" ]; then xvfb-run -a python -m pytest -q; else python -m pytest -q; fi
+      - name: PyInstaller (portable, jeden plik)
+        shell: bash
+        run: |
+          pyinstaller --noconfirm --onefile --windowed --name MomentumDesktop \
+            --paths engine \
+            --add-data "engine${{ matrix.sep }}engine" \
+            --add-data "seed_data${{ matrix.sep }}seed_data" \
+            --hidden-import watchlist --hidden-import finviz \
+            --collect-submodules yfinance --collect-data yfinance \
+            --collect-data certifi --copy-metadata yfinance \
+            main.py
+      - name: Selftest zbudowanego pliku (silnik Finviz / yfinance się ładuje)
+        if: runner.os != 'macOS'
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = "Linux" ]; then xvfb-run -a "dist/MomentumDesktop${{ matrix.ext }}" --selftest; else "dist/MomentumDesktop${{ matrix.ext }}" --selftest; fi
+      - name: Pakiet portable (plik + folder data/)
+        shell: bash
+        run: |
+          mkdir -p pkg/MomentumDesktop-${{ matrix.name }}/data
+          cp "dist/MomentumDesktop${{ matrix.ext }}" pkg/MomentumDesktop-${{ matrix.name }}/ || cp -r dist/MomentumDesktop.app pkg/MomentumDesktop-${{ matrix.name }}/
+          cp README.md pkg/MomentumDesktop-${{ matrix.name }}/
+          cd pkg && python -c "import shutil; shutil.make_archive('MomentumDesktop-${{ matrix.name }}-portable', 'zip', '.', 'MomentumDesktop-${{ matrix.name }}')"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MomentumDesktop-${{ matrix.name }}-portable
+          path: pkg/MomentumDesktop-${{ matrix.name }}-portable.zip
+      - name: Release (tag v*)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: pkg/MomentumDesktop-${{ matrix.name }}-portable.zip

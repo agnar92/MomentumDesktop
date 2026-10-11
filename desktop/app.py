@@ -168,6 +168,16 @@ class ChartWindow(tk.Toplevel):
         self.status_lbl.pack(fill="x", padx=8)
         for text, val in (("Słupkowy", "bars"), ("Dar-Card", "darcard")):
             tk.Radiobutton(head, text=text, value=val, variable=self.mode, command=self.redraw, bg=PANEL, indicatoron=False, padx=8).pack(side="right", padx=1, pady=3)
+        self.slider = tk.Canvas(self, height=46, bg=BG, highlightthickness=0, cursor="sb_h_double_arrow")
+        self.slider.pack(fill="x", padx=2, pady=(2, 0))
+        self.drag = None
+        self.slider.bind("<Button-1>", self.slider_press)
+        self.slider.bind("<B1-Motion>", self.slider_move)
+        self.slider.bind("<ButtonRelease-1>", lambda e: setattr(self, "drag", None))
+        self.slider.bind("<Configure>", lambda e: self.after_idle(self.draw_slider))
+        self.slider.bind("<MouseWheel>", self.on_wheel)
+        self.slider.bind("<Button-4>", lambda e: self.zoom(0.85))
+        self.slider.bind("<Button-5>", lambda e: self.zoom(1.18))
         self.body = tk.Frame(self, bg=BG)
         self.body.pack(fill="both", expand=True)
         self.cv_card = tk.Canvas(self.body, bg=BG, highlightthickness=0)
@@ -241,6 +251,7 @@ class ChartWindow(tk.Toplevel):
         full = self.full
         if not full:
             return
+        self.draw_slider()
         n = len(full["c"])
         win = charts.window(n, self.n_show, self.end)
         st = self.app.store
@@ -309,7 +320,7 @@ class ChartWindow(tk.Toplevel):
             b.pack_forget()
         box = self.focus_box or self.selected_box()
         if not box:
-            self.info_lbl.config(text="Kliknij box na Dar-Card, aby zobaczyć poziomy. Spacja — przełącz widok, ↑/↓ — następna spółka, ←/→ — przewijanie, kółko / +/- — zoom.")
+            self.info_lbl.config(text="Klik w box = poziomy · spacja = przełącz widok · suwak u góry = okno czasu · ↑/↓ = następna spółka · kółko = zoom")
             return
         info = darvas.box_info(box["top"], box["bottom"])
         pinned = self.app.store.pinned.get(self.ticker)
@@ -349,6 +360,39 @@ class ChartWindow(tk.Toplevel):
         row = self.app.store.row(self.ticker) or {}
         self.status_lbl.config(text=f"📦 {row.get('darvas_text', '')}")
         self.update_bar()
+        self.redraw()
+
+    # --- suwak okna czasu
+    def _state(self):
+        n = len(self.full["c"]) if self.full else 0
+        return n, min(self.n_show, n), (n if self.end is None else self.end)
+
+    def draw_slider(self):
+        if self.full:
+            n, n_show, end = self._state()
+            charts.draw_slider(self.slider, self.full["c"], n_show, end)
+
+    def slider_press(self, e):
+        if not self.full:
+            return
+        n, n_show, end = self._state()
+        W = self.slider.winfo_width()
+        x0, x1 = charts.slider_rect(n, n_show, end, W)
+        mode = charts.slider_mode(e.x, x0, x1)
+        if mode == "jump":
+            self.n_show, self.end = charts.slider_jump(e.x, n, n_show, W)
+            self.end = None if self.end >= n else self.end
+            self.redraw()
+            return
+        self.drag = (mode, e.x, (n_show, end))
+
+    def slider_move(self, e):
+        if not self.drag or not self.full:
+            return
+        mode, x_start, start = self.drag
+        n = len(self.full["c"])
+        self.n_show, end = charts.slider_drag(mode, start, e.x - x_start, n, self.slider.winfo_width())
+        self.end = None if end >= n else end
         self.redraw()
 
     # --- okno czasowe

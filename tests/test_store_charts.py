@@ -68,3 +68,17 @@ def test_hit_boxes_smallest_first():
     assert charts.hit_boxes(geom, 15, 15) == [1, 0]
     assert charts.hit_boxes(geom, 50, 50) == [0]
     assert charts.hit_boxes(geom, 500, 500) == []
+
+
+def test_slider_geometry_and_drag():
+    x0, x1 = charts.slider_rect(300, 100, None, 608)   # tor 600 px na 300 tygodni = 2 px / tydzień
+    assert (x0, x1) == (4 + 400, 604)
+    assert charts.slider_mode(x0 + 1, x0, x1) == "left" and charts.slider_mode(x1 - 2, x0, x1) == "right"
+    assert charts.slider_mode((x0 + x1) / 2, x0, x1) == "move" and charts.slider_mode(50, x0, x1) == "jump"
+    assert charts.slider_drag("move", (100, 300), -100, 300, 608) == (100, 250)   # -100 px = -50 tyg.
+    assert charts.slider_drag("move", (100, 300), 5000, 300, 608) == (100, 300)    # nie wychodzi poza dane
+    assert charts.slider_drag("move", (100, 300), -5000, 300, 608) == (100, 100)
+    assert charts.slider_drag("left", (100, 300), -100, 300, 608) == (150, 300)    # dłuższe okno
+    assert charts.slider_drag("left", (100, 300), 5000, 300, 608) == (charts.MIN_WEEKS, 300)
+    assert charts.slider_drag("right", (100, 200), 100, 300, 608) == (150, 250)
+    assert charts.slider_jump(304, 300, 100, 608) == (100, 200)

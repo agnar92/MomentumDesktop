@@ -2,6 +2,8 @@
 
 import pytest
 
+from desktop import charts
+
 tk = pytest.importorskip("tkinter")
 
 
@@ -37,6 +39,13 @@ def test_windows_open_and_select_box(app):
     assert ch.mode.get() == "darcard"
     ch.toggle_mode()
     assert ch.mode.get() == "bars"
+    ch.update()
+    n = len(app.store.weeks)
+    W = ch.slider.winfo_width()
+    x0, x1 = charts.slider_rect(n, ch.n_show, ch.end, W)
+    ch.slider_press(type("E", (), {"x": (x0 + x1) / 2})())
+    ch.slider_move(type("E", (), {"x": (x0 + x1) / 2 - 80})())
+    assert ch.end is not None and ch.end < n
     app.open_scanner()
     app.scanner.vars["rs_min"].set("90")
     app.scanner.run()

@@ -323,3 +323,77 @@ def week_at(geom, x):
         return None
     i = geom["i0"] + int((x - LEFT) // geom["step"])
     return i if geom["i0"] <= i < geom["i1"] else None
+
+
+# ---------- suwak okna czasu (minimapa) ----------
+
+MIN_WEEKS = 12
+
+
+def slider_rect(total, n_show, end, width, pad=4):
+    """Prostokąt ramki okna na torze suwaka (x0, x1) w pikselach."""
+    w = max(1, width - 2 * pad)
+    n_show = max(MIN_WEEKS, min(n_show, total))
+    end = total if end is None else max(n_show, min(end, total))
+    return pad + (end - n_show) / total * w, pad + end / total * w
+
+
+def slider_drag(mode, start, dx, total, width, pad=4):
+    """Nowe (n_show, end) po przeciągnięciu o dx px; start = (n_show, end) z chwili chwycenia.
+    mode: move (przesuwa ramkę) / left (zmienia początek) / right (zmienia koniec)."""
+    per = total / max(1, width - 2 * pad)   # tygodni na piksel
+    n0, e0 = start
+    d = round(dx * per)
+    i0, i1 = e0 - n0, e0
+    if mode == "move":
+        i0, i1 = i0 + d, i1 + d
+        if i0 < 0:
+            i0, i1 = 0, n0
+        if i1 > total:
+            i0, i1 = total - n0, total
+    elif mode == "left":
+        i0 = max(0, min(i0 + d, i1 - MIN_WEEKS))
+    else:
+        i1 = min(total, max(i1 + d, i0 + MIN_WEEKS))
+    return i1 - i0, i1
+
+
+def slider_mode(x, x0, x1, edge=7):
+    """Co chwycono: left / right (krawędzie), move (środek ramki) albo jump (tor poza ramką)."""
+    if abs(x - x0) <= edge:
+        return "left"
+    if abs(x - x1) <= edge:
+        return "right"
+    return "move" if x0 < x < x1 else "jump"
+
+
+def slider_jump(x, total, n_show, width, pad=4):
+    """Klik na torze poza ramką: ramka wyśrodkowana na klikniętym tygodniu -> (n_show, end)."""
+    centre = (x - pad) / max(1, width - 2 * pad) * total
+    end = int(round(centre + n_show / 2))
+    end = max(n_show, min(total, end))
+    return n_show, end
+
+
+def draw_slider(cv, closes, n_show, end):
+    """Minimapa cen zamknięcia całej historii + ramka bieżącego okna."""
+    cv.delete("all")
+    W, H = cv.winfo_width(), cv.winfo_height()
+    cv.configure(bg=BG)
+    vals = _finite(closes)
+    if W < 40 or not vals:
+        return
+    total = len(closes)
+    lo, hi = min(vals), max(vals)
+    y = _scale(lo, hi, 6, H - 6)
+    pts = [(4 + (i + 0.5) / total * (W - 8), y(v)) for i, v in enumerate(closes) if v is not None]
+    if len(pts) > 1:
+        cv.create_line(*[c for p in pts for c in p], fill=DIM)
+    x0, x1 = slider_rect(total, n_show, end, W)
+    cv.create_rectangle(0, 0, x0, H, fill=BG, stipple="gray50", outline="")   # przyciemnienie poza oknem
+    cv.create_rectangle(x1, 0, W, H, fill=BG, stipple="gray50", outline="")
+    cv.create_rectangle(x0, 1, x1, H - 1, outline=LINE, width=2)
+    for x in (x0, x1):   # uchwyty krawędzi
+        cv.create_rectangle(x - 3, H / 2 - 9, x + 3, H / 2 + 9, fill=LINE, outline="")
+    cv.create_text(x1 - 6 if x1 - x0 > 90 else x1 + 6, 4, text=f"{n_show} tyg.", fill=TEXT, font=FONT,
+                   anchor="ne" if x1 - x0 > 90 else "nw")

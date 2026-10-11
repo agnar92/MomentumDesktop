@@ -8,13 +8,13 @@ from . import charts, darvas, store, sync
 
 BG, FG, PANEL, SEL = "#0b0d10", "#c9d1d9", "#12161b", "#1f3a5f"
 STATE_COLORS = {"BUY": "#3ddc84", "SELL": "#ff5c5c", "OUT": "#ff9f43", "NOVOL": "#ffd166", "LATE": "#ffd166", "HOLD": FG, "WAIT": "#6ea8ff"}
-MONO = ("Consolas", 10)
+MONO = ("Consolas", 11)
 
 COLUMNS = [  # id, nagłówek, szerokość, wyrównanie
-    ("ticker", "Symbol", 64, "w"), ("company", "Spółka", 170, "w"), ("price", "Cena", 70, "e"), ("rs_rating", "RS", 38, "e"),
-    ("eps_rating", "EPS", 38, "e"), ("composite_rating", "Comp", 44, "e"), ("pct_from_high_52w", "% od szczytu", 104, "e"),
-    ("base", "Baza", 124, "w"), ("pct_to_pivot", "Do pivotu %", 84, "e"), ("darvas", "Darvas", 100, "w"), ("pbox", "Box 📌", 90, "w"),
-    ("sector", "Sektor", 150, "w"),
+    ("ticker", "Symbol", 78, "w"), ("company", "Spółka", 230, "w"), ("price", "Cena", 86, "e"), ("rs_rating", "RS", 50, "e"),
+    ("eps_rating", "EPS", 54, "e"), ("composite_rating", "Comp", 60, "e"), ("pct_from_high_52w", "% od szczytu", 124, "e"),
+    ("base", "Baza", 150, "w"), ("pct_to_pivot", "Do pivotu %", 108, "e"), ("darvas", "Darvas", 124, "w"), ("pbox", "Box 📌", 100, "w"),
+    ("sector", "Sektor", 170, "w"),
 ]
 SECTIONS = [("pinned", "📌 Monitorowane (przypięte)"), ("fresh", "🆕 Nowe boxy"), ("buy", "🟢 KUP — wybicie na wolumenie"),
             ("check", "🟡 Do sprawdzenia (bez wolumenu / za późno)"), ("hold", "Trzymaj"), ("sell", "🔴 Sprzedaj / poza"), ("wait", "Czekaj na wybicie")]
@@ -30,7 +30,9 @@ def cell(r, col):
         return {"NONE": "", "ABOVE": "wybity", "INSIDE": "w boxie", "ZONE": "STREFA!", "EXIT": "EXIT!"}.get(v, "")
     if isinstance(v, float):
         return f"{v:.2f}" if col == "price" else f"{v:.1f}"
-    return "" if v is None else str(v)
+    if v is None:
+        return "–" if col in ("price", "rs_rating", "eps_rating", "composite_rating", "pct_from_high_52w", "pct_to_pivot") else ""
+    return str(v)
 
 
 def sort_key(r, col):
@@ -46,8 +48,8 @@ def setup_style(root):
     root.configure(bg=BG)
     s = ttk.Style(root)
     s.theme_use("clam")
-    s.configure("Treeview", background=BG, fieldbackground=BG, foreground=FG, rowheight=21, borderwidth=0, font=MONO)
-    s.configure("Treeview.Heading", background="#1b2027", foreground=FG, relief="flat", font=("Consolas", 9, "bold"))
+    s.configure("Treeview", background=BG, fieldbackground=BG, foreground=FG, rowheight=28, borderwidth=0, font=MONO)
+    s.configure("Treeview.Heading", background="#1b2027", foreground=FG, relief="flat", font=("Consolas", 10, "bold"), padding=(4, 5))
     s.map("Treeview", background=[("selected", SEL)], foreground=[("selected", "#ffffff")])
     s.map("Treeview.Heading", background=[("active", "#27303a")])
     s.configure("TCombobox", fieldbackground=PANEL, background=PANEL, foreground=FG)
@@ -84,6 +86,7 @@ class StockTable(ttk.Frame):
         sb.pack(side="right", fill="y")
         for st, col in STATE_COLORS.items():
             self.tree.tag_configure(st, foreground=col)
+        self.tree.tag_configure("odd", background="#10141a")   # naprzemienne tło wierszy
         self.tree.bind("<Double-1>", lambda e: self._open())
         self.tree.bind("<Return>", lambda e: self._open())
         self.tree.bind("<<TreeviewSelect>>", lambda e: self._selected())
@@ -105,8 +108,9 @@ class StockTable(ttk.Frame):
             rows = sorted(rows, key=lambda r: sort_key(r, self.sort_col), reverse=self.sort_rev)
             rows = [r for r in rows if r.get(self.sort_col) is not None] + [r for r in rows if r.get(self.sort_col) is None] if self.sort_col not in ("base", "pbox") else rows
         self.tree.delete(*self.tree.get_children())
-        for r in rows:
-            self.tree.insert("", "end", iid=r["ticker"], values=[cell(r, c[0]) for c in COLUMNS], tags=(r.get("darvas", ""),))
+        for n, r in enumerate(rows):
+            self.tree.insert("", "end", iid=r["ticker"], values=[cell(r, c[0]) for c in COLUMNS],
+                             tags=(r.get("darvas", ""), "odd" if n % 2 else "even"))
         if keep and self.tree.exists(keep):
             self.tree.selection_set(keep)
 
@@ -152,7 +156,7 @@ class ChartWindow(tk.Toplevel):
         self.title("Wykres")
         self.geometry("1180x720")
         self.configure(bg=BG)
-        self.mode = tk.StringVar(value="both")
+        self.mode = tk.StringVar(value="darcard")
         self.n_show, self.end = 104, None
         self.focus_box, self.selected, self.cands, self.hit_geom = None, None, [], None
         self.geoms = {}
@@ -162,7 +166,7 @@ class ChartWindow(tk.Toplevel):
         self.title_lbl.pack(side="left", padx=8, pady=4)
         self.status_lbl = tk.Label(self, text="", bg=PANEL, anchor="w")
         self.status_lbl.pack(fill="x", padx=8)
-        for text, val in (("Oba", "both"), ("Dar-Card", "darcard"), ("Słupkowy", "bars")):
+        for text, val in (("Słupkowy", "bars"), ("Dar-Card", "darcard")):
             tk.Radiobutton(head, text=text, value=val, variable=self.mode, command=self.redraw, bg=PANEL, indicatoron=False, padx=8).pack(side="right", padx=1, pady=3)
         self.body = tk.Frame(self, bg=BG)
         self.body.pack(fill="both", expand=True)
@@ -188,7 +192,7 @@ class ChartWindow(tk.Toplevel):
             cv.bind("<Leave>", lambda e: self.cv_bars.delete("cross") or self.cv_card.delete("cross"))
         for key, fn in (("<Up>", lambda e: app.step_chart(-1)), ("<Down>", lambda e: app.step_chart(1)),
                         ("<Left>", lambda e: self.scroll(-4)), ("<Right>", lambda e: self.scroll(4)),
-                        ("<plus>", lambda e: self.zoom(0.85)), ("<minus>", lambda e: self.zoom(1.18)),
+                        ("<space>", lambda e: self.toggle_mode()), ("<plus>", lambda e: self.zoom(0.85)), ("<minus>", lambda e: self.zoom(1.18)),
                         ("<Escape>", lambda e: self.deselect() if self.selected is not None else self.focus_box and self.clear_focus() or self.destroy())):
             self.bind(key, fn)
         self.set_ticker(ticker)
@@ -216,11 +220,12 @@ class ChartWindow(tk.Toplevel):
         n = len(self.app.store.weeks)
         i0, i1 = charts.box_focus_window(n, box)
         self.n_show, self.end = i1 - i0, i1
-        self.mode.set("both")
+        self.mode.set("bars")   # po „Przybliż” pokazujemy wykres słupkowy zawężony do boxa
         self.update_bar()
 
     def clear_focus(self):
         self.focus_box, self.n_show, self.end = None, 104, None
+        self.mode.set("darcard")
         self.update_bar()
         self.redraw()
 
@@ -229,10 +234,7 @@ class ChartWindow(tk.Toplevel):
         mode = self.mode.get()
         self.cv_card.pack_forget()
         self.cv_bars.pack_forget()
-        if mode in ("both", "darcard"):
-            self.cv_card.pack(side="left", fill="both", expand=True, padx=(0, 1 if mode == "both" else 0))
-        if mode in ("both", "bars"):
-            self.cv_bars.pack(side="left", fill="both", expand=True)
+        (self.cv_card if mode == "darcard" else self.cv_bars).pack(fill="both", expand=True)
 
     def redraw(self):
         self.layout()
@@ -243,11 +245,11 @@ class ChartWindow(tk.Toplevel):
         win = charts.window(n, self.n_show, self.end)
         st = self.app.store
         pinned = st.pinned.get(self.ticker)
-        if self.mode.get() in ("both", "darcard"):
+        if self.mode.get() == "darcard":
             self.update_idletasks()
             self.geoms["card"] = charts.draw_darcard(self.cv_card, full, st.weeks, win, {"pinned": pinned, "selected": self.selected})
             self.hit_geom = self.geoms["card"]
-        if self.mode.get() in ("both", "bars"):
+        if self.mode.get() == "bars":
             opts = {"macd": True, "spx": True}
             fb = self.focus_box or (self.selected_box())
             if fb:
@@ -307,7 +309,7 @@ class ChartWindow(tk.Toplevel):
             b.pack_forget()
         box = self.focus_box or self.selected_box()
         if not box:
-            self.info_lbl.config(text="Kliknij box na Dar-Card, aby zobaczyć poziomy. ↑/↓ — następna spółka, ←/→ — przewijanie, kółko / +/- — zoom.")
+            self.info_lbl.config(text="Kliknij box na Dar-Card, aby zobaczyć poziomy. Spacja — przełącz widok, ↑/↓ — następna spółka, ←/→ — przewijanie, kółko / +/- — zoom.")
             return
         info = darvas.box_info(box["top"], box["bottom"])
         pinned = self.app.store.pinned.get(self.ticker)
@@ -322,6 +324,10 @@ class ChartWindow(tk.Toplevel):
             self.btn_full.pack(side="right", padx=2)
         else:
             self.btn_zoom.pack(side="right", padx=2)
+
+    def toggle_mode(self):
+        self.mode.set("bars" if self.mode.get() == "darcard" else "darcard")
+        self.redraw()
 
     def zoom_selected(self):
         box = self.selected_box()
@@ -565,7 +571,7 @@ class App:
     def __init__(self, data_base=None):
         self.root = tk.Tk()
         self.root.title("Momentum Desktop")
-        self.root.geometry("1100x640")
+        self.root.geometry("1280x720")
         setup_style(self.root)
         self.store = store.Store(data_base)
         self.chart = None

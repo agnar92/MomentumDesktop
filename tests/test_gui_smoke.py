@@ -28,10 +28,15 @@ def test_windows_open_and_select_box(app):
     assert g["hits"]
     x0, y0, x1, y1 = g["hits"][-1]["rect"]
     ev = type("E", (), {"x": (x0 + x1) / 2, "y": (y0 + y1) / 2})()
+    assert ch.mode.get() == "darcard"
     ch.on_click(ev)
     assert ch.selected is not None and ch.selected_box()
     ch.zoom_selected()
-    assert ch.focus_box
+    assert ch.focus_box and ch.mode.get() == "bars"
+    ch.clear_focus()
+    assert ch.mode.get() == "darcard"
+    ch.toggle_mode()
+    assert ch.mode.get() == "bars"
     app.open_scanner()
     app.scanner.vars["rs_min"].set("90")
     app.scanner.run()

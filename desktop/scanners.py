@@ -1,8 +1,11 @@
 """Własne skanery Finviz: każdy skaner = osobny katalog danych (data/scanners/<id>/) z własnym finviz_screen.json, watchlist.json,
 wykresami itd. Skaner „default” to dotychczasowy (dane w głównym katalogu data/). Lista skanerów: data/scanners.json
 ([{id, name, columns, extra}]); filtry i limit spółek leżą w finviz_screen.json skanera (tak czyta je silnik)."""
+import contextlib
+import os
 import re
 import shutil
+import time
 from pathlib import Path
 
 from . import store
@@ -94,11 +97,43 @@ def _stamp(entry):
     return str((entry or {}).get("fetched") or (entry or {}).get("f") or (entry or {}).get("updated") or "")
 
 
+@contextlib.contextmanager
+def cache_lock(directory, timeout=30.0):
+    """Prosta blokada plikowa na czas scalania wspólnego cache (równoległe synchronizacje); przeterminowaną (martwy proces) zrywamy."""
+    path = Path(directory) / ".cache.lock"
+    start = time.time()
+    while True:
+        try:
+            fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            os.close(fd)
+            break
+        except FileExistsError:
+            try:
+                if time.time() - path.stat().st_mtime > timeout:
+                    path.unlink()
+                    continue
+            except OSError:
+                pass
+            if time.time() - start > timeout:
+                break   # nie blokujemy synchronizacji w nieskończoność
+            time.sleep(0.05)
+    try:
+        yield
+    finally:
+        with contextlib.suppress(OSError):
+            path.unlink()
+
+
 def merge_cache(src, dst):
     """Dopisuje do dst wpisy z src, których dst nie ma albo ma starsze (eps_cache.json: {T: wpis}, estimates.json: {stocks: {T: wpis}})."""
     src, dst = Path(src), Path(dst)
     if src.resolve() == dst.resolve():
         return
+    with cache_lock(dst if dst.exists() else src):
+        _merge_cache(src, dst)
+
+
+def _merge_cache(src, dst):
     for name, nested in (("eps_cache.json", False), ("estimates.json", True)):
         a, b = store.read_json(src / name, None), store.read_json(dst / name, None)
         if not a:

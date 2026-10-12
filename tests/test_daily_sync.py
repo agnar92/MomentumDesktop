@@ -97,3 +97,39 @@ def test_fundamentals_mode_fetches_and_updates_state(tmp_path, monkeypatch):
     assert st["fundamentals"] == st["prices"]
     assert sync.age_days(st["fundamentals"]) < 0.01
     assert sync.age_days(None) is None
+
+
+def test_worker_command_and_args_roundtrip(tmp_path):
+    cmd = sync.worker_command(tmp_path / "d", sync.PRICES, True, ["fv_beta", "fv_rsi"], tmp_path)
+    assert cmd[-9:-7] == ["--sync", str(tmp_path / "d")] or "--sync" in cmd
+    i = cmd.index("--sync")
+    ns = sync.parse_worker_args(cmd[i + 1:])
+    assert ns.data_dir == str(tmp_path / "d") and ns.mode == sync.PRICES and ns.skip_finviz and ns.extra == ["fv_beta", "fv_rsi"] and ns.shared == str(tmp_path)
+    ns = sync.parse_worker_args([str(tmp_path)])
+    assert ns.mode == sync.PRICES and ns.extra == [] and ns.shared is None and not ns.skip_finviz
+
+
+def test_run_in_subprocess_streams_log_and_exit_code(tmp_path, monkeypatch):
+    monkeypatch.setattr(sync, "worker_command", lambda *a, **k: [sys.executable, "-c", "print('pierwsza ✅'); print(); print('druga'); raise SystemExit(3)"])
+    lines = []
+    assert sync.run_in_subprocess(tmp_path, lines.append, mode=sync.PRICES) == 3
+    assert lines == ["pierwsza ✅", "druga"]
+    monkeypatch.setattr(sync, "worker_command", lambda *a, **k: ["/nie/ma/takiego/programu"])
+    assert sync.run_in_subprocess(tmp_path, lines.append) == 1 and "Nie można uruchomić" in lines[-1]
+
+
+def test_two_parallel_cache_merges_do_not_lose_entries(tmp_path):
+    import threading
+    from desktop import scanners
+    root = tmp_path / "root"
+    root.mkdir()
+    dirs = []
+    for n in range(4):
+        d = tmp_path / f"s{n}"
+        d.mkdir()
+        store.write_json(d / "eps_cache.json", {f"T{n}": {"fetched": "2026-10-11"}})
+        dirs.append(d)
+    ts = [threading.Thread(target=scanners.merge_cache, args=(d, root)) for d in dirs]
+    [t.start() for t in ts]
+    [t.join() for t in ts]
+    assert set(store.read_json(root / "eps_cache.json")) == {"T0", "T1", "T2", "T3"} and not (root / ".cache.lock").exists()

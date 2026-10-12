@@ -15,7 +15,10 @@ def app(tmp_path):
     except tk.TclError:
         pytest.skip("brak ekranu")
     yield a
-    a.root.destroy()
+    try:
+        a.root.destroy()
+    except tk.TclError:
+        pass
 
 
 def test_windows_open_and_select_box(app):
@@ -112,6 +115,15 @@ def test_scanner_builder_columns_and_windows(app, monkeypatch):
     assert sc["id"] not in [s["id"] for s in scanners.load(app.data_root)] and not w.winfo_exists()
 
 
+def _wait(app, cond, seconds=4):
+    import time
+    end = time.time() + seconds
+    while time.time() < end and not cond():
+        app.root.update()
+        time.sleep(0.03)
+    return cond()
+
+
 def test_first_sync_of_new_scanner_fetches_fundamentals(app, monkeypatch):
     from desktop import scanners, sync
     monkeypatch.setattr("tkinter.messagebox.showinfo", lambda *a, **k: None)
@@ -119,12 +131,68 @@ def test_first_sync_of_new_scanner_fetches_fundamentals(app, monkeypatch):
     app.open_scanner_window(sc["id"])
     view = app.view_for(sc["id"])
     seen = {}
-    monkeypatch.setattr(sync, "run_sync", lambda *a, **k: seen.update(mode=k["mode"], extra=k["extra_keys"], shared=k["shared_root"]) or 0)
+    monkeypatch.setattr(sync, "run_in_subprocess", lambda data_dir, log, **k: seen.update(k) or 0)
     app.start_sync(view, sync.PRICES)
-    for _ in range(40):
-        app.root.update()
-        if not app.syncing:
-            break
-        import time
-        time.sleep(0.05)
-    assert seen["mode"] == sync.FUNDAMENTALS and seen["shared"] == app.data_root
+    assert _wait(app, lambda: not app.syncing)
+    assert seen["mode"] == sync.FUNDAMENTALS and seen["shared_root"] == app.data_root
+
+
+def test_two_scanners_sync_in_parallel(app, monkeypatch):
+    import threading
+    from desktop import scanners, sync
+    monkeypatch.setattr("tkinter.messagebox.showinfo", lambda *a, **k: None)
+    a = scanners.upsert(app.data_root, {"name": "A"}, "geo_usa", 20)
+    b = scanners.upsert(app.data_root, {"name": "B"}, "geo_usa", 20)
+    app.open_scanner_window(a["id"])
+    app.open_scanner_window(b["id"])
+    va, vb = app.view_for(a["id"]), app.view_for(b["id"])
+    release, started = threading.Event(), []
+
+    def fake(data_dir, log, **k):
+        started.append(data_dir.name)
+        log("linia dziennika")
+        assert release.wait(5)
+        return 0
+
+    monkeypatch.setattr(sync, "run_in_subprocess", fake)
+    app.start_sync(va, sync.FUNDAMENTALS)
+    app.start_sync(vb, sync.FUNDAMENTALS)
+    assert _wait(app, lambda: len(started) == 2)          # oba procesy ruszyły, zanim pierwszy się skończył
+    assert set(app.syncing) == {a["id"], b["id"]} and str(va.prices_btn["state"]) == "disabled" and str(app.view.prices_btn["state"]) == "normal"
+    app.start_sync(va, sync.PRICES)                       # ten sam skaner drugi raz = odmowa, nie nowy proces
+    assert len(started) == 2
+    release.set()
+    assert _wait(app, lambda: not app.syncing)
+    assert str(va.prices_btn["state"]) == "normal" and str(vb.prices_btn["state"]) == "normal"
+
+
+def test_launcher_orders_by_recent_and_session_is_restored(app, tmp_path):
+    from desktop import app as A
+    from desktop import scanners, session
+    a = scanners.upsert(app.data_root, {"name": "Alfa"}, "geo_usa", 20)
+    b = scanners.upsert(app.data_root, {"name": "Beta"}, "geo_usa", 20)
+    app.open_scanner_window(a["id"])
+    app.open_scanner_window(b["id"])
+    app.open_launcher()
+    lw = app.launcher
+    lw.update()
+    assert lw.ids[:2] == [b["id"], a["id"]]                # ostatnio otwarty pierwszy
+    assert lw.box.get(0).startswith("●") and "Beta" in lw.box.get(0)
+    app.window_closed(a["id"])                              # zamknięty skaner traci ●, ale zostaje na liście
+    assert lw.box.get(lw.ids.index(a["id"])).startswith("○")
+    lw.box.selection_clear(0, "end")
+    lw.box.selection_set(lw.ids.index(a["id"]))
+    lw.open()
+    assert app.view_for(a["id"]) is not None and lw.ids[0] == a["id"]
+    app.window_closed(a["id"])
+    app.save_session()
+    sess = session.load(app.data_root)
+    assert sess["open"] == [b["id"]] and sess["launcher"] is True
+    app.quit_app()                                           # zamknięcie programu zapisuje sesję; nowa instancja ją odtwarza
+    app2 = A.App(app.data_root)
+    try:
+        app2.root.update()
+        assert app2.view_for(b["id"]) is not None and app2.view_for(a["id"]) is None
+        assert app2.launcher is not None and app2.launcher.winfo_exists()
+    finally:
+        app2.root.destroy()

@@ -10,6 +10,7 @@ import contextlib
 import sys
 import traceback
 from datetime import datetime, timezone
+from pathlib import Path
 
 from . import daily, finviz_catalog, scanners, store
 
@@ -167,3 +168,69 @@ def run_sync(data_dir, log=print, mode=FUNDAMENTALS, skip_finviz=False, max_tick
             finviz.fetch_watchlist = orig_fw
         if shared_root is not None:
             scanners.merge_cache(data_dir, shared_root)
+
+
+# ---------- synchronizacja w osobnym procesie (równoległe skanery) ----------
+# Sync podmienia ustawienia silnika w całym procesie (filtry, kroki EPS, przekierowanie wyjścia), więc dwa naraz w jednym procesie
+# by się mieszały. Każdy skaner synchronizuje się w osobnym procesie tego samego programu (main.py --sync …), a okno czyta jego dziennik.
+
+def worker_command(data_dir, mode, skip_finviz=False, extra_keys=(), shared_root=None):
+    base = [sys.executable] if getattr(sys, "frozen", False) else [sys.executable, str(store.app_dir() / "main.py")]
+    cmd = base + ["--sync", str(data_dir), "--mode", mode]
+    if skip_finviz:
+        cmd.append("--skip-finviz")
+    if extra_keys:
+        cmd += ["--extra", ",".join(extra_keys)]
+    if shared_root is not None:
+        cmd += ["--shared", str(shared_root)]
+    return cmd
+
+
+def parse_worker_args(argv):
+    import argparse
+    p = argparse.ArgumentParser(prog="main.py --sync")
+    p.add_argument("data_dir")
+    p.add_argument("--mode", choices=[PRICES, FUNDAMENTALS], default=PRICES)
+    p.add_argument("--skip-finviz", action="store_true")
+    p.add_argument("--extra", default="")
+    p.add_argument("--shared", default=None)
+    ns = p.parse_args(argv)
+    ns.extra = [k for k in ns.extra.split(",") if k]
+    return ns
+
+
+def worker_main(argv):
+    """Punkt wejścia procesu pomocniczego: dziennik idzie linia po linii na stdout, kod wyjścia = wynik synchronizacji."""
+    ns = parse_worker_args(argv)
+    out = sys.__stdout__
+    try:
+        out.reconfigure(encoding="utf-8")
+    except Exception:
+        pass
+
+    def emit(line):
+        out.write(line + "\n")
+        out.flush()
+
+    return run_sync(Path(ns.data_dir), log=emit, mode=ns.mode, skip_finviz=ns.skip_finviz, extra_keys=ns.extra,
+                    shared_root=Path(ns.shared) if ns.shared else None)
+
+
+def run_in_subprocess(data_dir, log, mode=FUNDAMENTALS, skip_finviz=False, extra_keys=(), shared_root=None, popen=None):
+    """Uruchamia synchronizację w osobnym procesie, przekazuje jego dziennik do `log`, zwraca kod wyjścia (0 = sukces)."""
+    import os
+    import subprocess
+    popen = popen or subprocess.Popen
+    env = {**os.environ, "PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"}
+    kw = {"creationflags": 0x08000000} if sys.platform.startswith("win") else {}   # CREATE_NO_WINDOW: bez migającej konsoli
+    try:
+        p = popen(worker_command(data_dir, mode, skip_finviz, extra_keys, shared_root), stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                  text=True, encoding="utf-8", errors="replace", env=env, **kw)
+    except OSError as e:
+        log(f"❌ Nie można uruchomić procesu synchronizacji: {e}")
+        return 1
+    for line in p.stdout:
+        line = line.rstrip("\n")
+        if line.strip():
+            log(line)
+    return p.wait()

@@ -6,9 +6,10 @@ import tkinter as tk
 from tkinter import messagebox
 
 from . import columns as columns_mod
-from . import finviz_codes, scanners, store, sync
+from . import finviz_codes, scanners, session, store, sync
 from .builder import ScannerEditor, ScannerManager
 from .chartwin import ChartWindow
+from .launcher import LauncherWindow
 from .dialogs import BoxesWindow, CanslimWindow, ColumnsWindow, FilterWindow, FinvizCriteriaWindow
 from .theme import BG, FG, PANEL, MenuBar, apply_dark, setup_style
 from .widgets import StockTable, SyncWindow
@@ -192,6 +193,7 @@ class ScannerListWindow(tk.Toplevel):
         self.view.pack(fill="both", expand=True)
         self.bind("<F5>", lambda e: self.view.start_sync(sync.PRICES))
         self.bind("<Shift-F5>", lambda e: self.view.start_sync(sync.FUNDAMENTALS))
+        self.protocol("WM_DELETE_WINDOW", lambda: app.window_closed(scanner["id"]))
 
 
 class App:
@@ -203,8 +205,10 @@ class App:
         self.data_root = store.data_dir(data_base)
         self.windows = {}   # id skanera -> ScannerListWindow
         self.q = queue.Queue()
-        self.syncing = False
-        self.sync_win = None
+        self.syncing = {}   # id skanera -> okno dziennika; synchronizacje różnych skanerów mogą trwać równolegle
+        self.session = session.prune(session.load(self.data_root), [s["id"] for s in scanners.load(self.data_root)])
+        self.launcher = None
+        self.root.protocol("WM_DELETE_WINDOW", self.quit_app)
         self.menubar = MenuBar(self.root, self._menu_spec())
         self.menubar.pack(fill="x")
         self.view = ScannerView(self.root, self, scanners.get(self.data_root, scanners.DEFAULT_ID), self.root)
@@ -213,6 +217,7 @@ class App:
         self.root.bind("<F5>", lambda e: self.view.start_sync(sync.PRICES))
         self.root.bind("<Shift-F5>", lambda e: self.view.start_sync(sync.FUNDAMENTALS))
         self.root.after(150, self._poll)
+        self.restore_session()
 
     # skróty do widoku głównego (domyślny skaner)
     @property
@@ -229,8 +234,8 @@ class App:
             ("Plik", [("Sync cen (Finviz + yfinance, szybko)\tF5", lambda: v().start_sync(sync.PRICES)),
                       ("Sync fundamentów (EPS, estymaty — raz w tygodniu)\tShift+F5", lambda: v().start_sync(sync.FUNDAMENTALS)),
                       ("Ceny tylko z yfinance (bez Finviz)", lambda: v().start_sync(sync.PRICES, skip_finviz=True)),
-                      ("Wczytaj dane z dysku", lambda: v().reload()), None, ("Zakończ", self.root.destroy)]),
-            ("Skanery", [("Moje skanery…", self.open_manager), ("Nowy skaner Finviz…", self.new_scanner),
+                      ("Wczytaj dane z dysku", lambda: v().reload()), None, ("Zakończ", self.quit_app)]),
+            ("Skanery", [("Szybkie okno skanerów", self.open_launcher), ("Moje skanery…", self.open_manager), ("Nowy skaner Finviz…", self.new_scanner),
                          ("Edytuj skaner domyślny…", lambda: self.edit_scanner(scanners.DEFAULT_ID))]),
             ("Widok", [("Filtr listy…", lambda: v().open_filter()), ("Boxy Darvasa…", lambda: v().open_boxes()), ("Kolumny…", lambda: v().choose_columns()),
                        ("Kryteria Finviz (co synchronizujemy)…", lambda: v().open_criteria()),
@@ -265,16 +270,62 @@ class App:
             ScannerEditor(self, sc)
 
     def open_scanner_window(self, sid):
+        session.touch(self.session, sid)
         if sid == scanners.DEFAULT_ID:
             self.root.lift()
-            return
-        w = self.windows.get(sid)
+        else:
+            w = self.windows.get(sid)
+            if w is not None and w.winfo_exists():
+                w.lift()
+            else:
+                sc = scanners.get(self.data_root, sid)
+                if sc:
+                    self.windows[sid] = ScannerListWindow(self, sc)
+        self.save_session()
+        self.refresh_launcher()
+
+    def window_closed(self, sid):
+        w = self.windows.pop(sid, None)
         if w is not None and w.winfo_exists():
-            w.lift()
-            return
-        sc = scanners.get(self.data_root, sid)
-        if sc:
-            self.windows[sid] = ScannerListWindow(self, sc)
+            w.destroy()
+        self.save_session()
+        self.refresh_launcher()
+
+    # --- szybkie okno i pamięć sesji
+    def open_launcher(self):
+        if self.launcher is None or not self.launcher.winfo_exists():
+            self.launcher = LauncherWindow(self)
+            self.launcher.protocol("WM_DELETE_WINDOW", self._close_launcher)
+        self.launcher.refresh()
+        self.launcher.lift()
+        self.save_session()
+
+    def _close_launcher(self):
+        self.launcher.destroy()
+        self.save_session()
+
+    def refresh_launcher(self):
+        if self.launcher is not None and self.launcher.winfo_exists():
+            self.launcher.refresh()
+
+    def save_session(self):
+        self.session["open"] = [sid for sid, w in self.windows.items() if w.winfo_exists()]
+        self.session["launcher"] = self.launcher is not None and self.launcher.winfo_exists()
+        session.save(self.data_root, self.session)
+
+    def restore_session(self):
+        """Po starcie otwiera skanery, które były otwarte przy ostatnim zamknięciu, i małe okno szybkiego startu.
+        Stan odczytujemy z góry: otwieranie okien zapisuje sesję i nadpisałoby flagę szybkiego okna."""
+        to_open, want_launcher = list(self.session["open"]), self.session["launcher"]
+        for sid in to_open:
+            if sid != scanners.DEFAULT_ID and scanners.get(self.data_root, sid):
+                self.open_scanner_window(sid)
+        if want_launcher:
+            self.open_launcher()
+
+    def quit_app(self):
+        self.save_session()
+        self.root.destroy()
 
     def scanner_saved(self, sc, then_sync=None):
         """Po zapisie w edytorze: odśwież widoki; nowy skaner od razu otwieramy w oknie; opcjonalnie od razu Sync."""
@@ -288,6 +339,7 @@ class App:
             view = self.view_for(sc["id"])
         if self.manager is not None and self.manager.winfo_exists():
             self.manager.refresh()
+        self.refresh_launcher()
         if then_sync and view is not None:
             self.start_sync(view, then_sync)
 
@@ -296,57 +348,66 @@ class App:
         if w is not None and w.winfo_exists():
             w.destroy()
         scanners.delete(self.data_root, sid)
+        session.prune(self.session, [s["id"] for s in scanners.load(self.data_root)])
+        self.save_session()
+        self.refresh_launcher()
 
-    # --- synchronizacja (w tle, log przez kolejkę; jedna naraz)
+    # --- synchronizacja: każdy skaner w osobnym procesie, więc kilka może trwać równolegle
     def start_sync(self, view, mode=sync.PRICES, skip_finviz=False):
-        if self.syncing:
-            messagebox.showinfo("Synchronizacja", "Trwa już inna synchronizacja — poczekaj, aż się skończy.", parent=view.root)
+        sid = view.scanner["id"]
+        if sid in self.syncing:
+            messagebox.showinfo("Synchronizacja", "Ten skaner już się synchronizuje — poczekaj, aż skończy (inne skanery możesz synchronizować równolegle).", parent=view.root)
             return
-        upgraded = mode == sync.PRICES and view.scanner["id"] != scanners.DEFAULT_ID and not (view.store.dir / "sync_state.json").exists()
+        upgraded = mode == sync.PRICES and sid != scanners.DEFAULT_ID and not (view.store.dir / "sync_state.json").exists()
         if upgraded:   # nowy skaner nie ma jeszcze EPS ani estymat — pierwszy Sync musi pobrać fundamenty
             mode = sync.FUNDAMENTALS
-        self.syncing, self.sync_view = True, view
-        for v in [self.view] + [w.view for w in self.windows.values() if w.winfo_exists()]:
-            v.set_sync_enabled(False)
+        view.set_sync_enabled(False)
         fund = mode == sync.FUNDAMENTALS
         name = view.scanner["name"]
-        self.sync_win = SyncWindow(self, f"Synchronizacja {'fundamentów' if fund else 'cen'} — {name}")
-        self.sync_win.log(f"Skaner: {name}")
+        win = SyncWindow(self, f"Synchronizacja {'fundamentów' if fund else 'cen'} — {name}")
+        self.syncing[sid] = win
+        win.log(f"Skaner: {name}")
         if upgraded:
-            self.sync_win.log("To pierwsza synchronizacja tego skanera — pobieram też fundamenty (EPS, estymaty), żeby CANSLIM i oceny miały dane.")
+            win.log("To pierwsza synchronizacja tego skanera — pobieram też fundamenty (EPS, estymaty), żeby CANSLIM i oceny miały dane.")
         if not skip_finviz:   # co dokładnie pobieramy z Finviz
             cfg = view.store.finviz_config()
             for line in finviz_codes.summary_lines(cfg.get("filters"), cfg.get("max_tickers")):
-                self.sync_win.log(line)
+                win.log(line)
             if view.scanner.get("extra"):
-                self.sync_win.log(f"  + dodatkowe kolumny z Finviz: {', '.join(view.scanner['extra'])}")
-        self.sync_win.log("Start: Finviz → yfinance → EPS i estymaty analityków → obliczenia (kilka–kilkanaście minut)…" if fund
-                          else "Start: " + ("yfinance" if skip_finviz else "Finviz → yfinance") + " → obliczenia na zapisanych fundamentach (ok. minuty)…")
+                win.log(f"  + dodatkowe kolumny z Finviz: {', '.join(view.scanner['extra'])}")
+        win.log("Start: Finviz → yfinance → EPS i estymaty analityków → obliczenia (kilka–kilkanaście minut)…" if fund
+                else "Start: " + ("yfinance" if skip_finviz else "Finviz → yfinance") + " → obliczenia na zapisanych fundamentach (ok. minuty)…")
         data_dir, extra = view.store.dir, list(view.scanner.get("extra") or [])
-        shared = None if view.scanner["id"] == scanners.DEFAULT_ID else self.data_root
+        shared = None if sid == scanners.DEFAULT_ID else self.data_root
 
         def work():
-            code = sync.run_sync(data_dir, log=lambda s: self.q.put(("log", s)), mode=mode, skip_finviz=skip_finviz, extra_keys=extra, shared_root=shared)
-            self.q.put(("done", code == 0))
+            code = sync.run_in_subprocess(data_dir, lambda s: self.q.put(("log", sid, s)), mode=mode, skip_finviz=skip_finviz,
+                                          extra_keys=extra, shared_root=shared)
+            self.q.put(("done", sid, code == 0))
 
         threading.Thread(target=work, daemon=True).start()
+        self.refresh_launcher()
 
     def _poll(self):
         try:
             while True:
-                kind, val = self.q.get_nowait()
-                if kind == "log" and self.sync_win and self.sync_win.winfo_exists():
-                    self.sync_win.log(val)
+                kind, sid, val = self.q.get_nowait()
+                win = self.syncing.get(sid)
+                if kind == "log":
+                    if win is not None and win.winfo_exists():
+                        win.log(val)
                 elif kind == "done":
-                    self.syncing = False
-                    for v in [self.view] + [w.view for w in self.windows.values() if w.winfo_exists()]:
-                        v.set_sync_enabled(True)
-                    if val and self.sync_view.winfo_exists():
-                        self.sync_view.reload()
+                    self.syncing.pop(sid, None)
+                    view = self.view_for(sid)
+                    if view is not None:
+                        view.set_sync_enabled(True)
+                        if val:
+                            view.reload()
                     if self.manager is not None and self.manager.winfo_exists():
                         self.manager.refresh()
-                    if self.sync_win and self.sync_win.winfo_exists():
-                        self.sync_win.done(val)
+                    if win is not None and win.winfo_exists():
+                        win.done(val)
+                    self.refresh_launcher()
         except queue.Empty:
             pass
         self.root.after(150, self._poll)

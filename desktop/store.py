@@ -1,7 +1,9 @@
 """Dane aplikacji: katalog `data/` obok programu (wersja portable), wczytywanie JSON-ów, przypięte boxy, filtry skanera."""
 import json
+import os
 import shutil
 import sys
+import threading
 from pathlib import Path
 
 from . import canslim, darvas, daily
@@ -46,7 +48,7 @@ def read_json(path, default=None):
 
 
 def write_json(path, obj):
-    tmp = Path(str(path) + ".tmp")
+    tmp = Path(f"{path}.{os.getpid()}.{threading.get_ident()}.tmp")   # unikalny plik tymczasowy: równoległe synchronizacje nie nadpisują sobie zapisu
     tmp.write_text(json.dumps(obj, ensure_ascii=False, indent=1), encoding="utf-8")
     tmp.replace(path)
 

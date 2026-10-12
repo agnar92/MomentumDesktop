@@ -4,7 +4,7 @@ import threading
 import tkinter as tk
 from tkinter import messagebox, ttk
 
-from . import canslim, charts, darvas, store, sync
+from . import canslim, charts, darvas, finviz_codes, store, sync
 from .theme import BG, FG, MONO, PANEL, MenuBar, apply_dark, setup_style
 STATE_COLORS = {"BUY": "#3ddc84", "SELL": "#ff5c5c", "OUT": "#ff9f43", "NOVOL": "#ffd166", "LATE": "#ffd166", "HOLD": FG, "WAIT": "#6ea8ff"}
 
@@ -528,6 +528,9 @@ class ScannerWindow(tk.Toplevel):
         self.fv_filters = tk.StringVar(value=cfg.get("filters", ""))
         self.fv_max = tk.StringVar(value=str(cfg.get("max_tickers", 300)))
         tk.Entry(fv, textvariable=self.fv_filters).pack(fill="x", padx=6, pady=(4, 2))
+        self.fv_desc = tk.Label(fv, text="", bg=PANEL, fg="#8b95a3", justify="left", anchor="w", wraplength=1000)
+        self.fv_desc.pack(fill="x", padx=6)
+        self.fv_filters.trace_add("write", lambda *_: self.show_criteria())
         r = tk.Frame(fv, bg=PANEL)
         r.pack(fill="x", padx=6, pady=3)
         tk.Label(r, text="max spółek:", bg=PANEL).pack(side="left")
@@ -536,6 +539,7 @@ class ScannerWindow(tk.Toplevel):
         tk.Button(r, text="⟳ Zapisz i pobierz ceny", command=lambda: (self.save_finviz(), app.start_sync(sync.PRICES))).pack(side="left", padx=4)
         tk.Button(r, text="⟳ Zapisz i pobierz fundamenty", command=lambda: (self.save_finviz(), app.start_sync(sync.FUNDAMENTALS))).pack(side="left", padx=4)
         tk.Label(r, text="Kody z adresu skanera finviz.com (f=). Nieznany kod Finviz ignoruje po cichu.", bg=PANEL, fg="#6b7684").pack(side="left", padx=8)
+        self.show_criteria()
         self.refresh()
 
     def refresh(self):
@@ -588,6 +592,10 @@ class ScannerWindow(tk.Toplevel):
             elif k == "cs_core":
                 self.cs_core.set(bool(v))
         self.run()
+
+    def show_criteria(self):
+        items = finviz_codes.describe(self.fv_filters.get())
+        self.fv_desc.config(text="Kryteria: " + "  •  ".join(t if k else f"⚠ {c}" for c, t, k in items))
 
     def save_finviz(self):
         try:
@@ -646,6 +654,35 @@ class BoxesWindow(tk.Toplevel):
         self.app.open_chart(r["ticker"], focus=box)
 
 
+class FinvizCriteriaWindow(tk.Toplevel):
+    """Co synchronizujemy: kryteria skanera Finviz (kody filtrów z data/finviz_screen.json) po ludzku."""
+
+    def __init__(self, app):
+        super().__init__(app.root)
+        cfg = app.store.finviz_config()
+        self.title("Kryteria Finviz — co synchronizujemy")
+        self.geometry("760x470")
+        self.configure(bg=BG)
+        apply_dark(self)
+        t = tk.Text(self, wrap="word", bg="#0f1318", fg=FG, padx=12, pady=10, relief="flat", font=MONO)
+        t.pack(fill="both", expand=True)
+        t.tag_configure("h", font=("Consolas", 12, "bold"), foreground="#ffffff")
+        t.tag_configure("warn", foreground="#ff9f43")
+        t.tag_configure("dim", foreground="#8b95a3")
+        lines = finviz_codes.summary_lines(cfg.get("filters"), cfg.get("max_tickers"))
+        t.insert("end", lines[0] + "\n\n", "h")
+        for (code, text, known), line in zip(finviz_codes.describe(cfg.get("filters")), lines[1:]):
+            t.insert("end", f"  • {text}", "" if known else "warn")
+            t.insert("end", f"   [{code}]\n", "dim")
+        wl = app.store.watchlist
+        t.insert("end", f"\nOstatnia lista: {wl.get('n_stocks', '?')} spółek (Finviz podał łącznie {wl.get('finviz_total', '?')}); "
+                        "filtry zmienisz w oknie Skaner (sekcja Finviz) albo w pliku data/finviz_screen.json.\n", "dim")
+        t.insert("end", "\nRównież z Finviz (dla każdej spółki z listy): sektor, branża, kapitalizacja, P/E, EPS w tym / przyszłym roku, ROE, sprzedaż q/q, "
+                        "instytucje, zadłużenie, rekomendacja analityków i cena docelowa. Resztę (ceny, RS, EPS Rating, bazy, CANSLIM) liczy aplikacja.\n", "dim")
+        t.config(state="disabled")
+        t.bind("<Escape>", lambda ev: self.destroy())
+
+
 class CanslimWindow(tk.Toplevel):
     """CANSLIM litera po literze: werdykt, liczby, które mamy, i reguła (te same dane, na których liczy się n/7)."""
 
@@ -701,6 +738,7 @@ class App:
         self.fund_btn.pack(side="left", padx=2)
         tk.Button(tb, text="Skaner…", command=self.open_scanner, relief="flat").pack(side="left", padx=(12, 2))
         tk.Button(tb, text="Boxy…", command=self.open_boxes, relief="flat").pack(side="left", padx=2)
+        tk.Button(tb, text="Kryteria Finviz", command=self.open_criteria, relief="flat").pack(side="left", padx=2)
         self.tf = tk.StringVar(value=self.store.tf)
         tk.Label(tb, text="Skala:", bg=PANEL).pack(side="left", padx=(14, 2))
         for text, val in (("Tydzień", "W"), ("Dzień", "D")):
@@ -733,6 +771,7 @@ class App:
                       ("Ceny tylko z yfinance (bez Finviz)", lambda: self.start_sync(sync.PRICES, skip_finviz=True)),
                       ("Wczytaj dane z dysku", self.reload), None, ("Zakończ", self.root.destroy)]),
             ("Skaner", [("Skaner…", self.open_scanner), ("Boxy Darvasa…", self.open_boxes),
+                        ("Kryteria Finviz (co synchronizujemy)…", self.open_criteria),
                         ("Wyczyść filtr listy", lambda: self.apply_main_filter({}))]),
             ("Okno", [("Wykres wybranej spółki", lambda: self.open_chart(self.table.current())),
                       ("Wykres w nowym oknie", lambda: self.open_chart_new(self.table.current())),
@@ -812,6 +851,9 @@ class App:
         if ticker:
             ChartWindow(self, ticker)
 
+    def open_criteria(self):
+        FinvizCriteriaWindow(self)
+
     def open_canslim(self, ticker):
         if ticker and self.store.row(ticker):
             CanslimWindow(self, ticker)
@@ -847,6 +889,10 @@ class App:
             b.config(state="disabled")
         fund = mode == sync.FUNDAMENTALS
         self.sync_win = SyncWindow(self, "Synchronizacja fundamentów" if fund else "Synchronizacja cen")
+        if not skip_finviz:   # co dokładnie pobieramy z Finviz
+            cfg = self.store.finviz_config()
+            for line in finviz_codes.summary_lines(cfg.get("filters"), cfg.get("max_tickers")):
+                self.sync_win.log(line)
         self.sync_win.log("Start: Finviz → yfinance → EPS i estymaty analityków → obliczenia (kilka–kilkanaście minut)…" if fund
                           else "Start: " + ("yfinance" if skip_finviz else "Finviz → yfinance") + " → obliczenia na zapisanych fundamentach (ok. minuty)…")
 

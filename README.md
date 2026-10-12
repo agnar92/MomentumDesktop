@@ -10,9 +10,15 @@ Prosta, „retro” aplikacja okienkowa (Python + Tkinter, styl TC2000) oparta n
 - **Lista** (okno główne) — wszystkie spółki z kolorami wg stanu Darvasa (KUP / trzymaj / czekaj / SPRZEDAJ), kolumny **CANSLIM** (n/7 i
   litery C A N S L I M), przełącznik skali **Tydzień / Dzień** (stan Darvasa liczony na tygodniowych albo dziennych zamknięciach), sortowanie
   po nagłówku, wyszukiwarka. Prawy klik → „CANSLIM — szczegóły” (litera po literze: werdykt, liczby, reguła). Dwuklik / Enter = wykres, ↑/↓ przełącza spółki w otwartym wykresie.
-- **Skaner…** (osobne okno) — filtry po RS, EPS Rating, Composite, CANSLIM (≥ n/7, opcjonalnie C i A obowiązkowe), odległości do pivotu, odległości od szczytu 52 tyg., ADR, stanie
-  Darvasa, sektorze, bazie, przypiętych boxach; gotowe skany; „Pokaż na liście głównej”. W tym samym oknie edytujesz **filtry
-  Finviz** (kody `f=` z adresu skanera) i pobierasz dane od razu przyciskiem.
+- **Własne skanery Finviz** (menu *Skanery* → *Moje skanery…* / *Nowy skaner Finviz…*): każdy skaner to osobne okno z własną listą, danymi,
+  kolumnami i synchronizacją (dane w `data/scanners/<nazwa>/`; skaner domyślny to główne okno). **Kreator**: filtry Finviz z list wyboru
+  (zakładki Opisowe / Fundamentalne / Techniczne — ponad 200 kodów sprawdzonych na żywo w Finviz), wklejenie adresu skanera z finviz.com albo
+  samych kodów (`f=`), podgląd kryteriów po polsku, **test liczby wyników** w Finviz, limit spółek. Kolumny ustawiasz przyciskiem **Kolumny…**
+  z danych, które faktycznie mamy (pola Finviz, ratingi, CANSLIM, Darvas, bazy…); dodatkowe pola tylko z Finviz (dywidenda, beta, RSI, short
+  float, wyniki tygodnia/miesiąca…) zamawiasz w kreatorze (zakładka *Kolumny z Finviz*) i pojawiają się po Sync. Pierwszy Sync nowego skanera
+  pobiera też fundamenty; EPS i estymaty są wspólne dla wszystkich skanerów (spółka znana innemu skanerowi nie jest pobierana drugi raz).
+- **Filtr…** (osobne okno, na skaner) — filtry po już pobranych danych: RS, EPS Rating, Composite, CANSLIM (≥ n/7, opcjonalnie C i A
+  obowiązkowe), odległość do pivotu, od szczytu 52 tyg., ADR, stan Darvasa, sektor, baza, przypięte boxy; gotowe skany; „Zastosuj na liście”.
 - **Boxy…** (osobne okno) — przegląd boxów Darvasa w sekcjach: monitorowane, nowe, KUP, do sprawdzenia, trzymaj, sprzedaj, czekaj.
 - **Wykres** (osobne okno, można otworzyć kilka) — **Dar-Card** (schodkowe boxy Darvasa na tygodniowych zamknięciach, strefa
   zagrożenia 5 % pod dołem boxa) i **wykres słupkowy** HLC jak w książce O'Neila (SMA 10 / 40 tyg. albo 10 / 50 / 200 sesji, wolumen, MACD 12-26-9,
@@ -41,7 +47,8 @@ pip install -r requirements-dev.txt && ruff check . && pytest
 ## Struktura
 
 - `main.py` — start; `desktop/app.py` — okna; `desktop/charts.py` — rysowanie (Canvas); `desktop/darvas.py` — reguły Darvasa;
-  `desktop/store.py` — dane, przypięte boxy, filtry skanera; `desktop/sync.py` — Sync w tle.
+  `desktop/store.py` — dane, przypięte boxy, filtr lokalny; `desktop/sync.py` — Sync w tle; `desktop/scanners.py` — własne skanery;
+  `desktop/builder.py` — kreator i menedżer skanerów; `desktop/finviz_catalog.py` — katalog filtrów i kolumn Finviz; `desktop/columns.py` — kolumny listy.
 - `engine/` — kopia `watchlist.py` + `finviz.py` z Momentum (patrz `engine/README.md`); `seed_data/` — dane startowe.
 
 ## Czego (jeszcze) nie ma względem Momentum

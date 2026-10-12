@@ -3,6 +3,8 @@ Znane kody mają ręczne opisy, reszta jest dekodowana wzorcami (próg liczbowy,
 surowy z ostrzeżeniem — Finviz po cichu ignoruje kody, których nie zna."""
 import re
 
+from . import finviz_catalog
+
 KNOWN = {
     "cap_smallover": "Kapitalizacja ≥ 300 mln USD (small i większe)", "cap_midover": "Kapitalizacja ≥ 2 mld USD (mid i większe)",
     "cap_largeover": "Kapitalizacja ≥ 10 mld USD (large i większe)", "cap_micro": "Kapitalizacja 50–300 mln USD (micro)",
@@ -49,6 +51,9 @@ def describe_code(code):
     m = re.fullmatch(r"ta_sma(\d+)_(pa|pb)", code)
     if m:
         return f"Cena {'powyżej' if m[2] == 'pa' else 'poniżej'} SMA {m[1]}", True
+    hit = finviz_catalog.code_index().get(code)   # każdy kod z katalogu kreatora (zweryfikowany na żywo)
+    if hit:
+        return f"{hit[0]}: {hit[1]}", True
     return f"{code} — nieznany kod (Finviz może go po cichu zignorować)", False
 
 

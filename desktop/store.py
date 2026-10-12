@@ -27,12 +27,12 @@ def resource_dir():
     return Path(__file__).resolve().parent.parent
 
 
-def data_dir(base=None):
+def data_dir(base=None, seed=True):
     d = Path(base) if base else app_dir() / "data"
     d.mkdir(parents=True, exist_ok=True)
-    seed = resource_dir() / "seed_data"
-    if seed.is_dir():   # pierwsze uruchomienie: przykładowe dane, żeby okno nie było puste przed pierwszym Sync
-        for f in seed.glob("*.json"):
+    seed_dir = resource_dir() / "seed_data"
+    if seed and seed_dir.is_dir():   # pierwsze uruchomienie: przykładowe dane, żeby okno nie było puste przed pierwszym Sync
+        for f in seed_dir.glob("*.json"):
             if not (d / f.name).exists():
                 shutil.copy(f, d / f.name)
     return d
@@ -66,6 +66,7 @@ def darvas_state(full, tf):
 def enrich(stock, full, pin, weeks, tf="W", full_d=None):
     """Dopisuje do spółki pola liczone lokalnie: stan Darvasa (tygodniowy i dzienny) i status przypiętego boxa."""
     sw, sd = darvas_state(full, "W"), darvas_state(full_d, "D")
+    stock["_base_label"] = base_label(stock)
     stock["darvas_w"], stock["darvas_d"] = sw["state"], sd["state"]
     stock["darvas_text_w"], stock["darvas_text_d"] = sw.get("text", ""), sd.get("text", "")
     st = sd if tf == "D" and full_d else sw
@@ -79,8 +80,8 @@ def enrich(stock, full, pin, weeks, tf="W", full_d=None):
 
 
 class Store:
-    def __init__(self, base=None):
-        self.dir = data_dir(base)
+    def __init__(self, base=None, seed=True):
+        self.dir = data_dir(base, seed)
         self.watchlist, self.charts, self.charts_d, self.pinned = {}, {}, {}, {}
         self.rows = []
         self.tf = "W"   # „W” tygodniowy / „D” dzienny — wpływa na stan Darvasa w liście
@@ -103,7 +104,8 @@ class Store:
         self._sma = {}
         mkt = canslim.market(self.watchlist)
         self.mkt = mkt
-        self.rows = [canslim.tag(self._enrich(dict(s)), mkt) for s in self.watchlist.get("stocks", [])]
+        extra = read_json(self.dir / "finviz_extra.json", {}) or {}   # dodatkowe kolumny zamówione w skanerze (tylko z Finviz)
+        self.rows = [canslim.tag(self._enrich({**s, **extra.get(s["ticker"], {})}), mkt) for s in self.watchlist.get("stocks", [])]
 
     def _enrich(self, s):
         t = s["ticker"]
@@ -153,11 +155,6 @@ class Store:
 
     def finviz_config(self):
         return read_json(self.dir / "finviz_screen.json", {}) or {}
-
-    def save_finviz_config(self, filters, max_tickers):
-        cfg = self.finviz_config()
-        cfg["filters"], cfg["max_tickers"] = filters.strip(), int(max_tickers)
-        write_json(self.dir / "finviz_screen.json", cfg)
 
 
 # ---------- skaner (filtry po danych już pobranych) ----------

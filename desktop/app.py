@@ -208,7 +208,8 @@ class App:
         self.syncing = {}   # id skanera -> okno dziennika; synchronizacje różnych skanerów mogą trwać równolegle
         self.session = session.prune(session.load(self.data_root), [s["id"] for s in scanners.load(self.data_root)])
         self.launcher = None
-        self.root.protocol("WM_DELETE_WINDOW", self.quit_app)
+        self.root.protocol("WM_DELETE_WINDOW", self.close_main)
+        self.main_hidden = False
         self.menubar = MenuBar(self.root, self._menu_spec())
         self.menubar.pack(fill="x")
         self.view = ScannerView(self.root, self, scanners.get(self.data_root, scanners.DEFAULT_ID), self.root)
@@ -272,7 +273,7 @@ class App:
     def open_scanner_window(self, sid):
         session.touch(self.session, sid)
         if sid == scanners.DEFAULT_ID:
-            self.root.lift()
+            self.show_main()
         else:
             w = self.windows.get(sid)
             if w is not None and w.winfo_exists():
@@ -288,8 +289,31 @@ class App:
         w = self.windows.pop(sid, None)
         if w is not None and w.winfo_exists():
             w.destroy()
+        if self.main_hidden and not self.other_windows():   # nic nie zostało na ekranie: zostawiamy małe okno jako punkt wejścia
+            self.open_launcher()
         self.save_session()
         self.refresh_launcher()
+
+    def other_windows(self, ignore_launcher=False):
+        """Okna widoczne poza głównym (skanery, wykresy, małe okno, dialogi)."""
+        return [w for w in self.root.winfo_children() if isinstance(w, tk.Toplevel) and w.winfo_exists() and w.state() != "withdrawn"
+                and not (ignore_launcher and w is self.launcher)]
+
+    def close_main(self):
+        """Zamknięcie głównego okna (skaner domyślny) nie kończy programu, dopóki są inne okna: chowamy je, a wrócić można z małego okna skanerów."""
+        if self.other_windows():
+            self.root.withdraw()
+            self.main_hidden = True
+            self.open_launcher()
+            self.save_session()
+        else:
+            self.quit_app()
+
+    def show_main(self):
+        self.main_hidden = False
+        self.root.deiconify()
+        self.root.lift()
+        self.save_session()
 
     # --- szybkie okno i pamięć sesji
     def open_launcher(self):
@@ -302,6 +326,9 @@ class App:
 
     def _close_launcher(self):
         self.launcher.destroy()
+        if self.main_hidden and not self.other_windows():   # to było ostatnie okno — kończymy program
+            self.quit_app()
+            return
         self.save_session()
 
     def refresh_launcher(self):
@@ -311,12 +338,16 @@ class App:
     def save_session(self):
         self.session["open"] = [sid for sid, w in self.windows.items() if w.winfo_exists()]
         self.session["launcher"] = self.launcher is not None and self.launcher.winfo_exists()
+        self.session["main_hidden"] = self.main_hidden
         session.save(self.data_root, self.session)
 
     def restore_session(self):
         """Po starcie otwiera skanery, które były otwarte przy ostatnim zamknięciu, i małe okno szybkiego startu.
         Stan odczytujemy z góry: otwieranie okien zapisuje sesję i nadpisałoby flagę szybkiego okna."""
-        to_open, want_launcher = list(self.session["open"]), self.session["launcher"]
+        to_open, want_launcher, hidden = list(self.session["open"]), self.session["launcher"], self.session["main_hidden"]
+        if hidden:   # główne okno było schowane — chowamy je i dajemy małe okno jako punkt wejścia
+            self.root.withdraw()
+            self.main_hidden, want_launcher = True, True
         for sid in to_open:
             if sid != scanners.DEFAULT_ID and scanners.get(self.data_root, sid):
                 self.open_scanner_window(sid)

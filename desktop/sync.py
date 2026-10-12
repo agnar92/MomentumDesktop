@@ -11,7 +11,7 @@ import sys
 import traceback
 from datetime import datetime, timezone
 
-from . import daily, store
+from . import daily, finviz_catalog, scanners, store
 
 PRICES, FUNDAMENTALS = "prices", "fundamentals"
 FUNDAMENTALS_STALE_DAYS = 7
@@ -86,7 +86,25 @@ def build_daily_json(data_dir, log):
     log(f"💾 Zapisano charts_daily.json (wykresy dzienne {len(frames)} spółek).")
 
 
-def run_sync(data_dir, log=print, mode=FUNDAMENTALS, skip_finviz=False, max_tickers=None):
+def fetch_extra(finviz, filters, max_tickers, keys):
+    """Dodatkowe kolumny Finviz (spoza tych, które bierze silnik): ten sam skaner, widok własny z zamówionymi kolumnami -> {ticker: {pole: wartość}}."""
+    keys = [k for k in keys if k in finviz_catalog.EXTRA_COLUMNS]
+    if not keys:
+        return {}
+    saved = (finviz.VIEW_COLUMNS.get("152"), finviz.VIEW_PARAMS.get("152"), set(finviz.TEXT_KEYS))
+    finviz.VIEW_COLUMNS["152"] = {finviz_catalog.EXTRA_COLUMNS[k][3]: k for k in keys}
+    finviz.VIEW_PARAMS["152"] = {"c": ",".join(str(i) for i in finviz_catalog.extra_ids(keys))}
+    finviz.TEXT_KEYS.update(finviz_catalog.TEXT_FIELDS)
+    try:
+        rows, _ = finviz.fetch_view("152", filters, max_tickers)
+    finally:
+        finviz.VIEW_COLUMNS["152"], finviz.VIEW_PARAMS["152"] = saved[0], saved[1]
+        finviz.TEXT_KEYS.clear()
+        finviz.TEXT_KEYS.update(saved[2])
+    return {r["ticker"]: {k: v for k, v in r.items() if k != "ticker"} for r in rows}
+
+
+def run_sync(data_dir, log=print, mode=FUNDAMENTALS, skip_finviz=False, max_tickers=None, extra_keys=(), shared_root=None):
     """Zwraca 0 przy sukcesie. Pliki trafiają do data_dir; migawka surowych danych do data_dir/raw."""
     _engine_path()
     try:
@@ -95,6 +113,8 @@ def run_sync(data_dir, log=print, mode=FUNDAMENTALS, skip_finviz=False, max_tick
     except Exception as e:   # np. brak pakietu w buildzie
         log(f"❌ Nie można załadować silnika: {e}")
         return 1
+    if shared_root is not None:   # wspólny cache EPS / estymat: nie pobieramy drugi raz tego, co zna inny skaner
+        scanners.merge_cache(shared_root, data_dir)
     prev_state = read_state(data_dir)   # przed uruchomieniem: bez pliku stanu daty biorą się z generated_at, które silnik zaraz nadpisze
     cfg_path = data_dir / "finviz_screen.json"
     orig_load = getattr(finviz, "_orig_load_config", None) or finviz.load_config
@@ -108,6 +128,21 @@ def run_sync(data_dir, log=print, mode=FUNDAMENTALS, skip_finviz=False, max_tick
         watchlist.update_estimates = lambda tickers, path=None, **k: (store.read_json(path, {}) or {}).get("stocks", {})
     else:
         watchlist.update_eps_cache, watchlist.update_estimates = orig_eps, orig_est
+    orig_fw = getattr(finviz, "_orig_fetch_watchlist", None) or getattr(finviz, "fetch_watchlist", None)
+    finviz._orig_fetch_watchlist = orig_fw
+    if extra_keys and not skip_finviz and orig_fw is not None:
+        def fetch_with_extra(filters, max_t=300, *a, **k):
+            rows, total = orig_fw(filters, max_t, *a, **k)
+            try:
+                extra = fetch_extra(finviz, filters, max_t, extra_keys)
+                store.write_json(data_dir / "finviz_extra.json", extra)
+                log(f"✅ Finviz: dodatkowe kolumny ({len(extra_keys)}) dla {len(extra)} spółek.")
+            except Exception as e:
+                log(f"⚠️  Dodatkowe kolumny Finviz niedostępne ({e}) — zostają poprzednie.")
+            return rows, total
+        finviz.fetch_watchlist = fetch_with_extra
+    elif orig_fw is not None:
+        finviz.fetch_watchlist = orig_fw
     out = _LogWriter(log)
     try:
         with contextlib.redirect_stdout(out), contextlib.redirect_stderr(out):
@@ -128,3 +163,7 @@ def run_sync(data_dir, log=print, mode=FUNDAMENTALS, skip_finviz=False, max_tick
         return 1
     finally:
         watchlist.update_eps_cache, watchlist.update_estimates = orig_eps, orig_est
+        if orig_fw is not None:
+            finviz.fetch_watchlist = orig_fw
+        if shared_root is not None:
+            scanners.merge_cache(data_dir, shared_root)

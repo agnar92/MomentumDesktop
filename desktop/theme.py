@@ -26,6 +26,9 @@ def setup_style(root):
     s.configure("TCombobox", fieldbackground=ENTRY, background=BTN, foreground="#ffffff", arrowcolor=FG, bordercolor="#27303a",
                 selectbackground=ENTRY, selectforeground="#ffffff")
     s.map("TCombobox", fieldbackground=[("readonly", ENTRY)], foreground=[("readonly", "#ffffff")], background=[("active", "#2d3744")])
+    s.configure("TNotebook", background=BG, bordercolor="#1b2027", tabmargins=(4, 4, 4, 0))
+    s.configure("TNotebook.Tab", background=BTN, foreground=FG, padding=(14, 6), bordercolor="#1b2027")
+    s.map("TNotebook.Tab", background=[("selected", SEL), ("active", "#2d3744")], foreground=[("selected", "#ffffff")])
     s.configure("Horizontal.TProgressbar", background="#4aa3ff", troughcolor=ENTRY, bordercolor=PANEL)
     for opt, val in (("*Font", MONO), ("*Background", PANEL), ("*Foreground", FG), ("*Button.Background", BTN), ("*Button.Foreground", FG),
                      ("*Button.activeBackground", "#2d3744"), ("*Button.activeForeground", "#ffffff"), ("*Entry.Background", ENTRY),

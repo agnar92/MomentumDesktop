@@ -25,3 +25,12 @@ def test_pattern_decoding_and_unknown():
 def test_summary_lines():
     lines = fc.summary_lines("geo_usa,zly_kod", 300)
     assert lines[0] == "Kryteria Finviz (2 filtrów, max 300 spółek):" and "⚠" in lines[2] and lines[1].endswith("[geo_usa]")
+
+
+def test_every_catalog_code_is_described_as_known():
+    from desktop import finviz_catalog as cat
+    for _tab, label, opts in cat.FILTERS:
+        for text, code in opts:
+            desc, known = fc.describe_code(code)
+            assert known and desc, code
+    assert fc.describe_code("fa_div_pos") == ("Dywidenda: Dodatnia", True)

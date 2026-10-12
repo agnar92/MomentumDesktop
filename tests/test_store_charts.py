@@ -123,3 +123,13 @@ def test_tooltip_card_distance_to_box_levels():
     lines = [t for t, _ in charts.tooltip_card(full, [f"d{k}" for k in range(len(c))], len(c) - 1, "W")]
     assert any(t.startswith("box ") for t in lines) and any(t.startswith("do wybicia") and "+2.6%" in t for t in lines)   # 12 / 11.7 - 1
     assert any(t.startswith("do exitu") and "-" in t for t in lines)
+
+
+def test_tooltip_has_volume_average_and_breakout_highlight_rule():
+    full, dates, smas = _series()
+    i = len(dates) - 1
+    lines = [t for t, _ in charts.tooltip_bars(full, dates, i, smas, "D")]
+    assert any(t.startswith("średnia wolumenu SMA 50:") for t in lines)
+    wk = {"c": [10.0 + k for k in range(30)], "h": [11.0 + k for k in range(30)], "l": [9.0 + k for k in range(30)], "v": [100] * 29 + [300]}
+    lines = [t for t, _ in charts.tooltip_bars(wk, [f"w{k}" for k in range(30)], 29, [], "W")]
+    assert any(t.startswith("wolumen") and "3.00× średniej 10" in t for t in lines) and any(t.startswith("średnia wolumenu SMA 10:") for t in lines)

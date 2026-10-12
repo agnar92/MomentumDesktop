@@ -271,3 +271,79 @@ def test_hover_tooltip_and_sma_detection(app):
     ch.mode.set("bars")
     ch.redraw()
     ch.update()
+
+
+def test_flags_keys_filter_and_shared_between_scanners(app, monkeypatch):
+    from desktop import scanners
+    sc = scanners.upsert(app.data_root, {"name": "Inny"}, "geo_usa", 20)
+    v = app.view
+    t = v.table.visible()[0]
+    v.table.tree.selection_set(t)
+    ev = type("E", (), {"char": "2"})()
+    v.table._key(ev)                                        # klawisz 2 = „Kupione”
+    assert app.flags.get(t) == "bought" and v.store.row(t)["flag"] == "bought" and "flag_bought" in v.table.tree.item(t)["tags"]
+    assert v.table.tree.item(t)["values"][v.table.columns.index("flag")] == "🛒"
+    v.table._key(type("E", (), {"char": "2"})())              # ten sam klawisz drugi raz = zdjęcie flagi
+    assert app.flags.get(t) is None
+    v.table._key(type("E", (), {"char": "1"})())
+    v.flag_filter.set("⭐ Obserwuję")
+    v.refresh_lists()
+    assert v.table.visible() == [t]
+    v.flag_filter.set("Bez listy")
+    v.refresh_lists()
+    assert t not in v.table.visible() and len(v.table.visible()) == len(v.store.rows) - 1
+    app.open_scanner_window(sc["id"])
+    assert app.view_for(sc["id"]).store.rows == []           # flagi są globalne, ale inny skaner nie ma tej spółki
+    monkeypatch.setattr("tkinter.messagebox.showinfo", lambda *a, **k: None)
+    app.edit_list_names()
+
+
+def test_whats_new_after_sync_and_marks(app, monkeypatch):
+    v = app.view
+    app.syncing["default"] = None
+    rows = v.store.rows
+    gone, up = rows[0]["ticker"], rows[1]["ticker"]
+    for r in rows:
+        if r["ticker"] == up:
+            r["darvas_w"] = "HOLD"                           # przed Sync nie było KUP
+
+    def fake_reload():
+        v.store.rows = [r for r in v.store.rows if r["ticker"] != gone]   # wypadła ze skanera
+        for r in v.store.rows:
+            if r["ticker"] == up:
+                r["darvas_w"] = "BUY"                        # nowe KUP
+        v.store.rows.append({"ticker": "NEWCO", "company": "Nowa", "price": 5.0, "darvas_w": "WAIT", "darvas_d": "WAIT", "pbox": "NONE", "cs": None})
+        v.store._mark_changes()
+
+    monkeypatch.setattr(v, "reload", fake_reload)
+    opened = []
+    monkeypatch.setattr(v, "open_changes", lambda: opened.append(1))
+    app.q.put(("done", "default", True))
+    assert _wait(app, lambda: v.store.changes["at"] is not None)
+    d = v.store.changes["diff"]
+    assert d["new"] == ["NEWCO"] and d["dropped"] == [gone] and d["buy_w"] == [up] and opened == [1]
+    assert v.store.row(up)["change"] == "▲ KUP tyg." and v.store.row("NEWCO")["change"] == "★ nowa" and v.news_btn["text"].startswith("Co nowego (3")
+    from desktop.dialogs import WhatsNewWindow
+    w = WhatsNewWindow(v)
+    w.update()
+    assert w.tree.exists("sec:buy_w") and w.tree.exists(f"buy_w:{up}") and w.tree.exists("sec:dropped")
+    w.clear()
+    assert v.store.changes["diff"] == {} and v.store.row(up)["change"] == ""
+
+
+def test_export_actions(app, monkeypatch, tmp_path):
+    v = app.view
+    v.copy_tickers(",")
+    clip = app.root.clipboard_get()
+    assert clip.split(",") == v.table.visible()
+    v.copy_tickers("\n")
+    assert app.root.clipboard_get().split("\n") == v.table.visible()
+    out = tmp_path / "x.csv"
+    monkeypatch.setattr("tkinter.filedialog.asksaveasfilename", lambda **k: str(out))
+    v.save_csv("xl")
+    raw = out.read_bytes()
+    assert raw.startswith(b"\xef\xbb\xbf") and raw.decode("utf-8-sig").splitlines()[0].startswith("Symbol;") and len(raw.decode("utf-8-sig").splitlines()) == len(v.table.visible()) + 1
+    t = tmp_path / "t.txt"
+    monkeypatch.setattr("tkinter.filedialog.asksaveasfilename", lambda **k: str(t))
+    v.save_tickers()
+    assert t.read_text(encoding="utf-8").split(",") == v.table.visible()

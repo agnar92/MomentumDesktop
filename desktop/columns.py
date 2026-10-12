@@ -1,10 +1,11 @@
 """Kolumny listy: definicje (etykieta, szerokość, format) wszystkich pól, jakie mamy w danych, oraz wybór kolumn skanera.
 Dostępne kolumny = pola, które faktycznie występują w pobranych danych (+ policzone lokalnie: CANSLIM, Darvas, baza)."""
 from . import finviz_catalog as fc
+from . import flags as flags_mod
 
 # klucz: (etykieta, szerokość, wyrównanie, format) — format: text / int / n1 / n2 / price / pct / mcap / bool / state / base / cs
 DEFS = {
-    "ticker": ("Symbol", 78, "w", "text"), "company": ("Spółka", 190, "w", "text"), "sector": ("Sektor", 130, "w", "text"),
+    "ticker": ("Symbol", 78, "w", "text"), "flag": ("Lista", 56, "w", "flag"), "change": ("Zmiana", 112, "w", "text"), "company": ("Spółka", 190, "w", "text"), "sector": ("Sektor", 130, "w", "text"),
     "industry": ("Branża", 170, "w", "text"), "market_cap": ("Kapitalizacja", 104, "e", "mcap"), "price": ("Cena", 86, "e", "price"),
     "rs_rating": ("RS", 50, "e", "int"), "eps_rating": ("EPS", 54, "e", "int"), "composite_rating": ("Comp", 60, "e", "int"),
     "industry_rating": ("Grupa", 64, "e", "int"), "accdis": ("Acc/Dis", 72, "w", "text"), "leader": ("Lider", 60, "w", "bool"),
@@ -27,10 +28,10 @@ DEFS = {
     "base_status": ("Status bazy", 110, "w", "text"), "climax_top": ("Climax", 64, "w", "bool"), "dist_top": ("Dystrybucja", 92, "w", "bool"),
     "rs_line_state": ("Linia RS", 90, "w", "text"), "vol_surge_5d": ("Skok wol. 5d ×", 100, "e", "n2"),
 }
-DEFAULT_COLUMNS = ["ticker", "company", "price", "rs_rating", "eps_rating", "composite_rating", "cs", "cs_letters", "pct_from_high_52w", "base",
-                   "pct_to_pivot", "darvas", "pbox", "sector"]
+DEFAULT_COLUMNS = ["ticker", "flag", "company", "price", "rs_rating", "eps_rating", "composite_rating", "cs", "cs_letters", "pct_from_high_52w", "base",
+                   "pct_to_pivot", "darvas", "pbox", "change", "sector"]
 # pola policzone lokalnie — są zawsze (nawet przed pierwszym Sync)
-COMPUTED = {"cs", "cs_letters", "base", "darvas", "pbox"}
+COMPUTED = {"cs", "cs_letters", "base", "darvas", "pbox", "flag", "change"}
 _SKIP = {"canslim", "spark", "darvas_w", "darvas_d", "darvas_text", "darvas_text_w", "darvas_text_d", "pbox_text", "pbox_rank", "as_of",
          "pivot_break_date", "rs_score", "accdis_score", "eps_score"}
 PBOX_LABELS = {"NONE": "", "ABOVE": "wybity", "INSIDE": "w boxie", "ZONE": "STREFA!", "EXIT": "EXIT!"}
@@ -74,6 +75,8 @@ def format_cell(row, key, state_labels=None):
     v = row.get(key)
     if fmt == "base":
         return row.get("_base_label") or ""
+    if fmt == "flag":
+        return next((x["icon"] for x in flags_mod.DEFAULT_LISTS if x["id"] == row.get("flag")), "")
     if fmt == "state":
         return (state_labels or {}).get(v, "")
     if fmt == "pbox":
@@ -99,6 +102,8 @@ def sort_value(row, key):
     fmt = definition(key)[3]
     if fmt == "pbox":
         return (False, row.get("pbox_rank", 9))
+    if fmt == "flag":
+        return (False, flags_mod.IDS.index(row["flag"]) if row.get("flag") in flags_mod.IDS else 99)
     if fmt == "base":
         v = row.get("_base_label")
     else:

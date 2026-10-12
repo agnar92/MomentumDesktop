@@ -55,6 +55,7 @@ def test_windows_open_and_select_box(app):
     ch.update()
     assert ch.geoms["bars"]["i1"] > 0 and ch.unit() == "sesji"
     app.open_canslim("NVDA")
+    app.open_criteria()
     app.open_scanner()
     app.scanner.vars["cs_min"].set("5")
     app.scanner.cs_core.set(True)

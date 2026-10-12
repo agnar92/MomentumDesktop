@@ -196,3 +196,78 @@ def test_launcher_orders_by_recent_and_session_is_restored(app, tmp_path):
         assert app2.launcher is not None and app2.launcher.winfo_exists()
     finally:
         app2.root.destroy()
+
+
+def test_closing_main_window_keeps_app_alive_while_other_windows_open(app, monkeypatch):
+    from desktop import app as A
+    from desktop import scanners
+    sc = scanners.upsert(app.data_root, {"name": "Drugi"}, "geo_usa", 20)
+    app.open_scanner_window(sc["id"])
+    app.root.update()
+    quits = []
+    monkeypatch.setattr(app, "quit_app", lambda: quits.append(1))
+    app.close_main()                                         # są inne okna -> główne się chowa, program żyje
+    app.root.update()
+    assert not quits and app.root.state() == "withdrawn" and app.main_hidden and app.launcher.winfo_exists()
+    app.launcher.box.selection_clear(0, "end")
+    app.launcher.box.selection_set(app.launcher.ids.index(scanners.DEFAULT_ID))
+    app.launcher.open()                                      # powrót do głównego z małego okna
+    app.root.update()
+    assert app.root.state() == "normal" and not app.main_hidden
+    app.close_main()
+    app.window_closed(sc["id"])                              # ostatni skaner zamknięty, główne schowane -> zostaje małe okno
+    assert app.launcher.winfo_exists() and not quits
+    app.save_session()
+    app.quit_app = lambda: None
+    app2 = A.App(app.data_root)                              # sesja: główne było schowane -> start też bez głównego, z małym oknem
+    try:
+        app2.root.update()
+        assert app2.root.state() == "withdrawn" and app2.launcher is not None and app2.launcher.winfo_exists()
+    finally:
+        app2.root.destroy()
+
+
+def test_closing_main_window_with_nothing_else_quits(app, monkeypatch):
+    quits = []
+    monkeypatch.setattr(app, "quit_app", lambda: quits.append(1))
+    app.close_main()
+    assert quits == [1]
+
+
+def test_hover_tooltip_and_sma_detection(app):
+    v = app.view
+    v.open_chart("NVDA")
+    ch = v.chart
+    ch.update()
+    ch.tf.set("D")
+    ch.change_tf()
+    ch.mode.set("bars")
+    ch.redraw()
+    ch.update()
+    g = ch.geoms["bars"]
+    full, dates, _spx, smas = ch.series()
+    i = g["i1"] - 5
+    arr50 = next(a for a, n in smas if n == 50)
+    Ev = type("E", (), {})
+    e = Ev()
+    e.x, e.y = g["xf"](i), g["y"](arr50[i]) + 2             # kursor tuż przy linii SMA 50
+    assert ch.hovered_sma(g, e, i, smas) == 50
+    e.y = g["y"](arr50[i]) - 120
+    assert ch.hovered_sma(g, e, i, smas) in (None, 10, 200)  # daleko od linii 50
+    e.y = g["y"](arr50[i]) + 2
+    ch.on_motion(e, ch.cv_bars)
+    texts = [ch.cv_bars.itemcget(it, "text") for it in ch.cv_bars.find_withtag("cross") if ch.cv_bars.type(it) == "text"]
+    assert any(t.startswith("SMA 50 (dzienna)") for t in texts) and any("do szczytu 52t" in t for t in texts)
+    ch.mode.set("darcard")
+    ch.redraw()
+    ch.update()
+    gc = ch.geoms["card"]
+    e.x, e.y = gc["xf"](gc["i1"] - 3), gc["H"] // 2
+    ch.on_motion(e, ch.cv_card)
+    texts = [ch.cv_card.itemcget(it, "text") for it in ch.cv_card.find_withtag("cross") if ch.cv_card.type(it) == "text"]
+    assert any(t.startswith("zamknięcie") for t in texts)
+    ch.log.set(False)                                         # przełącznik skali log -> liniowa przerysowuje się bez błędu
+    ch.macd_on.set(False)
+    ch.mode.set("bars")
+    ch.redraw()
+    ch.update()

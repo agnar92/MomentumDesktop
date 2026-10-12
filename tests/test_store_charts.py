@@ -82,3 +82,44 @@ def test_slider_geometry_and_drag():
     assert charts.slider_drag("left", (100, 300), 5000, 300, 608) == (charts.MIN_WEEKS, 300)
     assert charts.slider_drag("right", (100, 200), 100, 300, 608) == (150, 250)
     assert charts.slider_jump(304, 300, 100, 608) == (100, 200)
+
+
+def test_log_scale_and_ticks():
+    y = charts.make_scale(100, 400, 0, 100, True)
+    assert round(y(100)) == 100 and round(y(400)) == 0 and round(y(200)) == 50          # podwojenie ceny = ten sam odstęp
+    yl = charts.make_scale(100, 400, 0, 100, False)
+    assert round(yl(200)) == 67                                                          # na skali liniowej nie
+    assert round(charts.make_scale(0, 10, 0, 100, True)(5)) == 50                       # lo = 0 -> awaryjnie liniowo
+    t = charts.price_ticks(10, 1000, 8, True)
+    assert t[0] >= 10 and t[-1] <= 1000 and len(t) <= 8 and 100 in t and all(a < b for a, b in zip(t, t[1:]))
+    assert charts.price_ticks(200, 240, 6, True) == charts.nice_ticks(200, 240, 6)       # wąski zakres: okrągłe liczby liniowe
+    assert charts.price_ticks(10, 1000, 8, False) == charts.nice_ticks(10, 1000, 8)
+
+
+def _series():
+    import json
+    from pathlib import Path
+    d = json.loads((Path(__file__).resolve().parent.parent / "seed_data" / "charts_daily.json").read_text(encoding="utf-8"))
+    full = d["stocks"]["NVDA"]
+    from desktop import daily
+    smas = [(daily.sma(full["c"], n), n) for n in (10, 50, 200)]
+    return full, d["dates"], smas
+
+
+def test_tooltip_bars_contents_and_sma_hover():
+    full, dates, smas = _series()
+    i = len(dates) - 1
+    lines = [t for t, _ in charts.tooltip_bars(full, dates, i, smas, "D")]
+    assert lines[0].startswith(dates[i]) and any(t.startswith("SMA 50:") and "cena" in t for t in lines) and any("do szczytu 52t" in t for t in lines)
+    assert any(t.startswith("wolumen") and "średniej 50" in t for t in lines) and any(t.startswith("MACD") for t in lines)
+    hov = charts.tooltip_bars(full, dates, i, smas, "D", hover=50)
+    assert hov[0][0].startswith("SMA 50 (dzienna) =") and "średnia" in hov[2][0] and hov[0][1] == charts.SMA_COLORS[50]
+    assert charts.tooltip_bars(full, dates, -1, smas, "D") == [] and charts.tooltip_bars(full, dates, 10 ** 6, smas, "D") == []
+
+
+def test_tooltip_card_distance_to_box_levels():
+    c = [10, 10.5, 11, 12, 11.5, 11.2, 11.4, 11.1, 11.8, 11.9, 11.6, 11.7]
+    full = {"c": c}
+    lines = [t for t, _ in charts.tooltip_card(full, [f"d{k}" for k in range(len(c))], len(c) - 1, "W")]
+    assert any(t.startswith("box ") for t in lines) and any(t.startswith("do wybicia") and "+2.6%" in t for t in lines)   # 12 / 11.7 - 1
+    assert any(t.startswith("do exitu") and "-" in t for t in lines)

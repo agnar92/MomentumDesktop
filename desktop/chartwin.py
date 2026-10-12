@@ -32,6 +32,10 @@ class ChartWindow(tk.Toplevel):
         tk.Label(head, text=" ", bg=PANEL).pack(side="right")
         for text, val in (("Dzień", "D"), ("Tydz.", "W")):
             tk.Radiobutton(head, text=text, value=val, variable=self.tf, command=self.change_tf, bg=PANEL, indicatoron=False, padx=8).pack(side="right", padx=1, pady=3)
+        self.log = tk.BooleanVar(value=True)    # skala logarytmiczna ceny (domyślnie); L przełącza
+        self.macd_on = tk.BooleanVar(value=True)
+        tk.Checkbutton(head, text="MACD", variable=self.macd_on, command=self.redraw, bg=PANEL).pack(side="right", padx=4)
+        tk.Checkbutton(head, text="log", variable=self.log, command=self.redraw, bg=PANEL).pack(side="right", padx=4)
         self.cs_btn = tk.Button(head, text="CANSLIM", command=lambda: view.open_canslim(self.ticker), relief="flat", padx=8)
         self.cs_btn.pack(side="right", padx=8)
         self.slider = tk.Canvas(self, height=46, bg=BG, highlightthickness=0, cursor="sb_h_double_arrow")
@@ -68,7 +72,8 @@ class ChartWindow(tk.Toplevel):
             cv.bind("<Leave>", lambda e: self.cv_bars.delete("cross") or self.cv_card.delete("cross"))
         for key, fn in (("<Up>", lambda e: view.step_chart(-1)), ("<Down>", lambda e: view.step_chart(1)),
                         ("<Left>", lambda e: self.scroll(-4)), ("<Right>", lambda e: self.scroll(4)),
-                        ("<space>", lambda e: self.toggle_mode()), ("<plus>", lambda e: self.zoom(0.85)), ("<minus>", lambda e: self.zoom(1.18)),
+                        ("<space>", lambda e: self.toggle_mode()), ("<l>", lambda e: (self.log.set(not self.log.get()), self.redraw())),
+                        ("<m>", lambda e: (self.macd_on.set(not self.macd_on.get()), self.redraw())), ("<plus>", lambda e: self.zoom(0.85)), ("<minus>", lambda e: self.zoom(1.18)),
                         ("<Escape>", lambda e: self.deselect() if self.selected is not None else self.focus_box and self.clear_focus() or self.destroy())):
             self.bind(key, fn)
         self.set_ticker(ticker)
@@ -161,10 +166,10 @@ class ChartWindow(tk.Toplevel):
         pinned = st.pinned.get(self.ticker)
         if self.mode.get() == "darcard":
             self.update_idletasks()
-            self.geoms["card"] = charts.draw_darcard(self.cv_card, full, dates, win, {"pinned": pinned, "selected": self.selected})
+            self.geoms["card"] = charts.draw_darcard(self.cv_card, full, dates, win, {"pinned": pinned, "selected": self.selected, "log": self.log.get()})
             self.hit_geom = self.geoms["card"]
         if self.mode.get() == "bars":
-            opts = {"macd": True, "spx": True, "smas": smas, "tf": self.tf.get()}
+            opts = {"macd": self.macd_on.get(), "spx": True, "smas": smas, "tf": self.tf.get(), "log": self.log.get()}
             fb = self.focus_box or (self.selected_box())
             if fb:
                 opts["tags"] = [(fb["top"], charts.GREEN), (fb["bottom"], charts.WHITE), (round(fb["bottom"] * 0.95, 2), charts.RED)]
@@ -176,23 +181,46 @@ class ChartWindow(tk.Toplevel):
                 opts["pivot"] = row["pivot"]
             self.geoms["bars"] = charts.draw_bars(self.cv_bars, full, dates, spx, win, opts)
 
+    SMA_HOVER_PX = 6   # tak blisko linii średniej (w pikselach) kursor ją „łapie”
+
+    def hovered_sma(self, geom, e, i, smas):
+        """n średniej, której linia przebiega najbliżej kursora (w granicach SMA_HOVER_PX), albo None."""
+        best, best_d = None, self.SMA_HOVER_PX + 1
+        for arr, n in smas:
+            if i < len(arr) and arr[i] is not None:
+                d = abs(geom["y"](arr[i]) - e.y)
+                if d < best_d:
+                    best, best_d = n, d
+        return best
+
     def on_motion(self, e, cv):
-        geom = self.geoms.get("card" if cv is self.cv_card else "bars")
+        name = "card" if cv is self.cv_card else "bars"
+        geom = self.geoms.get(name)
         i = charts.week_at(geom, e.x)
-        full = self.full
+        full, dates, _spx, smas = self.series()
         for c in (self.cv_card, self.cv_bars):
             c.delete("cross")
         if i is None or not full or i >= len(full["c"]) or full["c"][i] is None:
             return
-        for name, c in (("card", self.cv_card), ("bars", self.cv_bars)):
-            g = self.geoms.get(name)
+        for nm, c in (("card", self.cv_card), ("bars", self.cv_bars)):
+            g = self.geoms.get(nm)
             if g and c.winfo_ismapped():
                 x = g["xf"](i)
                 c.create_line(x, g["p_top"], x, g["m_bot"], fill="#3a4350", tags="cross", dash=(2, 2))
-        dates = self.dates
-        w = dates[i] if i < len(dates) else ""
+        tf = self.tf.get()
+        if name == "bars":
+            hover = self.hovered_sma(geom, e, i, smas) if e.y <= geom.get("p_bot", geom["m_bot"]) else None
+            if hover is not None:   # podświetlenie linii średniej, nad którą jest kursor
+                arr = next(a for a, n in smas if n == hover)
+                pts = [(geom["xf"](j), geom["y"](arr[j])) for j in range(geom["i0"], min(geom["i1"], len(arr))) if arr[j] is not None]
+                if len(pts) > 1:
+                    cv.create_line(*[v for p in pts for v in p], fill=charts.SMA_COLORS.get(hover, charts.SMA40), width=4, tags="cross")
+            lines = charts.tooltip_bars(full, dates, i, smas, tf, hover)
+        else:
+            lines = charts.tooltip_card(full, dates, i, tf)
+        charts.draw_tooltip(cv, e.x, e.y, lines)
         f = full
-        self.read.config(text=f"  {w}   H {f['h'][i]:.2f}  L {f['l'][i]:.2f}  C {f['c'][i]:.2f}   Wol {charts.fmt_vol(f['v'][i]) if f['v'][i] is not None else '-'}")
+        self.read.config(text=f"  {dates[i] if i < len(dates) else ''}   H {f['h'][i]:.2f}  L {f['l'][i]:.2f}  C {f['c'][i]:.2f}   Wol {charts.fmt_vol(f['v'][i]) if f['v'][i] is not None else '-'}")
 
     # --- zaznaczanie boxów (Dar-Card)
     def selected_box(self):

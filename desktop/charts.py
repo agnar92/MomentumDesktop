@@ -34,8 +34,39 @@ def nice_ticks(lo, hi, n=8):
     return out
 
 
+def make_scale(lo, hi, y0, y1, log=True):
+    """Skala ceny: logarytmiczna (domyślnie) albo liniowa; wartości ≤ 0 są obcinane, żeby log nie wybuchał."""
+    if log and lo > 0 and hi > lo:
+        a, b = math.log(lo), math.log(hi)
+        return lambda v: y1 - (math.log(max(v, lo * 0.01)) - a) / (b - a) * (y1 - y0)
+    return _scale(lo, hi, y0, y1)
+
+
+_LOG_SETS = [(1, 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.8, 2, 2.2, 2.5, 2.8, 3, 3.5, 4, 4.5, 5, 5.5, 6, 7, 8, 9),
+             (1, 1.2, 1.5, 2, 2.5, 3, 4, 5, 6, 8), (1, 1.5, 2, 3, 5, 7), (1, 2, 3, 5), (1, 2, 5), (1, 3), (1,)]
+
+
+def price_ticks(lo, hi, n=8, log=True):
+    """Podziałka osi ceny: na skali log równe ‑ procentowo okrągłe wartości (1, 1.5, 2, 3, 5, 7 × 10^k), na wąskim zakresie okrągłe liczby liniowe."""
+    if not (hi > lo) or lo <= 0:
+        return nice_ticks(lo, hi, n)
+    if not log or hi / lo < 1.6:
+        return nice_ticks(lo, hi, n)
+    k0, k1 = math.floor(math.log10(lo)), math.ceil(math.log10(hi))
+    for mults in _LOG_SETS:
+        vals = [round(m * 10 ** k, 10) for k in range(k0, k1 + 1) for m in mults]
+        vals = [v for v in vals if lo <= v <= hi]
+        if len(vals) <= n:
+            return vals
+    return vals[:1]
+
+
 def fmt_price(v):
     return f"{v:.0f}" if abs(v) >= 1000 else f"{v:.2f}"
+
+
+def fmt_macd(v):
+    return f"{v:.2f}" if abs(v) >= 0.1 else f"{v:.3f}"
 
 
 def fmt_vol(v):
@@ -140,9 +171,10 @@ def draw_bars(cv, full, weeks, spx, win, opts=None):
         return {}
     i0, i1 = win
     n = i1 - i0 + FUTURE_SLOTS
+    log = opts.get("log", True)
     show_macd = opts.get("macd", True) and H > 330
-    h_macd = int((H - TOP - BOTTOM) * 0.17) if show_macd else 0
-    h_vol = int((H - TOP - BOTTOM) * 0.15)
+    h_macd = max(86, int((H - TOP - BOTTOM) * 0.22)) if show_macd else 0
+    h_vol = int((H - TOP - BOTTOM) * 0.13)
     p_top, p_bot = TOP, H - BOTTOM - h_vol - h_macd - 4
     v_top, v_bot = p_bot + 4, p_bot + 4 + h_vol
     m_top, m_bot = v_bot + 4, H - BOTTOM
@@ -158,15 +190,20 @@ def draw_bars(cv, full, weeks, spx, win, opts=None):
     extra = [v for v in (opts.get("levels") or []) if v]
     lo, hi = min(ls + extra), max(hs + extra)
     smas = opts.get("smas") or [(full.get("sma10") or [], 10), (full.get("sma40") or [], 40)]
-    pad = (hi - lo) * 0.05
-    band = 0.0
-    if opts.get("spx") and spx:
-        band = 0.2   # S&P 500 jak w książce: cienka linia w górnym pasie wykresu, własna skala
-    hi_s = hi + pad + (hi - lo + 2 * pad) * band / (1 - band) if band else hi + pad
-    lo_s = lo - pad
-    y = _scale(lo_s, hi_s, p_top, p_bot)
+    band = 0.2 if opts.get("spx") and spx else 0.0   # S&P 500 jak w książce: cienka linia w górnym pasie wykresu, własna skala
+    if log and lo > 0:
+        pad = math.log(hi / lo) * 0.05 + 0.002   # margines w procentach, nie w dolarach
+        span = math.log(hi / lo) + 2 * pad
+        lo_s = math.exp(math.log(lo) - pad)
+        hi_price = math.exp(math.log(hi) + pad)
+        hi_s = math.exp(math.log(hi_price) + span * band / (1 - band)) if band else hi_price
+    else:
+        pad = (hi - lo) * 0.05
+        lo_s, hi_price = lo - pad, hi + pad
+        hi_s = hi_price + (hi - lo + 2 * pad) * band / (1 - band) if band else hi_price
+    y = make_scale(lo_s, hi_s, p_top, p_bot, log)
     # siatka + oś ceny
-    for t in nice_ticks(lo_s, hi + pad, max(4, (p_bot - p_top) // 38)):   # podziałka tylko w zakresie cen (nie w pasie S&P)
+    for t in price_ticks(lo_s, hi_price, max(4, (p_bot - p_top) // 38), log):   # podziałka tylko w zakresie cen (nie w pasie S&P)
         yy = y(t)
         cv.create_line(LEFT, yy, W - RIGHT, yy, fill=GRID)
         cv.create_text(W - RIGHT + 4, yy, text=fmt_price(t), fill=DIM, font=FONT, anchor="w")
@@ -176,7 +213,7 @@ def draw_bars(cv, full, weeks, spx, win, opts=None):
         sv = _finite(seg(spx))
         if sv:
             s_lo, s_hi = min(sv), max(sv)
-            ys = _scale(s_lo, s_hi, p_top + 2, p_top + (p_bot - p_top) * band - 6)
+            ys = make_scale(s_lo, s_hi, p_top + 2, p_top + (p_bot - p_top) * band - 6, log)
             pts = [(xf(i), ys(spx[i])) for i in range(i0, min(i1, len(spx))) if spx[i] is not None]
             if len(pts) > 1:
                 cv.create_line(*[v for p in pts for v in p], fill=SPX)
@@ -194,6 +231,15 @@ def draw_bars(cv, full, weeks, spx, win, opts=None):
         pts = [(xf(i), y(arr[i])) for i in range(i0, min(i1, len(arr))) if arr[i] is not None and lo_s <= arr[i] <= hi_s]
         if len(pts) > 1:
             cv.create_line(*[v for p in pts for v in p], fill=col, width=1)
+    # legenda średnich (żeby było wiadomo, która linia to która)
+    lx = LEFT + 4
+    ly = p_top + (p_bot - p_top) * band + 6 if band else p_top + 6
+    for arr, n_ma in smas:
+        col = SMA_COLORS.get(n_ma, SMA40)
+        label = f"SMA {n_ma}"
+        cv.create_line(lx, ly + 6, lx + 16, ly + 6, fill=col, width=2)
+        cv.create_text(lx + 20, ly + 6, text=label, fill=col, font=FONT, anchor="w")
+        lx += 20 + 8 * len(label) + 12
     # słupki HLC (zamknięcie po obu stronach, bez open)
     half = max(1.0, step * 0.32)
     vol = full.get("v") or []
@@ -225,25 +271,48 @@ def draw_bars(cv, full, weeks, spx, win, opts=None):
         yy = y(c[last])
         cv.create_line(LEFT, yy, W - RIGHT, yy, fill=GREEN if up else RED, dash=(1, 3))
         _tag(cv, W - RIGHT + 2, yy, fmt_price(c[last]), GREEN if up else RED)
-    # MACD
+    # MACD (czytelny: tło panelu, 4-kolorowy histogram, grube linie, znaczniki przecięć, wartości na osi i w tytule)
     if show_macd:
         line, sg, hist = macd(c)
         vals = _finite(seg(line) + seg(sg) + seg(hist)) or [0.0]
         m = max(abs(min(vals)), abs(max(vals))) or 1
-        ym = _scale(-m, m, m_top + 2, m_bot - 2)
-        cv.create_line(LEFT, ym(0), W - RIGHT, ym(0), fill=GRID, dash=(2, 3))
+        top, bot = m_top + 16, m_bot - 3
+        ym = _scale(-m, m, top, bot)
+        cv.create_rectangle(LEFT, m_top - 2, W - RIGHT, m_bot, fill="#0f141a", outline=GRID)
+        for v, lab in ((m, f"+{fmt_macd(m)}"), (0, "0"), (-m, f"−{fmt_macd(m)}")):
+            cv.create_line(LEFT, ym(v), W - RIGHT, ym(v), fill="#2a313b" if v == 0 else GRID, dash=() if v == 0 else (2, 4))
+            cv.create_text(W - RIGHT + 4, ym(v), text=lab, fill=DIM, font=FONT, anchor="w")
+        bw = max(2, step * 0.62) / 2
         for i in range(i0, min(i1, len(hist))):
-            if hist[i] is not None:
-                cv.create_line(xf(i), ym(0), xf(i), ym(hist[i]), fill="#2f9e5f" if hist[i] >= 0 else "#b03a3a", width=max(1, int(step * 0.5)))
+            hv = hist[i]
+            if hv is None:
+                continue
+            prev = hist[i - 1] if i > 0 and hist[i - 1] is not None else hv
+            rising = hv >= prev
+            col = ("#2fbf71" if rising else "#1d7a49") if hv >= 0 else ("#9b3b3b" if rising else "#e5484d")   # jasny = narasta, ciemny = słabnie
+            cv.create_rectangle(xf(i) - bw, ym(0), xf(i) + bw, ym(hv), fill=col, outline="")
         for arr, col in ((line, LINE), (sg, "#ff9f43")):
             pts = [(xf(i), ym(arr[i])) for i in range(i0, min(i1, len(arr))) if arr[i] is not None]
             if len(pts) > 1:
-                cv.create_line(*[v for p in pts for v in p], fill=col)
-        for i in range(max(i0, 1), min(i1, len(line))):   # czerwony ▼ przy przecięciu sygnału w dół
-            if None not in (line[i], sg[i], line[i - 1], sg[i - 1]) and line[i - 1] >= sg[i - 1] and line[i] < sg[i]:
-                cv.create_text(xf(i), m_top + 2, text="▼", fill=RED, font=FONT, anchor="n")
-        cv.create_text(LEFT + 4, m_top, text=f"MACD (12, 26, 9) {'dzienny' if opts.get('tf') == 'D' else 'tygodniowy'}", fill=DIM, font=FONT, anchor="nw")
-    return {"kind": "bars", "W": W, "H": H, "i0": i0, "i1": i1, "step": step, "xf": xf, "y": y, "p_top": p_top, "m_bot": m_bot}
+                cv.create_line(*[v for p in pts for v in p], fill=col, width=2)
+        for i in range(max(i0, 1), min(i1, len(line))):   # przecięcia MACD z sygnałem: ▲ w górę (zielony), ▼ w dół (czerwony)
+            if None in (line[i], sg[i], line[i - 1], sg[i - 1]):
+                continue
+            up = line[i - 1] <= sg[i - 1] and line[i] > sg[i]
+            down = line[i - 1] >= sg[i - 1] and line[i] < sg[i]
+            if up or down:
+                x, yy = xf(i), ym(line[i])
+                d = -9 if up else 9
+                cv.create_polygon(x, yy + d, x - 5, yy + d * 1.9, x + 5, yy + d * 1.9, fill=GREEN if up else RED, outline="")
+        li = max((i for i in range(i0, min(i1, len(line))) if line[i] is not None and sg[i] is not None), default=None)
+        x = LEFT + 6
+        for text, col in (("MACD 12·26·9 " + ("dzienny" if opts.get("tf") == "D" else "tygodniowy") + "   ", TEXT),
+                          (f"MACD {fmt_macd(line[li])}   " if li is not None else "", LINE), (f"sygnał {fmt_macd(sg[li])}   " if li is not None else "", "#ff9f43"),
+                          (f"hist {hist[li]:+.2f}" if li is not None and hist[li] is not None else "", GREEN if (hist[li] or 0) >= 0 else RED)):
+            if text:
+                t = cv.create_text(x, m_top + 3, text=text, fill=col, font=FONT, anchor="nw")
+                x = cv.bbox(t)[2]
+    return {"kind": "bars", "W": W, "H": H, "i0": i0, "i1": i1, "step": step, "xf": xf, "y": y, "p_top": p_top, "p_bot": p_bot, "m_bot": m_bot, "smas": smas}
 
 
 # ---------- Dar-Card ----------
@@ -270,14 +339,18 @@ def draw_darcard(cv, full, weeks, win, opts=None):
     pin = opts.get("pinned")
     lo = min(cs + [b["bottom"] * (1 - darvas.STOP_PCT / 100) for _, b in vis] + ([pin["bottom"] * 0.95] if pin else []))
     hi = max(cs + [b["top"] for _, b in vis] + ([pin["top"]] if pin else []))
-    pad = (hi - lo) * 0.06
-    lo, hi = lo - pad, hi + pad
-    y = _scale(lo, hi, TOP, H - BOTTOM)
+    log = opts.get("log", True)
+    if log and lo > 0:
+        pad = math.log(hi / lo) * 0.06 + 0.002
+        lo, hi = math.exp(math.log(lo) - pad), math.exp(math.log(hi) + pad)
+    else:
+        pad = (hi - lo) * 0.06
+        lo, hi = lo - pad, hi + pad
+    y = make_scale(lo, hi, TOP, H - BOTTOM, log)
     cv.create_rectangle(LEFT, TOP, W - RIGHT, H - BOTTOM, fill=PAPER, outline=GRID)
-    ticks = nice_ticks(lo, hi, max(6, (H - TOP - BOTTOM) // 14))   # gęste linie jak na kartce w linie
-    for k, t in enumerate(ticks):
+    for t in price_ticks(lo, hi, max(6, (H - TOP - BOTTOM) // 14), log):   # gęste linie jak na kartce w linie
         cv.create_line(LEFT, y(t), W - RIGHT, y(t), fill=GRID)
-    for t in nice_ticks(lo, hi, max(4, (H - TOP - BOTTOM) // 36)):
+    for t in price_ticks(lo, hi, max(4, (H - TOP - BOTTOM) // 36), log):
         cv.create_text(W - RIGHT + 4, y(t), text=fmt_price(t), fill=DIM, font=FONT, anchor="w")
     _x_axis(cv, weeks, i0, i1, xf, H - BOTTOM + 3, W)
     # linia zamknięć z kropkami (boxy rysowane na wierzchu, więc linia widoczna tylko poza nimi)
@@ -406,7 +479,7 @@ def draw_slider(cv, closes, n_show, end, unit="tyg."):
         return
     total = len(closes)
     lo, hi = min(vals), max(vals)
-    y = _scale(lo, hi, 6, H - 6)
+    y = make_scale(lo, hi, 6, H - 6, True)   # minimapa też na skali log
     x0, x1 = slider_rect(total, n_show, end, W)
     cv.create_rectangle(x0, 0, x1, H, fill="#16202c", outline="")   # tło wybranego okna jaśniejsze od reszty toru
     pts = [(4 + (i + 0.5) / total * (W - 8), y(v)) for i, v in enumerate(closes) if v is not None]
@@ -417,3 +490,98 @@ def draw_slider(cv, closes, n_show, end, unit="tyg."):
         cv.create_rectangle(x - 3, H / 2 - 9, x + 3, H / 2 + 9, fill=LINE, outline="")
     cv.create_text(x1 - 6 if x1 - x0 > 90 else x1 + 6, 4, text=f"{n_show} {unit}", fill=TEXT, font=FONT,
                    anchor="ne" if x1 - x0 > 90 else "nw")
+
+
+# ---------- dymek z danymi przy kursorze ----------
+
+def _pct(a, b):
+    return None if not (_ok_num(a) and _ok_num(b)) or b == 0 else (a / b - 1) * 100
+
+
+def _ok_num(v):
+    return isinstance(v, (int, float)) and math.isfinite(v)
+
+
+def tooltip_bars(full, dates, i, smas, tf, hover=None):
+    """Linie dymku dla słupka i: [(tekst, kolor)]. hover = n średniej, nad którą jest kursor (dostaje nagłówek i opis nachylenia)."""
+    c, h, lo, v = full["c"], full["h"], full["l"], full.get("v") or []
+    if i < 0 or i >= len(c) or c[i] is None:
+        return []
+    per = 252 if tf == "D" else 52          # okno „52 tygodni”
+    avg_n = 50 if tf == "D" else 10         # średnia wolumenu: 50 sesji / 10 tygodni
+    unit = "sesji" if tf == "D" else "tyg."
+    out = []
+    if hover is not None:
+        arr = next((a for a, n in smas if n == hover), None)
+        val = arr[i] if arr and i < len(arr) else None
+        if _ok_num(val):
+            back = arr[i - 10] if i >= 10 and arr[i - 10] is not None else None
+            slope = _pct(val, back)
+            out.append((f"SMA {hover} ({'dzienna' if tf == 'D' else 'tygodniowa'}) = {val:.2f}", SMA_COLORS.get(hover, SMA40)))
+            out.append((f"cena {_pct(c[i], val):+.1f}% {'nad' if c[i] >= val else 'pod'} średnią", TEXT))
+            if slope is not None:
+                out.append((f"średnia {'rośnie' if slope >= 0 else 'spada'}: {slope:+.1f}% / 10 {unit}", GREEN if slope >= 0 else RED))
+            out.append(("─" * 22, DIM))
+    out.append((f"{dates[i] if i < len(dates) else ''}   ({'dzień' if tf == 'D' else 'tydzień'})", WHITE))
+    out.append((f"H {h[i]:.2f}   L {lo[i]:.2f}   C {c[i]:.2f}", TEXT))
+    prev = c[i - 1] if i > 0 else None
+    chg = _pct(c[i], prev)
+    if chg is not None:
+        out.append((f"zmiana {chg:+.2f}% vs poprzedni", GREEN if chg >= 0 else RED))
+    if i < len(v) and v[i] is not None:
+        past = [x for x in v[max(0, i - avg_n):i] if x is not None]
+        ratio = v[i] / (sum(past) / len(past)) if len(past) >= 3 and sum(past) > 0 else None
+        out.append((f"wolumen {fmt_vol(v[i])}" + (f"  ({ratio:.2f}× średniej {avg_n})" if ratio else ""), GOLD if ratio and ratio >= 1.4 else TEXT))
+    for arr, n_ma in smas:
+        if i < len(arr) and _ok_num(arr[i]):
+            d = _pct(c[i], arr[i])
+            out.append((f"SMA {n_ma}: {arr[i]:.2f}   cena {d:+.1f}%", SMA_COLORS.get(n_ma, SMA40)))
+    hi52 = max(_finite(h[max(0, i - per + 1):i + 1]) or [None], default=None)
+    lo52 = min(_finite(lo[max(0, i - per + 1):i + 1]) or [None], default=None)
+    if hi52 and lo52:
+        out.append((f"do szczytu 52t: {_pct(c[i], hi52):+.1f}%   od dołka: {_pct(c[i], lo52):+.0f}%", DIM if _pct(c[i], hi52) < -10 else GREEN))
+    line, sg, hist = macd(c)
+    if i < len(line) and line[i] is not None and sg[i] is not None:
+        out.append((f"MACD {fmt_macd(line[i])}  sygnał {fmt_macd(sg[i])}  hist {hist[i]:+.2f}", LINE))
+    return out
+
+
+def tooltip_card(full, dates, i, tf):
+    """Dymek na Dar-Card: zamknięcie, zmiana oraz odległość do góry / dołu / exitu boxa, w którym albo najbliżej którego jesteśmy."""
+    c = full["c"]
+    if i < 0 or i >= len(c) or c[i] is None:
+        return []
+    out = [(f"{dates[i] if i < len(dates) else ''}   ({'dzień' if tf == 'D' else 'tydzień'})", WHITE), (f"zamknięcie {c[i]:.2f}", TEXT)]
+    chg = _pct(c[i], c[i - 1] if i > 0 else None)
+    if chg is not None:
+        out.append((f"zmiana {chg:+.2f}% vs poprzedni", GREEN if chg >= 0 else RED))
+    bx = [b for b in darvas.boxes(c) if b["i0"] <= i]
+    if bx:
+        b = bx[-1]
+        stop = b["bottom"] * (1 - darvas.STOP_PCT / 100)
+        state = "w boxie" if b["bottom"] <= c[i] <= b["top"] else "nad boxem" if c[i] > b["top"] else "pod boxem"
+        out.append(("─" * 22, DIM))
+        out.append((f"box {b['bottom']:.2f}–{b['top']:.2f} ({state})", WHITE))
+        out.append((f"do wybicia (góra): {_pct(b['top'], c[i]):+.1f}%", GREEN))
+        out.append((f"od dołu boxa: {_pct(c[i], b['bottom']):+.1f}%", TEXT))
+        out.append((f"do exitu ({stop:.2f}): {_pct(stop, c[i]):+.1f}%", RED))
+    return out
+
+
+def draw_tooltip(cv, x, y, lines, tag="cross"):
+    """Dymek przypięty do kursora z prawej strony (przeskakuje na lewą, gdy brakuje miejsca)."""
+    if not lines:
+        return
+    W, H = cv.winfo_width(), cv.winfo_height()
+    items = [cv.create_text(0, 0, text=t, fill=col, font=FONT, anchor="nw") for t, col in lines]
+    lh = 15
+    wd = max(cv.bbox(i)[2] - cv.bbox(i)[0] for i in items) + 14
+    ht = lh * len(lines) + 10
+    bx = x + 18 if x + 18 + wd < W - 4 else x - 18 - wd
+    by = max(4, min(y + 12, H - ht - 4))
+    box = cv.create_rectangle(bx, by, bx + wd, by + ht, fill="#10151b", outline="#3a4350")
+    cv.addtag_withtag(tag, box)
+    for n, item in enumerate(items):
+        cv.coords(item, bx + 7, by + 5 + n * lh)
+        cv.addtag_withtag(tag, item)
+        cv.tag_raise(item, box)

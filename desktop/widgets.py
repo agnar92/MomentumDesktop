@@ -3,6 +3,7 @@ import tkinter as tk
 from tkinter import ttk
 
 from . import columns as columns_mod
+from . import flags as flags_mod
 from . import store
 from .theme import BG, FG, apply_dark
 
@@ -12,9 +13,10 @@ STATE_COLORS = {"BUY": "#3ddc84", "SELL": "#ff5c5c", "OUT": "#ff9f43", "NOVOL": 
 class StockTable(tk.Frame):
     """Lista spółek (Treeview) z wybieranymi kolumnami i sortowaniem po nagłówku; Enter / dwuklik = otwórz wykres."""
 
-    def __init__(self, master, on_open, on_new_window=None, on_canslim=None, columns=None):
+    def __init__(self, master, on_open, on_new_window=None, on_canslim=None, columns=None, flags=None, on_flag=None):
         super().__init__(master, bg=BG)
         self.on_open, self.on_new_window = on_open, on_new_window
+        self.flags, self.on_flag = flags, on_flag
         self.rows, self.sort_col, self.sort_rev = [], None, False
         self.columns = list(columns or columns_mod.DEFAULT_COLUMNS)
         self.tf = "W"
@@ -28,6 +30,8 @@ class StockTable(tk.Frame):
         for st, col in STATE_COLORS.items():
             self.tree.tag_configure(st, foreground=col)
         self.tree.tag_configure("odd", background="#10141a")   # naprzemienne tło wierszy
+        for lst in flags_mod.DEFAULT_LISTS:   # tło wiersza z flagą własnej listy
+            self.tree.tag_configure(f"flag_{lst['id']}", background=lst["tint"])
         self._headings()
         self.tree.bind("<Double-1>", lambda e: self._open())
         self.tree.bind("<Return>", lambda e: self._open())
@@ -39,7 +43,22 @@ class StockTable(tk.Frame):
             menu.add_command(label="Wykres w nowym oknie", command=lambda: self.on_new_window(self.current()))
         if on_canslim:
             menu.add_command(label="CANSLIM — szczegóły…", command=lambda: on_canslim(self.current()))
-        self.tree.bind("<Button-3>", lambda e: (self.tree.selection_set(self.tree.identify_row(e.y)), menu.tk_popup(e.x_root, e.y_root)))
+        self.flag_menu = tk.Menu(menu, tearoff=0)
+        if flags and on_flag:
+            menu.add_cascade(label="Lista (klawisze 1–4, 0 = usuń)", menu=self.flag_menu)
+            self.tree.bind("<Key>", self._key)
+
+        def popup(e):
+            self.tree.selection_set(self.tree.identify_row(e.y))
+            self.flag_menu.delete(0, "end")
+            if self.flags and self.on_flag:
+                for n, lst in enumerate(self.flags.lists, 1):
+                    self.flag_menu.add_command(label=f"{n}  {lst['icon']} {lst['name']}", command=lambda lid=lst["id"]: self.on_flag(self.current(), lid))
+                self.flag_menu.add_separator()
+                self.flag_menu.add_command(label="0  Usuń z listy", command=lambda: self.on_flag(self.current(), None))
+            menu.tk_popup(e.x_root, e.y_root)
+
+        self.tree.bind("<Button-3>", popup)
 
     def _headings(self):
         self.tree.configure(columns=self.columns, displaycolumns=self.columns)
@@ -48,6 +67,16 @@ class StockTable(tk.Frame):
             self.tree.heading(cid, text=label, command=lambda c=cid: self.sort_by(c))
             self.tree.column(cid, width=w, anchor=anchor, stretch=False)
         self.set_tf_label(self.tf)
+
+    def _key(self, e):
+        """Klawisze 1–4 = flaga listy, 0 = zdjęcie flagi (działa na zaznaczonej spółce)."""
+        t = self.current()
+        if not t or not self.on_flag:
+            return
+        if e.char == "0":
+            self.on_flag(t, None)
+        elif e.char in ("1", "2", "3", "4") and int(e.char) <= len(self.flags.lists):
+            self.on_flag(t, self.flags.lists[int(e.char) - 1]["id"])
 
     def set_columns(self, cols):
         """Zmiana zestawu kolumn (wybór użytkownika); sortowanie po zniknęłej kolumnie jest kasowane."""
@@ -72,7 +101,7 @@ class StockTable(tk.Frame):
         self.tree.delete(*self.tree.get_children())
         for n, r in enumerate(rows):
             self.tree.insert("", "end", iid=r["ticker"], values=[columns_mod.format_cell(r, c, store.STATE_LABELS) for c in self.columns],
-                             tags=(r.get("darvas", ""), "odd" if n % 2 else "even"))
+                             tags=(r.get("darvas", ""), "odd" if n % 2 else "even") + ((f"flag_{r['flag']}",) if r.get("flag") else ()))
         if keep and self.tree.exists(keep):
             self.tree.selection_set(keep)
 

@@ -21,6 +21,16 @@ Prosta, „retro” aplikacja okienkowa (Python + Tkinter, styl TC2000) oparta n
   własny dziennik w osobnym oknie; ten sam skaner naraz tylko raz). Zamknięcie głównego okna nie kończy programu, dopóki są inne okna (główne się chowa, wracasz z małego okna). Małe okno **Skanery** (menu *Skanery → Szybkie okno skanerów*) pokazuje skanery
   w kolejności ostatniego otwarcia (● otwarty, ⟳ trwa sync); program zapamiętuje, które okna były otwarte, i przy następnym starcie je odtwarza
   (`data/session.json`).
+- **Co nowego od ostatniego Sync**: po każdej synchronizacji program porównuje listę skanera z poprzednią i pokazuje, kto wszedł (★) i wypadł, nowe
+  KUP (tydzień / dzień), nowe SPRZEDAJ, przypięte boxy w strefie zagrożenia i spółki, które weszły do CANSLIM ≥ 5/7. Okno otwiera się samo,
+  przycisk „Co nowego (n)” pokazuje liczbę zmian (sumują się do wyczyszczenia), a kolumna „Zmiana” oznacza spółki na liście.
+- **Własne listy z kolorowymi flagami** (jak flagi w TC2000): klawisze `1–4` na liście nadają zaznaczonej spółce flagę (⭐ Obserwuję, 🛒 Kupione,
+  ❗ Do sprawdzenia, 🚫 Odrzucone), `0` ją zdejmuje; wiersz dostaje kolor tła, flagi są wspólne dla wszystkich skanerów, nazwy zmienisz w Narzędzia →
+  Nazwy list, filtr „Lista” na pasku (dowolna / bez listy / konkretna).
+- **Eksport** (Narzędzia): kopiuj tickery do schowka (przecinki — np. do TradingView, albo po jednym w linii), zapisz tickery do .txt, zapisz CSV
+  z widocznymi kolumnami (wariant dla Excela PL: średnik i przecinek dziesiętny, albo standardowy).
+- **Średnia wolumenu** na wykresie: SMA 10 tygodni (tygodniowy) i SMA 50 sesji (dzienny) jako pomarańczowa linia w panelu wolumenu; słupki z wolumenem
+  ≥ 1,4× poprzedniej średniej (wolumen wybicia wg reguły Darvasa) mają złotą obwódkę.
 - **Filtr…** (osobne okno, na skaner) — filtry po już pobranych danych: RS, EPS Rating, Composite, CANSLIM (≥ n/7, opcjonalnie C i A
   obowiązkowe), odległość do pivotu, od szczytu 52 tyg., ADR, stan Darvasa, sektor, baza, przypięte boxy; gotowe skany; „Zastosuj na liście”.
 - **Boxy…** (osobne okno) — przegląd boxów Darvasa w sekcjach: monitorowane, nowe, KUP, do sprawdzenia, trzymaj, sprzedaj, czekaj.

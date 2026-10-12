@@ -3,14 +3,15 @@ wykresy, boxy, kreator skanerów Finviz, synchronizacja."""
 import queue
 import threading
 import tkinter as tk
-from tkinter import messagebox
+from tkinter import filedialog, messagebox, ttk
 
+from . import changes, exporter, finviz_codes, scanners, session, store, sync
 from . import columns as columns_mod
-from . import finviz_codes, scanners, session, store, sync
+from . import flags as flags_mod
 from .builder import ScannerEditor, ScannerManager
 from .chartwin import ChartWindow
 from .launcher import LauncherWindow
-from .dialogs import BoxesWindow, CanslimWindow, ColumnsWindow, FilterWindow, FinvizCriteriaWindow
+from .dialogs import BoxesWindow, CanslimWindow, ColumnsWindow, FilterWindow, FinvizCriteriaWindow, ListNamesWindow, WhatsNewWindow
 from .theme import BG, FG, PANEL, MenuBar, apply_dark, setup_style
 from .widgets import StockTable, SyncWindow
 
@@ -31,29 +32,48 @@ class ScannerView(tk.Frame):
         self.prices_btn.pack(side="left", padx=(6, 2), pady=5)
         self.fund_btn = tk.Button(tb, text="⟳ Fundamenty", command=lambda: self.start_sync(sync.FUNDAMENTALS), width=13, relief="flat")
         self.fund_btn.pack(side="left", padx=2)
-        for text, cmd in (("Filtr…", self.open_filter), ("Boxy…", self.open_boxes), ("Kolumny…", self.choose_columns),
-                          ("Kryteria Finviz", self.open_criteria), ("✎ Skaner…", self.edit_scanner)):
-            tk.Button(tb, text=text, command=cmd, relief="flat").pack(side="left", padx=(12 if text == "Filtr…" else 2, 2))
+        tk.Button(tb, text="Filtr…", command=self.open_filter, relief="flat").pack(side="left", padx=(12, 2))
+        tk.Button(tb, text="Boxy…", command=self.open_boxes, relief="flat").pack(side="left", padx=2)
+        self.news_btn = tk.Button(tb, text="Co nowego", command=self.open_changes, relief="flat")
+        self.news_btn.pack(side="left", padx=2)
+        mb = tk.Menubutton(tb, text="Narzędzia ▾", relief="flat", bg=PANEL, fg=FG, activebackground="#2d3744", padx=8)
+        tools = tk.Menu(mb, tearoff=0)
+        for item in (("Kolumny…", self.choose_columns), ("Kryteria Finviz (co synchronizujemy)", self.open_criteria), ("✎ Edytuj skaner…", self.edit_scanner), None,
+                     ("Kopiuj tickery (przecinki — np. do TradingView)", lambda: self.copy_tickers(",")), ("Kopiuj tickery (po jednym w linii)", lambda: self.copy_tickers("\n")),
+                     ("Zapisz tickery do pliku .txt…", self.save_tickers), ("Zapisz CSV — Excel PL (średnik)…", lambda: self.save_csv("xl")),
+                     ("Zapisz CSV — standardowy…", lambda: self.save_csv("std")), None, ("Nazwy list (flagi 1–4)…", self.app.edit_list_names)):
+            if item is None:
+                tools.add_separator()
+            else:
+                tools.add_command(label=item[0], command=item[1])
+        mb.config(menu=tools)
+        mb.pack(side="left", padx=2)
         self.tf = tk.StringVar(value=self.store.tf)
-        tk.Label(tb, text="Skala:", bg=PANEL).pack(side="left", padx=(14, 2))
+        tk.Label(tb, text="Skala:", bg=PANEL).pack(side="left", padx=(12, 2))
         for text, val in (("Tydzień", "W"), ("Dzień", "D")):
             tk.Radiobutton(tb, text=text, value=val, variable=self.tf, command=lambda: self.set_tf(self.tf.get()), bg=PANEL,
                            indicatoron=False, padx=9, relief="flat").pack(side="left", padx=1)
-        tk.Label(tb, text="Szukaj:", bg=PANEL).pack(side="left", padx=(14, 2))
+        tk.Label(tb, text="Lista:", bg=PANEL).pack(side="left", padx=(12, 2))
+        self.flag_filter = tk.StringVar(value="Wszystkie")
+        self.flag_box = ttk.Combobox(tb, textvariable=self.flag_filter, state="readonly", width=15)
+        self.flag_box.pack(side="left")
+        self.flag_box.bind("<<ComboboxSelected>>", lambda e: self.refresh_lists())
+        tk.Label(tb, text="Szukaj:", bg=PANEL).pack(side="left", padx=(12, 2))
         self.search = tk.StringVar()
         self.search.trace_add("write", lambda *_: self.refresh_lists())
-        tk.Entry(tb, textvariable=self.search, width=14, relief="flat").pack(side="left")
+        tk.Entry(tb, textvariable=self.search, width=12, relief="flat").pack(side="left")
         self.filter_lbl = tk.Label(tb, text="", bg=PANEL, fg="#ffd166")
         self.filter_lbl.pack(side="left", padx=8)
         self.age_lbl = tk.Label(tb, text="", bg=PANEL, anchor="e")
         self.age_lbl.pack(side="right", padx=8)
-        self.table = StockTable(self, self.open_chart, self.open_chart_new, self.open_canslim, columns=self.columns())
+        self.table = StockTable(self, self.open_chart, self.open_chart_new, self.open_canslim, columns=self.columns(), flags=app.flags, on_flag=self.set_flag)
         self.status = tk.Label(self, text="", anchor="w", bg=PANEL)
         self.status.pack(fill="x", side="bottom")
         self.table.pack(fill="both", expand=True)
         self.table.tree.bind("<Up>", lambda e: self.root.after_idle(self._link))
         self.table.tree.bind("<Down>", lambda e: self.root.after_idle(self._link))
         self.set_title()
+        self.app.flags.tag(self.store.rows)
         self.refresh_lists()
 
     # --- kolumny
@@ -82,8 +102,22 @@ class ScannerView(tk.Frame):
         self.refresh_lists()
 
     # --- lista
+    FLAG_CHOICES = {"Wszystkie": "", "Dowolna lista": "any", "Bez listy": "none"}
+
+    def _flag_code(self):
+        name = self.flag_filter.get()
+        if name in self.FLAG_CHOICES:
+            return self.FLAG_CHOICES[name]
+        return next((lst["id"] for lst in self.app.flags.lists if f"{lst['icon']} {lst['name']}" == name), "")
+
     def _rows(self):
-        return store.scan(self.store.rows, {**self.main_filter, "text": self.search.get()})
+        self.flag_box.config(values=list(self.FLAG_CHOICES) + [f"{lst['icon']} {lst['name']}" for lst in self.app.flags.lists])
+        return store.scan(self.store.rows, {**self.main_filter, "text": self.search.get(), "flag": self._flag_code()})
+
+    def set_flag(self, ticker, lid):
+        if ticker:
+            self.app.flags.set(ticker, lid)
+            self.app.refresh_flag_views()
 
     def refresh_lists(self):
         rows = self._rows()
@@ -95,6 +129,8 @@ class ScannerView(tk.Frame):
         self.status.config(text=f"  Dane z sesji: {wl.get('data_as_of', 'brak — kliknij Sync')}   Spółek: {len(rows)}/{len(self.store.rows)}   Rynek (M): {regime}"
                                 f"   Finviz: {'(stare dane!)' if wl.get('finviz_stale') else 'ok'}   Katalog: {self.store.dir}")
         self.filter_lbl.config(text="⚑ filtr aktywny" if any(v for v in self.main_filter.values()) else "")
+        n = changes.total(self.store.changes["diff"])
+        self.news_btn.config(text=f"Co nowego ({n})" if n else "Co nowego", fg="#ffd166" if n else FG)
         self.update_age()
         if self.filter_win and self.filter_win.winfo_exists():
             self.filter_win.run()
@@ -122,6 +158,7 @@ class ScannerView(tk.Frame):
     def reload(self):
         self.store.reload()
         self.store.set_tf(self.store.tf)
+        self.app.flags.tag(self.store.rows)
         self.table.set_columns(self.columns())
         self.refresh_lists()
         if self.filter_win and self.filter_win.winfo_exists():
@@ -174,6 +211,38 @@ class ScannerView(tk.Frame):
             self.boxes = BoxesWindow(self)
         self.boxes.lift()
 
+    # --- co nowego, eksport
+    def open_changes(self):
+        WhatsNewWindow(self)
+
+    def clear_changes(self):
+        self.store.set_changes({}, self.store.changes.get("at"))
+        self.refresh_lists()
+
+    def copy_tickers(self, sep):
+        text = exporter.tickers_text(self._shown_rows(), sep)
+        self.root.clipboard_clear()
+        self.root.clipboard_append(text)
+        self.status.config(text=f"  Skopiowano {len(self._shown_rows())} tickerów do schowka.")
+
+    def _shown_rows(self):
+        """Wiersze w kolejności, w jakiej widać je na liście (po filtrach i sortowaniu)."""
+        by = {r["ticker"]: r for r in self.table.rows}
+        return [by[t] for t in self.table.visible() if t in by]
+
+    def save_tickers(self):
+        path = filedialog.asksaveasfilename(parent=self.root, defaultextension=".txt", initialfile=f"{self.scanner['id']}-tickery.txt", filetypes=[("Tekst", "*.txt")])
+        if path:
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(exporter.tickers_text(self._shown_rows(), ","))
+
+    def save_csv(self, fmt):
+        path = filedialog.asksaveasfilename(parent=self.root, defaultextension=".csv", initialfile=f"{self.scanner['id']}.csv", filetypes=[("CSV", "*.csv")])
+        if path:
+            flag_labels = {lst["id"]: f"{lst['icon']} {lst['name']}" for lst in self.app.flags.lists}
+            with open(path, "w", encoding="utf-8-sig", newline="") as f:
+                f.write(exporter.to_csv(self._shown_rows(), self.table.columns, fmt, store.STATE_LABELS, flag_labels))
+
     def edit_scanner(self):
         self.app.edit_scanner(self.scanner["id"])
 
@@ -204,6 +273,7 @@ class App:
         apply_dark(self.root)
         self.data_root = store.data_dir(data_base)
         self.windows = {}   # id skanera -> ScannerListWindow
+        self.flags = flags_mod.Flags(self.data_root)
         self.q = queue.Queue()
         self.syncing = {}   # id skanera -> okno dziennika; synchronizacje różnych skanerów mogą trwać równolegle
         self.session = session.prune(session.load(self.data_root), [s["id"] for s in scanners.load(self.data_root)])
@@ -248,6 +318,18 @@ class App:
                 "Momentum Desktop", "Własne skanery Finviz + ceny z yfinance, wykresy Dar-Card i słupkowy (tygodniowe i dzienne), CANSLIM.\n"
                 "Logika jak w Momentum. Tylko informacyjnie — nie jest to porada inwestycyjna.\n\nDane: " + str(self.data_root)))]),
         ]
+
+    def all_views(self):
+        return [self.view] + [w.view for w in self.windows.values() if w.winfo_exists()]
+
+    def refresh_flag_views(self):
+        """Flagi są wspólne dla wszystkich skanerów: po zmianie odświeżamy wszystkie listy."""
+        for v in self.all_views():
+            self.flags.tag(v.store.rows)
+            v.refresh_lists()
+
+    def edit_list_names(self):
+        ListNamesWindow(self)
 
     # --- skanery
     def view_for(self, sid):
@@ -433,7 +515,7 @@ class App:
                     if view is not None:
                         view.set_sync_enabled(True)
                         if val:
-                            view.reload()
+                            self.after_sync(view)
                     if self.manager is not None and self.manager.winfo_exists():
                         self.manager.refresh()
                     if win is not None and win.winfo_exists():
@@ -442,6 +524,19 @@ class App:
         except queue.Empty:
             pass
         self.root.after(150, self._poll)
+
+    def after_sync(self, view):
+        """Przeładowuje dane skanera i porównuje listę z poprzednią (co nowego); okno zmian otwiera się samo, gdy coś się zmieniło."""
+        old = changes.snapshot(view.store.rows)
+        view.reload()
+        new = changes.snapshot(view.store.rows)
+        d = changes.merge(view.store.changes["diff"], changes.diff(old, new)) if old else view.store.changes["diff"]
+        names = {t: old[t].get("name") for t in d.get("dropped", []) if t in old}
+        names = {**view.store.changes.get("names", {}), **names}
+        view.store.set_changes(d, sync.now_iso(), names)
+        view.refresh_lists()
+        if old and changes.total(changes.diff(old, new)):
+            view.open_changes()
 
     def run(self):
         self.root.mainloop()

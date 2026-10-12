@@ -2,7 +2,7 @@
 import tkinter as tk
 from tkinter import ttk
 
-from . import canslim, finviz_codes, store
+from . import canslim, changes, finviz_codes, store
 from . import columns as columns_mod
 from .theme import BG, FG, MONO, PANEL, SEL, apply_dark
 from .widgets import STATE_COLORS, StockTable
@@ -306,3 +306,90 @@ class ColumnsWindow(tk.Toplevel):
         self.view.set_columns(self.cols if "ticker" in self.cols else ["ticker"] + self.cols)
         self.destroy()
 
+
+
+class WhatsNewWindow(tk.Toplevel):
+    """„Co nowego od ostatniego Sync”: kto wszedł do skanera i wypadł, nowe KUP / SPRZEDAJ, przypięte boxy w strefie zagrożenia, nowe CANSLIM ≥ 5."""
+
+    def __init__(self, view):
+        super().__init__(view.root)
+        self.view = view
+        ch = view.store.changes
+        self.title(f"Co nowego — {view.scanner['name']}")
+        self.geometry("760x520")
+        self.configure(bg=BG)
+        apply_dark(self)
+        self.head = tk.Label(self, text="", bg=PANEL, anchor="w", justify="left")
+        self.head.pack(fill="x")
+        self.tree = ttk.Treeview(self, columns=("price", "text"), show="tree headings")
+        self.tree.heading("#0", text="Spółka")
+        self.tree.heading("price", text="Cena")
+        self.tree.heading("text", text="Stan teraz")
+        self.tree.column("#0", width=230)
+        self.tree.column("price", width=90, anchor="e")
+        self.tree.column("text", width=400)
+        self.tree.pack(fill="both", expand=True)
+        self.tree.bind("<Double-1>", self.open_row)
+        for st, col in STATE_COLORS.items():
+            self.tree.tag_configure(st, foreground=col)
+        bar = tk.Frame(self, bg=PANEL)
+        bar.pack(fill="x")
+        tk.Button(bar, text="Oznacz jako przeczytane (wyczyść)", command=self.clear).pack(side="left", padx=6, pady=5)
+        tk.Button(bar, text="Zamknij", command=self.destroy).pack(side="right", padx=6)
+        self.fill(ch)
+
+    def fill(self, ch):
+        self.tree.delete(*self.tree.get_children())
+        d = ch["diff"]
+        self.head.config(text=f"  Zmiany od synchronizacji z {ch['at'] or '—'} (sumują się, dopóki ich nie wyczyścisz): {changes.total(d)}" if d
+                         else "  Brak zmian od ostatniej synchronizacji (albo to pierwsza synchronizacja tego skanera).")
+        for key in changes.ORDER:
+            items = d.get(key, [])
+            if not items:
+                continue
+            sec = self.tree.insert("", "end", iid=f"sec:{key}", text=f"{changes.LABELS[key]} ({len(items)})", open=True)
+            for t in items:
+                r = self.view.store.row(t)
+                if r:
+                    state = r.get("darvas_text_d") if key == "buy_d" else r.get("pbox_text") if key == "zone" else r.get("darvas_text") if key in ("buy_w", "sell") else \
+                        f"CANSLIM {r.get('cs')}/7  {r.get('cs_letters', '')}" if key == "canslim" else (r.get("company") or "")
+                    self.tree.insert(sec, "end", iid=f"{key}:{t}", text=t, values=(f"{r['price']:.2f}" if r.get("price") else "", state or ""),
+                                     tags=(r.get("darvas_d" if key == "buy_d" else "darvas_w", ""),))
+                else:
+                    self.tree.insert(sec, "end", iid=f"{key}:{t}", text=t, values=("", ch["names"].get(t) or "wypadła z listy skanera"))
+
+    def open_row(self, _e):
+        sel = self.tree.selection()
+        if sel and ":" in sel[0] and not sel[0].startswith("sec:"):
+            t = sel[0].split(":", 1)[1]
+            if self.view.store.row(t):
+                self.view.open_chart(t)
+
+    def clear(self):
+        self.view.clear_changes()
+        self.fill(self.view.store.changes)
+
+
+class ListNamesWindow(tk.Toplevel):
+    """Nazwy własnych list (flagi 1–4)."""
+
+    def __init__(self, app):
+        super().__init__(app.root)
+        self.app = app
+        self.title("Nazwy list")
+        self.configure(bg=BG)
+        apply_dark(self)
+        self.vars = {}
+        for n, lst in enumerate(app.flags.lists, 1):
+            tk.Label(self, text=f"{n}  {lst['icon']}", bg=PANEL).grid(row=n, column=0, padx=8, pady=4)
+            v = tk.StringVar(value=lst["name"])
+            self.vars[lst["id"]] = v
+            tk.Entry(self, textvariable=v, width=28).grid(row=n, column=1, padx=8, pady=4)
+        tk.Label(self, text="Klawisze 1–4 na liście nadają flagę zaznaczonej spółce, 0 ją zdejmuje.", bg=PANEL, fg="#8b95a3").grid(row=0, column=0, columnspan=2, padx=8, pady=6)
+        tk.Button(self, text="Zapisz", command=self.save).grid(row=6, column=1, sticky="e", padx=8, pady=8)
+
+    def save(self):
+        for lid, v in self.vars.items():
+            self.app.flags.rename(lid, v.get())
+        self.app.refresh_flag_views()
+        self.destroy()

@@ -3,6 +3,7 @@ Funkcje `draw_*` czyszczą canvas i zwracają słownik geometrii (do crosshaira 
 import math
 
 from . import darvas
+from .daily import sma as _sma
 
 BG, GRID, PAPER = "#0b0d10", "#1a1f26", "#161b21"
 TEXT, DIM = "#c9d1d9", "#6b7684"
@@ -245,6 +246,8 @@ def draw_bars(cv, full, weeks, spx, win, opts=None):
     vol = full.get("v") or []
     vmax = max(_finite(seg(vol)) or [1])
     yv = _scale(0, vmax * 1.05, v_top, v_bot)
+    vavg_n = 50 if opts.get("tf") == "D" else 10   # średnia wolumenu: SMA 10 tygodni / SMA 50 sesji
+    vavg = _sma([x if x is not None else None for x in vol], vavg_n)
     for i in range(i0, min(i1, len(c))):
         if c[i] is None or h[i] is None:
             continue
@@ -253,8 +256,16 @@ def draw_bars(cv, full, weeks, spx, win, opts=None):
         cv.create_line(x, y(h[i]), x, y(lows[i]), fill=col)
         cv.create_line(x - half, y(c[i]), x + half, y(c[i]), fill=col)
         if i < len(vol) and vol[i] is not None:
-            cv.create_rectangle(x - half, yv(vol[i]), x + half, v_bot, fill=col, outline="")
-    cv.create_text(LEFT + 4, v_top, text="Wolumen", fill=DIM, font=FONT, anchor="nw")
+            big = i > 0 and i - 1 < len(vavg) and vavg[i - 1] and vol[i] >= darvas.BREAKOUT_VOL * vavg[i - 1]   # ≥ 1,4× poprzedniej średniej = wolumen wybicia (złota obwódka)
+            cv.create_rectangle(x - half, yv(vol[i]), x + half, v_bot, fill=col, outline=GOLD if big else "")
+    vpts = [(xf(i), yv(vavg[i])) for i in range(i0, min(i1, len(vavg))) if vavg[i] is not None]
+    if len(vpts) > 1:
+        cv.create_line(*[v for p in vpts for v in p], fill="#ff9f43", width=2)
+    lastv = max((i for i in range(i0, min(i1, len(vavg))) if vavg[i] is not None), default=None)
+    unit_v = "sesji" if opts.get("tf") == "D" else "tyg."
+    cv.create_text(LEFT + 4, v_top, text="Wolumen   ", fill=DIM, font=FONT, anchor="nw")
+    if lastv is not None:
+        cv.create_text(LEFT + 74, v_top, text=f"— średnia {vavg_n} {unit_v}: {fmt_vol(vavg[lastv])}   ▯ złota obwódka = ≥ {darvas.BREAKOUT_VOL}× średniej", fill="#ff9f43", font=FONT, anchor="nw")
     # poziomy boxa na osi ceny (wejście / dół / exit)
     for price, col in opts.get("tags") or []:
         yy = y(price)
@@ -531,7 +542,9 @@ def tooltip_bars(full, dates, i, smas, tf, hover=None):
     if i < len(v) and v[i] is not None:
         past = [x for x in v[max(0, i - avg_n):i] if x is not None]
         ratio = v[i] / (sum(past) / len(past)) if len(past) >= 3 and sum(past) > 0 else None
-        out.append((f"wolumen {fmt_vol(v[i])}" + (f"  ({ratio:.2f}× średniej {avg_n})" if ratio else ""), GOLD if ratio and ratio >= 1.4 else TEXT))
+        out.append((f"wolumen {fmt_vol(v[i])}" + (f"  ({ratio:.2f}× średniej {avg_n})" if ratio else ""), GOLD if ratio and ratio >= darvas.BREAKOUT_VOL else TEXT))
+        if len(past) >= 3 and sum(past) > 0:
+            out.append((f"średnia wolumenu SMA {avg_n}: {fmt_vol(sum(past) / len(past))}", "#ff9f43"))
     for arr, n_ma in smas:
         if i < len(arr) and _ok_num(arr[i]):
             d = _pct(c[i], arr[i])

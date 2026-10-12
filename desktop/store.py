@@ -6,7 +6,7 @@ import sys
 import threading
 from pathlib import Path
 
-from . import canslim, darvas, daily
+from . import canslim, changes, darvas, daily
 
 STATE_LABELS = {"BUY": "KUP", "NOVOL": "bez wolumenu", "LATE": "za późno", "HOLD": "trzymaj", "SELL": "SPRZEDAJ",
                 "OUT": "poza", "WAIT": "czekaj", "NONE": ""}
@@ -108,6 +108,19 @@ class Store:
         self.mkt = mkt
         extra = read_json(self.dir / "finviz_extra.json", {}) or {}   # dodatkowe kolumny zamówione w skanerze (tylko z Finviz)
         self.rows = [canslim.tag(self._enrich({**s, **extra.get(s["ticker"], {})}), mkt) for s in self.watchlist.get("stocks", [])]
+        self.changes = changes.load(self.dir)   # co się zmieniło przy ostatnim Sync
+        self._mark_changes()
+
+    def _mark_changes(self):
+        marks = changes.marks(self.changes["diff"])
+        for r in self.rows:
+            r["change"] = marks.get(r["ticker"], "")
+
+    def set_changes(self, diff, at, names=None):
+        """Zapisuje wynik porównania po Sync i oznacza wiersze w kolumnie „Zmiana”."""
+        changes.save(self.dir, diff, at, names)
+        self.changes = {"at": at, "diff": diff, "names": names or {}}
+        self._mark_changes()
 
     def _enrich(self, s):
         t = s["ticker"]
@@ -162,7 +175,7 @@ class Store:
 # ---------- skaner (filtry po danych już pobranych) ----------
 
 DEFAULT_FILTERS = {"rs_min": None, "eps_min": None, "comp_min": None, "max_to_pivot": None, "max_from_high": None,
-                   "states": [], "sector": "", "base_only": False, "min_adr": None, "pinned_only": False, "text": "", "cs_min": None, "cs_core": False}
+                   "states": [], "sector": "", "base_only": False, "min_adr": None, "pinned_only": False, "text": "", "cs_min": None, "cs_core": False, "flag": ""}
 
 
 def _num(v):
@@ -195,6 +208,10 @@ def scan(rows, f):
             continue
         if f["cs_core"] and not (r.get("canslim") and canslim.core_ok(r)):
             continue
+        if f["flag"]:   # lista własna: id listy / "any" (dowolna) / "none" (bez flagi)
+            fl = r.get("flag")
+            if (f["flag"] == "any" and not fl) or (f["flag"] == "none" and fl) or (f["flag"] not in ("any", "none") and fl != f["flag"]):
+                continue
         if f["states"] and r.get("darvas") not in f["states"]:
             continue
         if f["sector"] and r.get("sector") != f["sector"]:

@@ -77,7 +77,7 @@ def box_info(top, bottom, zone_pct=STOP_PCT):
             "zone_pct": zone_pct, "depth_pct": _r2((top - bottom) / top * 100)}
 
 
-def status(c, vol=None, zone_pct=STOP_PCT, max_ext_pct=MAX_EXT_PCT):
+def status(c, vol=None, zone_pct=STOP_PCT, max_ext_pct=MAX_EXT_PCT, vol_bars=VOL_WEEKS):
     """Stan na ostatnim tygodniowym zamknięciu: BUY / NOVOL / LATE / HOLD / SELL / WAIT / OUT / NONE."""
     bx = boxes(c)
     lr = last_real(c)
@@ -92,7 +92,7 @@ def status(c, vol=None, zone_pct=STOP_PCT, max_ext_pct=MAX_EXT_PCT):
         over = c[lr] / last["top"] - 1
         vr = None
         if vol and lr < len(vol) and _ok(vol[lr]):
-            pv = [v for v in vol[max(0, lr - VOL_WEEKS):lr] if _ok(v)]
+            pv = [v for v in vol[max(0, lr - vol_bars):lr] if _ok(v)]
             if len(pv) >= 4:
                 vr = vol[lr] / (sum(pv) / len(pv))
         if vr is not None and vr < BREAKOUT_VOL:
@@ -131,7 +131,10 @@ def pin_status(box, price, zone_pct=STOP_PCT):
     return {"state": "EXIT", "rank": 0, "text": f"EXIT — cena {_r2(price)} poniżej strefy zagrożenia ({zone})"}
 
 
-def overview(items, weeks, pinned=None, new_weeks=NEW_WEEKS):
+DAILY = {"max_ext_pct": 5, "vol_bars": 50}   # wykres dzienny: wybicie nie dalej niż 5 % nad górą, wolumen vs średnia z 50 sesji
+
+
+def overview(items, weeks, pinned=None, new_weeks=NEW_WEEKS, params=None):
     """Podział spółek na sekcje: pinned, fresh, buy, check, hold, sell, wait.
     items = [{ticker, price, c, v}]; zwraca {sekcja: [{ticker, price, state, text, box}]}."""
     pinned = pinned or {}
@@ -147,7 +150,7 @@ def overview(items, weeks, pinned=None, new_weeks=NEW_WEEKS):
             if st["state"] != "NONE":
                 out["pinned"].append({"ticker": it["ticker"], "price": it.get("price"), "state": st["state"], "rank": st["rank"],
                                       "text": st["text"], "box": dict(pin)})
-        ds = status(c, it.get("v"))
+        ds = status(c, it.get("v"), **(params or {}))
         bx = boxes(c)
         last = bx[-1] if bx else None
         if ds["state"] == "NONE" or not last:

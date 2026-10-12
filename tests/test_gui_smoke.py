@@ -46,7 +46,21 @@ def test_windows_open_and_select_box(app):
     ch.slider_press(type("E", (), {"x": (x0 + x1) / 2})())
     ch.slider_move(type("E", (), {"x": (x0 + x1) / 2 - 80})())
     assert ch.end is not None and ch.end < n
+    app.set_tf("D")
+    assert app.store.tf == "D" and "dzień" in app.table.tree.heading("darvas")["text"]
+    ch.tf.set("D")
+    ch.change_tf()
+    ch.mode.set("bars")
+    ch.redraw()
+    ch.update()
+    assert ch.geoms["bars"]["i1"] > 0 and ch.unit() == "sesji"
+    app.open_canslim("NVDA")
     app.open_scanner()
+    app.scanner.vars["cs_min"].set("5")
+    app.scanner.cs_core.set(True)
+    app.scanner.run()
+    assert 0 < len(app.scanner.table.visible()) < len(app.store.rows)
+    app.scanner.reset()
     app.scanner.vars["rs_min"].set("90")
     app.scanner.run()
     assert 0 < len(app.scanner.table.visible()) < len(app.store.rows)

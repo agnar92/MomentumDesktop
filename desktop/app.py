@@ -4,17 +4,15 @@ import threading
 import tkinter as tk
 from tkinter import messagebox, ttk
 
-from . import charts, darvas, store, sync
-
-BG, FG, PANEL, SEL = "#0b0d10", "#c9d1d9", "#12161b", "#1f3a5f"
+from . import canslim, charts, darvas, store, sync
+from .theme import BG, FG, MONO, PANEL, MenuBar, apply_dark, setup_style
 STATE_COLORS = {"BUY": "#3ddc84", "SELL": "#ff5c5c", "OUT": "#ff9f43", "NOVOL": "#ffd166", "LATE": "#ffd166", "HOLD": FG, "WAIT": "#6ea8ff"}
-MONO = ("Consolas", 11)
 
 COLUMNS = [  # id, nagłówek, szerokość, wyrównanie
-    ("ticker", "Symbol", 78, "w"), ("company", "Spółka", 230, "w"), ("price", "Cena", 86, "e"), ("rs_rating", "RS", 50, "e"),
-    ("eps_rating", "EPS", 54, "e"), ("composite_rating", "Comp", 60, "e"), ("pct_from_high_52w", "% od szczytu", 124, "e"),
-    ("base", "Baza", 150, "w"), ("pct_to_pivot", "Do pivotu %", 108, "e"), ("darvas", "Darvas", 124, "w"), ("pbox", "Box 📌", 100, "w"),
-    ("sector", "Sektor", 170, "w"),
+    ("ticker", "Symbol", 78, "w"), ("company", "Spółka", 190, "w"), ("price", "Cena", 86, "e"), ("rs_rating", "RS", 50, "e"),
+    ("eps_rating", "EPS", 54, "e"), ("composite_rating", "Comp", 60, "e"), ("cs", "CANSLIM", 84, "e"), ("cs_letters", "C A N S L I M", 150, "w"),
+    ("pct_from_high_52w", "% od szczytu", 114, "e"), ("base", "Baza", 130, "w"), ("pct_to_pivot", "Do pivotu %", 108, "e"),
+    ("darvas", "Darvas", 140, "w"), ("pbox", "Box 📌", 84, "w"), ("sector", "Sektor", 130, "w"),
 ]
 SECTIONS = [("pinned", "📌 Monitorowane (przypięte)"), ("fresh", "🆕 Nowe boxy"), ("buy", "🟢 KUP — wybicie na wolumenie"),
             ("check", "🟡 Do sprawdzenia (bez wolumenu / za późno)"), ("hold", "Trzymaj"), ("sell", "🔴 Sprzedaj / poza"), ("wait", "Czekaj na wybicie")]
@@ -28,10 +26,12 @@ def cell(r, col):
         return store.STATE_LABELS.get(v, "")
     if col == "pbox":
         return {"NONE": "", "ABOVE": "wybity", "INSIDE": "w boxie", "ZONE": "STREFA!", "EXIT": "EXIT!"}.get(v, "")
+    if col == "cs":
+        return "–" if v is None else f"{v}/7"
     if isinstance(v, float):
         return f"{v:.2f}" if col == "price" else f"{v:.1f}"
     if v is None:
-        return "–" if col in ("price", "rs_rating", "eps_rating", "composite_rating", "pct_from_high_52w", "pct_to_pivot") else ""
+        return "–" if col in ("price", "rs_rating", "eps_rating", "composite_rating", "pct_from_high_52w", "pct_to_pivot", "cs") else ""
     return str(v)
 
 
@@ -44,36 +44,11 @@ def sort_key(r, col):
     return (v is None, v if v is not None else 0)
 
 
-def setup_style(root):
-    root.configure(bg=BG)
-    s = ttk.Style(root)
-    s.theme_use("clam")
-    s.configure("Treeview", background=BG, fieldbackground=BG, foreground=FG, rowheight=28, borderwidth=0, font=MONO)
-    s.configure("Treeview.Heading", background="#1b2027", foreground=FG, relief="flat", font=("Consolas", 10, "bold"), padding=(4, 5))
-    s.map("Treeview", background=[("selected", SEL)], foreground=[("selected", "#ffffff")])
-    s.map("Treeview.Heading", background=[("active", "#27303a")])
-    s.configure("TCombobox", fieldbackground=PANEL, background=PANEL, foreground=FG)
-    root.option_add("*Font", MONO)
-    root.option_add("*Background", PANEL)
-    root.option_add("*Foreground", FG)
-    root.option_add("*Button.Background", "#222a33")
-    root.option_add("*Button.Foreground", FG)
-    root.option_add("*Entry.Background", "#0f1318")
-    root.option_add("*Entry.Foreground", "#ffffff")
-    root.option_add("*Entry.insertBackground", "#ffffff")
-    root.option_add("*Menu.Background", PANEL)
-    root.option_add("*Menu.Foreground", FG)
-    root.option_add("*Checkbutton.selectColor", "#0f1318")
-    root.option_add("*Radiobutton.selectColor", "#0f1318")
-    root.option_add("*Checkbutton.activeBackground", PANEL)
-    root.option_add("*Radiobutton.activeBackground", PANEL)
-
-
-class StockTable(ttk.Frame):
+class StockTable(tk.Frame):
     """Lista spółek (Treeview) z sortowaniem po nagłówku; Enter / dwuklik = otwórz wykres."""
 
-    def __init__(self, master, on_open, on_new_window=None):
-        super().__init__(master)
+    def __init__(self, master, on_open, on_new_window=None, on_canslim=None):
+        super().__init__(master, bg=BG)
         self.on_open, self.on_new_window = on_open, on_new_window
         self.rows, self.sort_col, self.sort_rev = [], None, False
         self.tree = ttk.Treeview(self, columns=[c[0] for c in COLUMNS], show="headings", selectmode="browse")
@@ -81,9 +56,11 @@ class StockTable(ttk.Frame):
             self.tree.heading(cid, text=title, command=lambda c=cid: self.sort_by(c))
             self.tree.column(cid, width=w, anchor=anchor, stretch=cid == "sector")
         sb = ttk.Scrollbar(self, orient="vertical", command=self.tree.yview)
-        self.tree.configure(yscrollcommand=sb.set)
-        self.tree.pack(side="left", fill="both", expand=True)
+        hb = ttk.Scrollbar(self, orient="horizontal", command=self.tree.xview)
+        self.tree.configure(yscrollcommand=sb.set, xscrollcommand=hb.set)
+        hb.pack(side="bottom", fill="x")
         sb.pack(side="right", fill="y")
+        self.tree.pack(side="left", fill="both", expand=True)
         for st, col in STATE_COLORS.items():
             self.tree.tag_configure(st, foreground=col)
         self.tree.tag_configure("odd", background="#10141a")   # naprzemienne tło wierszy
@@ -95,6 +72,8 @@ class StockTable(ttk.Frame):
         menu.add_command(label="Wykres (okno połączone)", command=self._open)
         if on_new_window:
             menu.add_command(label="Wykres w nowym oknie", command=lambda: self.on_new_window(self.current()))
+        if on_canslim:
+            menu.add_command(label="CANSLIM — szczegóły…", command=lambda: on_canslim(self.current()))
         self.tree.bind("<Button-3>", lambda e: (self.tree.selection_set(self.tree.identify_row(e.y)), menu.tk_popup(e.x_root, e.y_root)))
 
     def set_rows(self, rows):
@@ -114,8 +93,11 @@ class StockTable(ttk.Frame):
         if keep and self.tree.exists(keep):
             self.tree.selection_set(keep)
 
+    def set_tf_label(self, tf):
+        self.tree.heading("darvas", text="Darvas (dzień)" if tf == "D" else "Darvas (tydz.)")
+
     def sort_by(self, col):
-        self.sort_rev = (not self.sort_rev) if self.sort_col == col else col not in ("ticker", "company", "base", "sector", "pct_to_pivot")
+        self.sort_rev = (not self.sort_rev) if self.sort_col == col else col not in ("ticker", "company", "base", "sector", "pct_to_pivot", "cs_letters")
         self.sort_col = col
         self._fill(self.current())
 
@@ -156,8 +138,10 @@ class ChartWindow(tk.Toplevel):
         self.title("Wykres")
         self.geometry("1180x720")
         self.configure(bg=BG)
+        apply_dark(self)
         self.mode = tk.StringVar(value="darcard")
-        self.n_show, self.end = 104, None
+        self.tf = tk.StringVar(value=app.store.tf)   # „W” tygodniowy / „D” dzienny — własny przełącznik okna, startuje z przełącznika listy
+        self.n_show, self.end = self.default_n(), None
         self.focus_box, self.selected, self.cands, self.hit_geom = None, None, [], None
         self.geoms = {}
         head = tk.Frame(self, bg=PANEL)
@@ -168,6 +152,11 @@ class ChartWindow(tk.Toplevel):
         self.status_lbl.pack(fill="x", padx=8)
         for text, val in (("Słupkowy", "bars"), ("Dar-Card", "darcard")):
             tk.Radiobutton(head, text=text, value=val, variable=self.mode, command=self.redraw, bg=PANEL, indicatoron=False, padx=8).pack(side="right", padx=1, pady=3)
+        tk.Label(head, text=" ", bg=PANEL).pack(side="right")
+        for text, val in (("Dzień", "D"), ("Tydz.", "W")):
+            tk.Radiobutton(head, text=text, value=val, variable=self.tf, command=self.change_tf, bg=PANEL, indicatoron=False, padx=8).pack(side="right", padx=1, pady=3)
+        self.cs_btn = tk.Button(head, text="CANSLIM", command=lambda: app.open_canslim(self.ticker), relief="flat", padx=8)
+        self.cs_btn.pack(side="right", padx=8)
         self.slider = tk.Canvas(self, height=46, bg=BG, highlightthickness=0, cursor="sb_h_double_arrow")
         self.slider.pack(fill="x", padx=2, pady=(2, 0))
         self.drag = None
@@ -208,17 +197,53 @@ class ChartWindow(tk.Toplevel):
         self.set_ticker(ticker)
 
     # --- dane
+    def default_n(self):
+        return 126 if self.tf.get() == "D" else 104   # ~pół roku sesji / 2 lata tygodni
+
+    def series(self):
+        """(dane OHLCV, daty, S&P 500, średnie) w skali czasu okna; brak danych dziennych = wracamy do tygodniowych."""
+        full, dates, spx, smas = self.app.store.series(self.ticker, self.tf.get())
+        if full is None and self.tf.get() == "D":
+            self.tf.set("W")
+            full, dates, spx, smas = self.app.store.series(self.ticker, "W")
+        return full, dates, spx, smas
+
     @property
     def full(self):
-        return self.app.store.stocks_full.get(self.ticker)
+        return self.series()[0]
 
-    def set_ticker(self, ticker, focus=None):
+    @property
+    def dates(self):
+        return self.series()[1]
+
+    def unit(self):
+        return "sesji" if self.tf.get() == "D" else "tyg."
+
+    def change_tf(self):
+        self.focus_box, self.selected, self.end = None, None, None
+        self.n_show = self.default_n()
+        self.set_status()
+        self.update_bar()
+        self.redraw()
+
+    def set_status(self):
+        row = self.app.store.row(self.ticker) or {}
+        d = self.tf.get() == "D"
+        st = row.get("darvas_d" if d else "darvas_w")
+        txt = row.get("darvas_text_d" if d else "darvas_text_w") or ""
+        self.status_lbl.config(text=f"📦 {'Dzień' if d else 'Tydzień'}: {txt}", fg=STATE_COLORS.get(st, FG))
+        cs = row.get("cs")
+        self.cs_btn.config(text=f"CANSLIM {cs}/7" if cs is not None else "CANSLIM ?")
+
+    def set_ticker(self, ticker, focus=None, tf=None):
         self.ticker, self.focus_box, self.selected, self.end = ticker, None, None, None
+        if tf:
+            self.tf.set(tf)
+        self.n_show = self.default_n()
         row = self.app.store.row(ticker) or {}
         self.title(f"{ticker} — {row.get('company', '')}")
         self.title_lbl.config(text=f"{ticker}  {row.get('price', '')}")
-        txt = row.get("darvas_text") or ""
-        self.status_lbl.config(text=f"📦 {txt}", fg=STATE_COLORS.get(row.get("darvas"), FG))
+        self.set_status()
         if focus:
             self.set_focus(focus)
         self.update_bar()
@@ -227,14 +252,15 @@ class ChartWindow(tk.Toplevel):
     def set_focus(self, box):
         """Widok po „Przybliż”: wykres słupkowy zawężony do boxa + poziomy wejścia / dołu / exitu na osi ceny."""
         self.focus_box = box
-        n = len(self.app.store.weeks)
-        i0, i1 = charts.box_focus_window(n, box)
+        n = len(self.dates)
+        k = 5 if self.tf.get() == "D" else 1   # tygodnie -> sesje
+        i0, i1 = charts.box_focus_window(n, box, 14 * k, 6 * k)
         self.n_show, self.end = i1 - i0, i1
         self.mode.set("bars")   # po „Przybliż” pokazujemy wykres słupkowy zawężony do boxa
         self.update_bar()
 
     def clear_focus(self):
-        self.focus_box, self.n_show, self.end = None, 104, None
+        self.focus_box, self.n_show, self.end = None, self.default_n(), None
         self.mode.set("darcard")
         self.update_bar()
         self.redraw()
@@ -248,7 +274,7 @@ class ChartWindow(tk.Toplevel):
 
     def redraw(self):
         self.layout()
-        full = self.full
+        full, dates, spx, smas = self.series()
         if not full:
             return
         self.draw_slider()
@@ -258,10 +284,10 @@ class ChartWindow(tk.Toplevel):
         pinned = st.pinned.get(self.ticker)
         if self.mode.get() == "darcard":
             self.update_idletasks()
-            self.geoms["card"] = charts.draw_darcard(self.cv_card, full, st.weeks, win, {"pinned": pinned, "selected": self.selected})
+            self.geoms["card"] = charts.draw_darcard(self.cv_card, full, dates, win, {"pinned": pinned, "selected": self.selected})
             self.hit_geom = self.geoms["card"]
         if self.mode.get() == "bars":
-            opts = {"macd": True, "spx": True}
+            opts = {"macd": True, "spx": True, "smas": smas, "tf": self.tf.get()}
             fb = self.focus_box or (self.selected_box())
             if fb:
                 opts["tags"] = [(fb["top"], charts.GREEN), (fb["bottom"], charts.WHITE), (round(fb["bottom"] * 0.95, 2), charts.RED)]
@@ -271,7 +297,7 @@ class ChartWindow(tk.Toplevel):
             row = st.row(self.ticker) or {}
             if row.get("pivot") and row.get("base_type") in store.BUYABLE_BASES and abs(row.get("pct_to_pivot") or 99) < 15:
                 opts["pivot"] = row["pivot"]
-            self.geoms["bars"] = charts.draw_bars(self.cv_bars, full, st.weeks, self.app.store.charts.get("spx"), win, opts)
+            self.geoms["bars"] = charts.draw_bars(self.cv_bars, full, dates, spx, win, opts)
 
     def on_motion(self, e, cv):
         geom = self.geoms.get("card" if cv is self.cv_card else "bars")
@@ -286,7 +312,8 @@ class ChartWindow(tk.Toplevel):
             if g and c.winfo_ismapped():
                 x = g["xf"](i)
                 c.create_line(x, g["p_top"], x, g["m_bot"], fill="#3a4350", tags="cross", dash=(2, 2))
-        w = self.app.store.weeks[i] if i < len(self.app.store.weeks) else ""
+        dates = self.dates
+        w = dates[i] if i < len(dates) else ""
         f = full
         self.read.config(text=f"  {w}   H {f['h'][i]:.2f}  L {f['l'][i]:.2f}  C {f['c'][i]:.2f}   Wol {charts.fmt_vol(f['v'][i]) if f['v'][i] is not None else '-'}")
 
@@ -326,7 +353,7 @@ class ChartWindow(tk.Toplevel):
         pinned = self.app.store.pinned.get(self.ticker)
         is_pin = pinned and abs(pinned["top"] - box["top"]) < 0.005 and abs(pinned["bottom"] - box["bottom"]) < 0.005
         risk = (1 - info["stop"] / info["entry"]) * 100
-        self.info_lbl.config(text=f"BOX {info['cancel']}–{info['entry']} (głęb. {info['depth_pct']} %)   wejście: zamknięcie tygodnia > {info['entry']}\n"
+        self.info_lbl.config(text=f"BOX {info['cancel']}–{info['entry']} (głęb. {info['depth_pct']} %)   wejście: zamknięcie {'dnia' if self.tf.get() == 'D' else 'tygodnia'} > {info['entry']}\n"
                                   f"strefa zagrożenia {info['cancel']} → {info['stop']} (exit)   ryzyko od wejścia do exitu: {risk:.1f} % na akcję")
         self.btn_close.pack(side="right", padx=4)
         self.btn_pin.config(text="🗑 Odepnij" if is_pin else "📌 Przypnij")
@@ -357,8 +384,7 @@ class ChartWindow(tk.Toplevel):
         else:
             self.app.store.pin(self.ticker, {"top": box["top"], "bottom": box["bottom"], "start": box.get("start", "")})
         self.app.refresh_lists()
-        row = self.app.store.row(self.ticker) or {}
-        self.status_lbl.config(text=f"📦 {row.get('darvas_text', '')}")
+        self.set_status()
         self.update_bar()
         self.redraw()
 
@@ -370,7 +396,7 @@ class ChartWindow(tk.Toplevel):
     def draw_slider(self):
         if self.full:
             n, n_show, end = self._state()
-            charts.draw_slider(self.slider, self.full["c"], n_show, end)
+            charts.draw_slider(self.slider, self.full["c"], n_show, end, self.unit())
 
     def slider_press(self, e):
         if not self.full:
@@ -402,6 +428,7 @@ class ChartWindow(tk.Toplevel):
         self.redraw()
 
     def scroll(self, d):
+        d = d * 5 if self.tf.get() == "D" else d
         n = len(self.full["c"]) if self.full else 0
         end = (self.end if self.end is not None else n) + d
         self.end = None if end >= n else max(self.n_show, end)
@@ -414,11 +441,12 @@ class ChartWindow(tk.Toplevel):
 class SyncWindow(tk.Toplevel):
     """Dziennik synchronizacji (Finviz + yfinance) z paskiem postępu."""
 
-    def __init__(self, app):
+    def __init__(self, app, title="Synchronizacja danych"):
         super().__init__(app.root)
-        self.title("Synchronizacja danych")
+        self.title(title)
         self.geometry("760x420")
         self.configure(bg=BG)
+        apply_dark(self)
         self.text = tk.Text(self, bg="#0f1318", fg=FG, wrap="word", state="disabled")
         self.text.pack(fill="both", expand=True)
         self.bar = ttk.Progressbar(self, mode="indeterminate")
@@ -444,14 +472,15 @@ class ScannerWindow(tk.Toplevel):
     """Skaner: filtry po pobranych danych + edycja filtrów Finviz i przycisk pobrania."""
 
     FIELDS = [("rs_min", "RS ≥"), ("eps_min", "EPS Rating ≥"), ("comp_min", "Composite ≥"), ("max_to_pivot", "Do pivotu ≤ %"),
-              ("max_from_high", "Pod szczytem 52t ≤ %"), ("min_adr", "ADR ≥ %")]
+              ("max_from_high", "Pod szczytem 52t ≤ %"), ("min_adr", "ADR ≥ %"), ("cs_min", "CANSLIM ≥ (n/7)")]
 
     def __init__(self, app):
         super().__init__(app.root)
         self.app = app
         self.title("Skaner")
-        self.geometry("1040x720")
+        self.geometry("1100x760")
         self.configure(bg=BG)
+        apply_dark(self)
         form = tk.Frame(self, bg=PANEL)
         form.pack(fill="x")
         self.vars = {k: tk.StringVar() for k, _ in self.FIELDS}
@@ -462,7 +491,7 @@ class ScannerWindow(tk.Toplevel):
             e.bind("<Return>", lambda ev: self.run())
         self.state_vars = {}
         sf = tk.Frame(form, bg=PANEL)
-        sf.grid(row=2, column=0, columnspan=6, sticky="w", padx=8, pady=2)
+        sf.grid(row=3, column=0, columnspan=6, sticky="w", padx=8, pady=2)
         tk.Label(sf, text="Darvas:", bg=PANEL).pack(side="left")
         for st in ("BUY", "NOVOL", "LATE", "HOLD", "WAIT", "SELL", "OUT"):
             v = tk.BooleanVar()
@@ -470,16 +499,17 @@ class ScannerWindow(tk.Toplevel):
             tk.Checkbutton(sf, text=store.STATE_LABELS[st], variable=v, bg=PANEL, command=self.run).pack(side="left", padx=3)
         self.sector = tk.StringVar()
         row3 = tk.Frame(form, bg=PANEL)
-        row3.grid(row=3, column=0, columnspan=6, sticky="w", padx=8, pady=2)
+        row3.grid(row=4, column=0, columnspan=6, sticky="w", padx=8, pady=2)
         tk.Label(row3, text="Sektor:", bg=PANEL).pack(side="left")
         self.sector_box = ttk.Combobox(row3, textvariable=self.sector, state="readonly", width=24)
         self.sector_box.pack(side="left", padx=4)
         self.sector_box.bind("<<ComboboxSelected>>", lambda e: self.run())
-        self.base_only, self.pinned_only = tk.BooleanVar(), tk.BooleanVar()
+        self.base_only, self.pinned_only, self.cs_core = tk.BooleanVar(), tk.BooleanVar(), tk.BooleanVar()
+        tk.Checkbutton(row3, text="CANSLIM: C i A obowiązkowe", variable=self.cs_core, bg=PANEL, command=self.run).pack(side="left", padx=6)
         tk.Checkbutton(row3, text="tylko z bazą do kupienia", variable=self.base_only, bg=PANEL, command=self.run).pack(side="left", padx=6)
         tk.Checkbutton(row3, text="tylko przypięte boxy", variable=self.pinned_only, bg=PANEL, command=self.run).pack(side="left", padx=6)
         row4 = tk.Frame(form, bg=PANEL)
-        row4.grid(row=4, column=0, columnspan=6, sticky="we", padx=8, pady=4)
+        row4.grid(row=5, column=0, columnspan=6, sticky="we", padx=8, pady=4)
         tk.Label(row4, text="Gotowe skany:", bg=PANEL).pack(side="left")
         self.preset = ttk.Combobox(row4, values=list(store.PRESETS), state="readonly", width=38)
         self.preset.pack(side="left", padx=4)
@@ -489,8 +519,9 @@ class ScannerWindow(tk.Toplevel):
         tk.Button(row4, text="Pokaż na liście głównej", command=lambda: app.apply_main_filter(self.collect())).pack(side="left", padx=8)
         self.count = tk.Label(row4, text="", bg=PANEL)
         self.count.pack(side="right")
-        self.table = StockTable(self, app.open_chart, app.open_chart_new)
+        self.table = StockTable(self, app.open_chart, app.open_chart_new, app.open_canslim)
         self.table.pack(fill="both", expand=True)
+        self.table.set_tf_label(app.store.tf)
         fv = tk.LabelFrame(self, text=" Finviz — skaner źródłowy (pobierany przez Sync) ", bg=PANEL, fg=FG)
         fv.pack(fill="x", padx=4, pady=4)
         cfg = app.store.finviz_config()
@@ -502,8 +533,9 @@ class ScannerWindow(tk.Toplevel):
         tk.Label(r, text="max spółek:", bg=PANEL).pack(side="left")
         tk.Entry(r, textvariable=self.fv_max, width=6).pack(side="left", padx=4)
         tk.Button(r, text="Zapisz filtry", command=self.save_finviz).pack(side="left", padx=4)
-        tk.Button(r, text="⟳ Zapisz i pobierz (Finviz + yfinance)", command=lambda: (self.save_finviz(), app.start_sync())).pack(side="left", padx=4)
-        tk.Label(r, text="Kody filtrów skopiuj z adresu skanera na finviz.com (parametr f=). Nieznany kod Finviz po cichu ignoruje.", bg=PANEL, fg="#6b7684").pack(side="left", padx=8)
+        tk.Button(r, text="⟳ Zapisz i pobierz ceny", command=lambda: (self.save_finviz(), app.start_sync(sync.PRICES))).pack(side="left", padx=4)
+        tk.Button(r, text="⟳ Zapisz i pobierz fundamenty", command=lambda: (self.save_finviz(), app.start_sync(sync.FUNDAMENTALS))).pack(side="left", padx=4)
+        tk.Label(r, text="Kody z adresu skanera finviz.com (f=). Nieznany kod Finviz ignoruje po cichu.", bg=PANEL, fg="#6b7684").pack(side="left", padx=8)
         self.refresh()
 
     def refresh(self):
@@ -521,7 +553,7 @@ class ScannerWindow(tk.Toplevel):
     def collect(self):
         f = {k: self._num(v.get()) for k, v in self.vars.items()}
         f.update(states=[s for s, v in self.state_vars.items() if v.get()], sector=self.sector.get(), base_only=self.base_only.get(),
-                 pinned_only=self.pinned_only.get())
+                 pinned_only=self.pinned_only.get(), cs_core=self.cs_core.get())
         return f
 
     def run(self):
@@ -537,6 +569,7 @@ class ScannerWindow(tk.Toplevel):
         self.sector.set("")
         self.base_only.set(False)
         self.pinned_only.set(False)
+        self.cs_core.set(False)
         self.preset.set("")
         self.run()
 
@@ -552,6 +585,8 @@ class ScannerWindow(tk.Toplevel):
                     self.state_vars[s].set(True)
             elif k == "base_only":
                 self.base_only.set(bool(v))
+            elif k == "cs_core":
+                self.cs_core.set(bool(v))
         self.run()
 
     def save_finviz(self):
@@ -570,6 +605,7 @@ class BoxesWindow(tk.Toplevel):
         self.title("Boxy Darvasa")
         self.geometry("900x620")
         self.configure(bg=BG)
+        apply_dark(self)
         self.tree = ttk.Treeview(self, columns=("price", "text"), show="tree headings")
         self.tree.heading("#0", text="Spółka")
         self.tree.heading("price", text="Cena")
@@ -602,94 +638,151 @@ class BoxesWindow(tk.Toplevel):
         if not r:
             return
         box = dict(r["box"])
-        full = self.app.store.stocks_full.get(r["ticker"], {}).get("c") or []
+        _, dates, _, _ = self.app.store.series(r["ticker"], self.app.store.tf)
         if box.get("i0", -1) < 0:   # przypięty: indeks z daty startu
-            weeks = self.app.store.weeks
-            box["i0"] = next((i for i, w in enumerate(weeks) if w >= box.get("start", "")), max(0, len(full) - 20))
-            box["i1"] = len(full) - 1
+            box["i0"] = next((i for i, w in enumerate(dates) if w >= box.get("start", "")), max(0, len(dates) - 20))
+            box["i1"] = len(dates) - 1
             box["outcome"] = "open"
         self.app.open_chart(r["ticker"], focus=box)
+
+
+class CanslimWindow(tk.Toplevel):
+    """CANSLIM litera po literze: werdykt, liczby, które mamy, i reguła (te same dane, na których liczy się n/7)."""
+
+    def __init__(self, app, ticker):
+        super().__init__(app.root)
+        row = app.store.row(ticker) or {}
+        e = canslim.explain(row, app.store.mkt)
+        self.title(f"{ticker} — CANSLIM {e['score']}/7")
+        self.geometry("820x640")
+        self.configure(bg=BG)
+        apply_dark(self)
+        t = tk.Text(self, wrap="word", bg="#0f1318", fg=FG, padx=12, pady=10, relief="flat", font=MONO)
+        t.pack(fill="both", expand=True)
+        t.tag_configure("h", font=("Consolas", 12, "bold"), foreground="#ffffff", spacing1=10)
+        t.tag_configure("ok", foreground="#3ddc84")
+        t.tag_configure("no", foreground="#ff5c5c")
+        t.tag_configure("na", foreground="#8b95a3")
+        t.tag_configure("dim", foreground="#8b95a3")
+        t.insert("end", f"{ticker} — {row.get('company', '')}\n", "h")
+        t.insert("end", f"Spełnione: {e['score']}/7 (znane kryteria: {e['known']}). Progi i reguły jak w Momentum (wg O'Neila); heurystyka, nie porada.\n", "dim")
+        for key, name, ok, have, rule in e["rows"]:
+            tag, mark = ("ok", "✓ spełnione") if ok is True else ("no", "✗ niespełnione") if ok is False else ("na", "? brak danych")
+            t.insert("end", f"\n{key}  {name}   ", "h")
+            t.insert("end", mark + "\n", tag)
+            t.insert("end", "Mamy:   ", "dim")
+            t.insert("end", have + "\n")
+            t.insert("end", "Reguła: ", "dim")
+            t.insert("end", rule + "\n")
+        t.config(state="disabled")
+        t.bind("<Escape>", lambda ev: self.destroy())
 
 
 class App:
     def __init__(self, data_base=None):
         self.root = tk.Tk()
         self.root.title("Momentum Desktop")
-        self.root.geometry("1280x720")
+        self.root.geometry("1420x760")
         setup_style(self.root)
+        apply_dark(self.root)
         self.store = store.Store(data_base)
         self.chart = None
         self.scanner = self.boxes = self.sync_win = None
         self.q = queue.Queue()
         self.syncing = False
         self.main_filter = {}
-        self._menu()
+        self.menubar = MenuBar(self.root, self._menu_spec())
+        self.menubar.pack(fill="x")
         tb = tk.Frame(self.root, bg=PANEL)
         tb.pack(fill="x")
-        self.sync_btn = tk.Button(tb, text="⟳ Sync (F5)", command=self.start_sync, width=14)
-        self.sync_btn.pack(side="left", padx=4, pady=4)
-        tk.Button(tb, text="Skaner…", command=self.open_scanner).pack(side="left", padx=2)
-        tk.Button(tb, text="Boxy…", command=self.open_boxes).pack(side="left", padx=2)
+        self.prices_btn = tk.Button(tb, text="⟳ Ceny (F5)", command=lambda: self.start_sync(sync.PRICES), width=13, relief="flat")
+        self.prices_btn.pack(side="left", padx=(6, 2), pady=5)
+        self.fund_btn = tk.Button(tb, text="⟳ Fundamenty", command=lambda: self.start_sync(sync.FUNDAMENTALS), width=13, relief="flat")
+        self.fund_btn.pack(side="left", padx=2)
+        tk.Button(tb, text="Skaner…", command=self.open_scanner, relief="flat").pack(side="left", padx=(12, 2))
+        tk.Button(tb, text="Boxy…", command=self.open_boxes, relief="flat").pack(side="left", padx=2)
+        self.tf = tk.StringVar(value=self.store.tf)
+        tk.Label(tb, text="Skala:", bg=PANEL).pack(side="left", padx=(14, 2))
+        for text, val in (("Tydzień", "W"), ("Dzień", "D")):
+            tk.Radiobutton(tb, text=text, value=val, variable=self.tf, command=lambda: self.set_tf(self.tf.get()), bg=PANEL,
+                           indicatoron=False, padx=9, relief="flat").pack(side="left", padx=1)
         tk.Label(tb, text="Szukaj:", bg=PANEL).pack(side="left", padx=(14, 2))
         self.search = tk.StringVar()
         self.search.trace_add("write", lambda *_: self.refresh_lists())
-        tk.Entry(tb, textvariable=self.search, width=16).pack(side="left")
+        tk.Entry(tb, textvariable=self.search, width=14, relief="flat").pack(side="left")
         self.filter_lbl = tk.Label(tb, text="", bg=PANEL, fg="#ffd166")
         self.filter_lbl.pack(side="left", padx=8)
-        self.table = StockTable(self.root, self.open_chart, self.open_chart_new)
+        self.age_lbl = tk.Label(tb, text="", bg=PANEL, anchor="e")
+        self.age_lbl.pack(side="right", padx=8)
+        self.table = StockTable(self.root, self.open_chart, self.open_chart_new, self.open_canslim)
         self.table.pack(fill="both", expand=True)
         self.table.on_select = self.on_select
         self.status = tk.Label(self.root, text="", anchor="w", bg=PANEL)
         self.status.pack(fill="x", side="bottom")
-        self.root.bind("<F5>", lambda e: self.start_sync())
+        self.root.bind("<F5>", lambda e: self.start_sync(sync.PRICES))
+        self.root.bind("<Shift-F5>", lambda e: self.start_sync(sync.FUNDAMENTALS))
         self.table.tree.bind("<Up>", lambda e: self.root.after_idle(self._link))
         self.table.tree.bind("<Down>", lambda e: self.root.after_idle(self._link))
         self.refresh_lists()
         self.root.after(150, self._poll)
 
-    def _menu(self):
-        m = tk.Menu(self.root)
-        f = tk.Menu(m, tearoff=0)
-        f.add_command(label="Synchronizuj (Finviz + yfinance)\tF5", command=self.start_sync)
-        f.add_command(label="Odśwież tylko ceny (bez Finviz)", command=lambda: self.start_sync(skip_finviz=True))
-        f.add_command(label="Wczytaj dane z dysku", command=self.reload)
-        f.add_separator()
-        f.add_command(label="Zakończ", command=self.root.destroy)
-        m.add_cascade(label="Plik", menu=f)
-        s = tk.Menu(m, tearoff=0)
-        s.add_command(label="Skaner…", command=self.open_scanner)
-        s.add_command(label="Boxy Darvasa…", command=self.open_boxes)
-        s.add_command(label="Wyczyść filtr listy", command=lambda: self.apply_main_filter({}))
-        m.add_cascade(label="Skaner", menu=s)
-        w = tk.Menu(m, tearoff=0)
-        w.add_command(label="Wykres wybranej spółki", command=lambda: self.open_chart(self.table.current()))
-        w.add_command(label="Wykres w nowym oknie", command=lambda: self.open_chart_new(self.table.current()))
-        m.add_cascade(label="Okno", menu=w)
-        h = tk.Menu(m, tearoff=0)
-        h.add_command(label="O programie", command=lambda: messagebox.showinfo(
-            "Momentum Desktop", "Lista z Finviz + ceny z yfinance, wykresy Dar-Card i słupkowy.\nLogika jak w Momentum.\n"
-            "Tylko informacyjnie — nie jest to porada inwestycyjna.\n\nDane: " + str(self.store.dir)))
-        m.add_cascade(label="Pomoc", menu=h)
-        self.root.config(menu=m)
+    def _menu_spec(self):
+        return [
+            ("Plik", [("Sync cen (Finviz + yfinance, szybko)\tF5", lambda: self.start_sync(sync.PRICES)),
+                      ("Sync fundamentów (EPS, estymaty — raz w tygodniu)\tShift+F5", lambda: self.start_sync(sync.FUNDAMENTALS)),
+                      ("Ceny tylko z yfinance (bez Finviz)", lambda: self.start_sync(sync.PRICES, skip_finviz=True)),
+                      ("Wczytaj dane z dysku", self.reload), None, ("Zakończ", self.root.destroy)]),
+            ("Skaner", [("Skaner…", self.open_scanner), ("Boxy Darvasa…", self.open_boxes),
+                        ("Wyczyść filtr listy", lambda: self.apply_main_filter({}))]),
+            ("Okno", [("Wykres wybranej spółki", lambda: self.open_chart(self.table.current())),
+                      ("Wykres w nowym oknie", lambda: self.open_chart_new(self.table.current())),
+                      ("CANSLIM wybranej spółki…", lambda: self.open_canslim(self.table.current()))]),
+            ("Pomoc", [("O programie", lambda: messagebox.showinfo(
+                "Momentum Desktop", "Lista z Finviz + ceny z yfinance, wykresy Dar-Card i słupkowy (tygodniowe i dzienne), CANSLIM.\n"
+                "Logika jak w Momentum. Tylko informacyjnie — nie jest to porada inwestycyjna.\n\nDane: " + str(self.store.dir)))]),
+        ]
+
+    # --- skala czasu listy
+    def set_tf(self, tf):
+        self.store.set_tf(tf)
+        self.tf.set(self.store.tf)
+        if tf == "D" and self.store.tf != "D":
+            messagebox.showinfo("Skala dzienna", "Brak danych dziennych — zrób Sync cen.")
+        self.refresh_lists()
 
     # --- listy
     def _rows(self):
-        rows = store.scan(self.store.rows, {**self.main_filter, "text": self.search.get()})
-        return rows
+        return store.scan(self.store.rows, {**self.main_filter, "text": self.search.get()})
 
     def refresh_lists(self):
         rows = self._rows()
         self.table.set_rows(rows)
+        self.table.set_tf_label(self.store.tf)
         wl = self.store.watchlist
-        mk = wl.get("market") or {}
-        regime = {"uptrend": "✅ trend wzrostowy", "correction": "🛑 korekta"}.get(mk.get("m_regime") or mk.get("regime"), "—")
-        self.status.config(text=f"  Dane z: {wl.get('data_as_of', 'brak — kliknij Sync')}   Spółek: {len(rows)}/{len(self.store.rows)}   Rynek (M): {regime}"
+        mk = self.store.mkt or {}
+        regime = {"uptrend": "✅ trend wzrostowy", "correction": "🛑 korekta"}.get(mk.get("regime"), "—")
+        self.status.config(text=f"  Dane z sesji: {wl.get('data_as_of', 'brak — kliknij Sync')}   Spółek: {len(rows)}/{len(self.store.rows)}   Rynek (M): {regime}"
                                 f"   Finviz: {'(stare dane!)' if wl.get('finviz_stale') else 'ok'}   Katalog: {self.store.dir}")
         self.filter_lbl.config(text="⚑ filtr skanera aktywny" if any(v for v in self.main_filter.values()) else "")
+        self.update_age()
         if self.scanner and self.scanner.winfo_exists():
             self.scanner.run()
+            self.scanner.table.set_tf_label(self.store.tf)
         if self.boxes and self.boxes.winfo_exists():
             self.boxes.refresh()
+
+    def update_age(self):
+        """Wiek ostatnich synchronizacji: fundamenty starsze niż tydzień podświetlamy na pomarańczowo."""
+        st = sync.read_state(self.store.dir)
+
+        def fmt(iso):
+            d = sync.age_days(iso)
+            return "brak" if d is None else "dziś" if d < 1 else f"{int(d)} d temu"
+
+        fd = sync.age_days(st.get("fundamentals"))
+        stale = fd is None or fd > sync.FUNDAMENTALS_STALE_DAYS
+        self.age_lbl.config(text=f"Ceny: {fmt(st.get('prices'))}   Fundamenty: {fmt(st.get('fundamentals'))}{'  ⚠ czas na Sync fundamentów' if stale else ''}",
+                            fg="#ff9f43" if stale else FG)
 
     def apply_main_filter(self, f):
         self.main_filter = {k: v for k, v in f.items() if v not in (None, "", [], False)}
@@ -697,6 +790,7 @@ class App:
 
     def reload(self):
         self.store.reload()
+        self.store.set_tf(self.store.tf)
         self.refresh_lists()
         if self.scanner and self.scanner.winfo_exists():
             self.scanner.refresh()
@@ -711,12 +805,16 @@ class App:
                 self.chart.set_focus(focus)
                 self.chart.redraw()
         else:
-            self.chart.set_ticker(ticker, focus)
+            self.chart.set_ticker(ticker, focus, self.store.tf if focus else None)
             self.chart.lift()
 
     def open_chart_new(self, ticker):
         if ticker:
             ChartWindow(self, ticker)
+
+    def open_canslim(self, ticker):
+        if ticker and self.store.row(ticker):
+            CanslimWindow(self, ticker)
 
     def step_chart(self, delta):
         t = self.table.step(delta)
@@ -741,16 +839,19 @@ class App:
         self.boxes.lift()
 
     # --- synchronizacja (w tle, log przez kolejkę)
-    def start_sync(self, skip_finviz=False):
+    def start_sync(self, mode=sync.PRICES, skip_finviz=False):
         if self.syncing:
             return
         self.syncing = True
-        self.sync_btn.config(state="disabled", text="⟳ Trwa Sync…")
-        self.sync_win = SyncWindow(self)
-        self.sync_win.log("Start: Finviz → yfinance → obliczenia (kilka minut)…" if not skip_finviz else "Start: odświeżanie cen (bez Finviz)…")
+        for b in (self.prices_btn, self.fund_btn):
+            b.config(state="disabled")
+        fund = mode == sync.FUNDAMENTALS
+        self.sync_win = SyncWindow(self, "Synchronizacja fundamentów" if fund else "Synchronizacja cen")
+        self.sync_win.log("Start: Finviz → yfinance → EPS i estymaty analityków → obliczenia (kilka–kilkanaście minut)…" if fund
+                          else "Start: " + ("yfinance" if skip_finviz else "Finviz → yfinance") + " → obliczenia na zapisanych fundamentach (ok. minuty)…")
 
         def work():
-            code = sync.run_sync(self.store.dir, log=lambda s: self.q.put(("log", s)), skip_finviz=skip_finviz)
+            code = sync.run_sync(self.store.dir, log=lambda s: self.q.put(("log", s)), mode=mode, skip_finviz=skip_finviz)
             self.q.put(("done", code == 0))
 
         threading.Thread(target=work, daemon=True).start()
@@ -763,7 +864,8 @@ class App:
                     self.sync_win.log(val)
                 elif kind == "done":
                     self.syncing = False
-                    self.sync_btn.config(state="normal", text="⟳ Sync (F5)")
+                    for b in (self.prices_btn, self.fund_btn):
+                        b.config(state="normal")
                     if val:
                         self.reload()
                     if self.sync_win and self.sync_win.winfo_exists():

@@ -8,6 +8,7 @@ BG, GRID, PAPER = "#0b0d10", "#1a1f26", "#161b21"
 TEXT, DIM = "#c9d1d9", "#6b7684"
 UP, DOWN = "#d5d9e0", "#e5484d"
 SMA10, SMA40, SPX, LINE = "#e5484d", "#f0b429", "#7d8590", "#4aa3ff"
+SMA_COLORS = {10: SMA10, 40: SMA40, 50: SMA40, 200: "#e6e9ef"}
 GREEN, RED, GOLD, WHITE = "#3ddc84", "#ff5c5c", "#ffd166", "#ffffff"
 BOX_FILL, BOX_PLAIN = "#c9ced8", "#e6e9ef"
 FONT = ("Consolas", 9)
@@ -79,8 +80,8 @@ def window(n_total, n_show, end=None):
 
 
 def box_focus_window(n_total, box, lead=14, trail=6):
-    """Okno wykresu po kliknięciu boxa: 14 tygodni przed początkiem boxa do 6 tygodni po nim."""
-    i0, i1 = max(0, box["i0"] - lead), min(n_total, box["i0"] + trail + max(1, 0))
+    """Okno wykresu po kliknięciu boxa: `lead` słupków przed początkiem boxa do `trail` po nim (14 / 6 tygodni; dziennie 70 / 30 sesji)."""
+    i0, i1 = max(0, box["i0"] - lead), min(n_total, box["i0"] + trail)
     i1 = max(i1, min(n_total, box.get("i1", box["i0"]) + 2))
     return i0, max(i1, i0 + 12)
 
@@ -95,13 +96,32 @@ def _finite(seq):
 
 
 def _x_axis(cv, weeks, i0, i1, xf, y, W):
+    months = {w[:7] for w in weeks[i0:i1]}
+    show = {f"{m:02d}" for m in range(1, 13)} if len(months) <= 8 else {"01", "04", "07", "10"}   # krótkie okno: każdy miesiąc, długie: kwartały
     last_m = None
     for i in range(i0, min(i1, len(weeks))):
         m = weeks[i][:7]
-        if m != last_m and m[5:7] in ("01", "04", "07", "10"):
+        if m != last_m and m[5:7] in show:
             cv.create_text(xf(i), y, text=m, fill=DIM, font=FONT, anchor="n")
             cv.create_line(xf(i), TOP, xf(i), y - 2, fill=GRID)
         last_m = m
+
+
+def hatch(cv, x0, y0, x1, y1, color="#8a929e", gap=7):
+    """Ukośne kreski (strefa zagrożenia) wewnątrz prostokąta — zwykłe linie, bez rastra kropek."""
+    h = y1 - y0
+    if x1 - x0 < 2 or h < 2:
+        return
+    k = -h
+    while k < x1 - x0:
+        xa, ya, xb, yb = x0 + k, y1, x0 + k + h, y0   # od lewego dołu do prawej góry
+        if xa < x0:
+            ya, xa = y1 - (x0 - xa), x0
+        if xb > x1:
+            yb, xb = y0 + (xb - x1), x1
+        if xb > xa and yb < ya + 0.1:
+            cv.create_line(xa, ya, xb, yb, fill=color)
+        k += gap
 
 
 def _tag(cv, x, y, text, fill, fg="#000"):
@@ -137,7 +157,7 @@ def draw_bars(cv, full, weeks, spx, win, opts=None):
         return {}
     extra = [v for v in (opts.get("levels") or []) if v]
     lo, hi = min(ls + extra), max(hs + extra)
-    sm10, sm40 = full.get("sma10") or [], full.get("sma40") or []
+    smas = opts.get("smas") or [(full.get("sma10") or [], 10), (full.get("sma40") or [], 40)]
     pad = (hi - lo) * 0.05
     band = 0.0
     if opts.get("spx") and spx:
@@ -165,11 +185,12 @@ def draw_bars(cv, full, weeks, spx, win, opts=None):
     for b in opts.get("boxes") or []:
         x0, x1 = xf(max(b["i0"], i0)) - step / 2, (W - RIGHT if b.get("extend") else xf(min(b["i1"], i1 - 1)) + step / 2)
         if x1 > x0:
-            cv.create_rectangle(x0, y(b["top"]), x1, y(b["bottom"]), fill="#ffffff", stipple="gray12", outline=b.get("color", "#8892a0"), dash=(3, 3))
             zb = b["bottom"] * (1 - darvas.STOP_PCT / 100)
-            cv.create_rectangle(x0, y(b["bottom"]), x1, y(zb), fill="#ffffff", stipple="gray25", outline="")
+            cv.create_rectangle(x0, y(b["bottom"]), x1, y(zb), fill="#2a1d24", outline="")   # strefa zagrożenia: spokojne, ciemnoczerwone tło
+            cv.create_rectangle(x0, y(b["top"]), x1, y(b["bottom"]), fill="#1a2430", outline=b.get("color", "#8892a0"))
     # średnie
-    for arr, col in ((sm10, SMA10), (sm40, SMA40)):
+    for arr, n_ma in smas:
+        col = SMA_COLORS.get(n_ma, SMA40)
         pts = [(xf(i), y(arr[i])) for i in range(i0, min(i1, len(arr))) if arr[i] is not None and lo_s <= arr[i] <= hi_s]
         if len(pts) > 1:
             cv.create_line(*[v for p in pts for v in p], fill=col, width=1)
@@ -221,7 +242,7 @@ def draw_bars(cv, full, weeks, spx, win, opts=None):
         for i in range(max(i0, 1), min(i1, len(line))):   # czerwony ▼ przy przecięciu sygnału w dół
             if None not in (line[i], sg[i], line[i - 1], sg[i - 1]) and line[i - 1] >= sg[i - 1] and line[i] < sg[i]:
                 cv.create_text(xf(i), m_top + 2, text="▼", fill=RED, font=FONT, anchor="n")
-        cv.create_text(LEFT + 4, m_top, text="MACD (12, 26, 9) tygodniowy", fill=DIM, font=FONT, anchor="nw")
+        cv.create_text(LEFT + 4, m_top, text=f"MACD (12, 26, 9) {'dzienny' if opts.get('tf') == 'D' else 'tygodniowy'}", fill=DIM, font=FONT, anchor="nw")
     return {"kind": "bars", "W": W, "H": H, "i0": i0, "i1": i1, "step": step, "xf": xf, "y": y, "p_top": p_top, "m_bot": m_bot}
 
 
@@ -273,7 +294,7 @@ def draw_darcard(cv, full, weeks, win, opts=None):
             x1 = W - RIGHT
         yt, yb, yz = y(b["top"]), y(b["bottom"]), y(b["bottom"] * (1 - darvas.STOP_PCT / 100))
         bad = b["outcome"] == "down"
-        cv.create_rectangle(x0, yb, x1, yz, fill=WHITE, stipple="gray25", outline="")   # strefa zagrożenia 5 % pod dołem
+        hatch(cv, x0, yb, x1, yz)   # strefa zagrożenia 5 % pod dołem (ukośne kreski)
         cv.create_rectangle(x0, yt, x1, yb, fill="#7a2f2f" if bad else (BOX_PLAIN if b["confirmed"] else BOX_FILL),
                             outline=RED if bad else DIM, dash=() if b["confirmed"] else (3, 2))
         hits.append({"rect": (x0, yt, x1, yz), "box": {"top": b["top"], "bottom": b["bottom"], "i0": b["i0"], "i1": b["i1"], "kind": "darvas",
@@ -284,7 +305,7 @@ def draw_darcard(cv, full, weeks, win, opts=None):
         start = next((i for i, w in enumerate(weeks) if w >= pin.get("start", "")), i0) if pin.get("start") else i0
         x0, x1 = xf(max(start, i0)) - step / 2, W - RIGHT
         cv.create_rectangle(x0, y(pin["top"]), x1, y(pin["bottom"]), outline=col, width=2, dash=(5, 3))
-        cv.create_rectangle(x0, y(pin["bottom"]), x1, y(pin["bottom"] * (1 - darvas.STOP_PCT / 100)), fill=WHITE, stipple="gray25", outline=col)
+        hatch(cv, x0, y(pin["bottom"]), x1, y(pin["bottom"] * (1 - darvas.STOP_PCT / 100)), col)
         cv.create_text(x0 + 4, y(pin["top"]) + 3, text=f"📌 {st['text']}", fill=col, font=FONT, anchor="nw")
         hits.append({"rect": (x0, y(pin["top"]), x1, y(pin["bottom"] * 0.95)), "box": {"top": pin["top"], "bottom": pin["bottom"], "i0": start,
                                                                                     "i1": last_idx(c), "kind": "pinned", "outcome": "open", "start": pin.get("start", "")}})
@@ -375,7 +396,7 @@ def slider_jump(x, total, n_show, width, pad=4):
     return n_show, end
 
 
-def draw_slider(cv, closes, n_show, end):
+def draw_slider(cv, closes, n_show, end, unit="tyg."):
     """Minimapa cen zamknięcia całej historii + ramka bieżącego okna."""
     cv.delete("all")
     W, H = cv.winfo_width(), cv.winfo_height()
@@ -386,14 +407,13 @@ def draw_slider(cv, closes, n_show, end):
     total = len(closes)
     lo, hi = min(vals), max(vals)
     y = _scale(lo, hi, 6, H - 6)
+    x0, x1 = slider_rect(total, n_show, end, W)
+    cv.create_rectangle(x0, 0, x1, H, fill="#16202c", outline="")   # tło wybranego okna jaśniejsze od reszty toru
     pts = [(4 + (i + 0.5) / total * (W - 8), y(v)) for i, v in enumerate(closes) if v is not None]
     if len(pts) > 1:
-        cv.create_line(*[c for p in pts for c in p], fill=DIM)
-    x0, x1 = slider_rect(total, n_show, end, W)
-    cv.create_rectangle(0, 0, x0, H, fill=BG, stipple="gray50", outline="")   # przyciemnienie poza oknem
-    cv.create_rectangle(x1, 0, W, H, fill=BG, stipple="gray50", outline="")
+        cv.create_line(*[c for p in pts for c in p], fill="#8b95a3")
     cv.create_rectangle(x0, 1, x1, H - 1, outline=LINE, width=2)
     for x in (x0, x1):   # uchwyty krawędzi
         cv.create_rectangle(x - 3, H / 2 - 9, x + 3, H / 2 + 9, fill=LINE, outline="")
-    cv.create_text(x1 - 6 if x1 - x0 > 90 else x1 + 6, 4, text=f"{n_show} tyg.", fill=TEXT, font=FONT,
+    cv.create_text(x1 - 6 if x1 - x0 > 90 else x1 + 6, 4, text=f"{n_show} {unit}", fill=TEXT, font=FONT,
                    anchor="ne" if x1 - x0 > 90 else "nw")

@@ -4,7 +4,7 @@ import shutil
 import sys
 from pathlib import Path
 
-from . import darvas
+from . import canslim, darvas, daily
 
 STATE_LABELS = {"BUY": "KUP", "NOVOL": "bez wolumenu", "LATE": "za późno", "HOLD": "trzymaj", "SELL": "SPRZEDAJ",
                 "OUT": "poza", "WAIT": "czekaj", "NONE": ""}
@@ -56,10 +56,19 @@ def base_label(s):
     return BASE_LABELS.get(t, t or "")
 
 
-def enrich(stock, full, pin, weeks):
-    """Dopisuje do spółki pola liczone lokalnie: stan Darvasa i status przypiętego boxa."""
+def darvas_state(full, tf):
     c = (full or {}).get("c") or []
-    st = darvas.status(c, (full or {}).get("v")) if c else {"state": "NONE", "text": ""}
+    if not c:
+        return {"state": "NONE", "text": ""}
+    return darvas.status(c, full.get("v"), **(darvas.DAILY if tf == "D" else {}))
+
+
+def enrich(stock, full, pin, weeks, tf="W", full_d=None):
+    """Dopisuje do spółki pola liczone lokalnie: stan Darvasa (tygodniowy i dzienny) i status przypiętego boxa."""
+    sw, sd = darvas_state(full, "W"), darvas_state(full_d, "D")
+    stock["darvas_w"], stock["darvas_d"] = sw["state"], sd["state"]
+    stock["darvas_text_w"], stock["darvas_text_d"] = sw.get("text", ""), sd.get("text", "")
+    st = sd if tf == "D" and full_d else sw
     stock["darvas"] = st["state"]
     stock["darvas_text"] = st.get("text", "")
     ps = darvas.pin_status(pin, stock.get("price")) if pin else {"state": "NONE", "rank": 9, "text": ""}
@@ -72,8 +81,10 @@ def enrich(stock, full, pin, weeks):
 class Store:
     def __init__(self, base=None):
         self.dir = data_dir(base)
-        self.watchlist, self.charts, self.pinned = {}, {}, {}
+        self.watchlist, self.charts, self.charts_d, self.pinned = {}, {}, {}, {}
         self.rows = []
+        self.tf = "W"   # „W” tygodniowy / „D” dzienny — wpływa na stan Darvasa w liście
+        self._sma = {}
         self.reload()
 
     @property
@@ -87,9 +98,36 @@ class Store:
     def reload(self):
         self.watchlist = read_json(self.dir / "watchlist.json", {}) or {}
         self.charts = read_json(self.dir / "charts.json", {}) or {}
+        self.charts_d = read_json(self.dir / "charts_daily.json", {}) or {}
         self.pinned = read_json(self.dir / "pinned.json", {}) or {}
-        self.rows = [enrich(dict(s), self.stocks_full.get(s["ticker"]), self.pinned.get(s["ticker"]), self.weeks)
-                     for s in self.watchlist.get("stocks", [])]
+        self._sma = {}
+        mkt = canslim.market(self.watchlist)
+        self.mkt = mkt
+        self.rows = [canslim.tag(self._enrich(dict(s)), mkt) for s in self.watchlist.get("stocks", [])]
+
+    def _enrich(self, s):
+        t = s["ticker"]
+        return enrich(s, self.stocks_full.get(t), self.pinned.get(t), self.weeks, self.tf, self.charts_d.get("stocks", {}).get(t))
+
+    def set_tf(self, tf):
+        """Przełącznik listy: tygodniowy / dzienny stan Darvasa (kolumna Darvas i filtry skanera)."""
+        self.tf = "D" if tf == "D" and self.charts_d.get("stocks") else "W"
+        for r in self.rows:
+            r["darvas"] = r["darvas_d"] if self.tf == "D" else r["darvas_w"]
+            r["darvas_text"] = r["darvas_text_d"] if self.tf == "D" else r["darvas_text_w"]
+
+    def series(self, ticker, tf):
+        """(dane OHLCV, lista dat, S&P 500, średnie [(tablica, nazwa)]) dla wykresu w danej skali czasu; dane dzienne mają SMA 10 / 50 / 200."""
+        if tf == "D":
+            full = (self.charts_d.get("stocks") or {}).get(ticker)
+            if not full:
+                return None, [], [], []
+            key = ("D", ticker)
+            if key not in self._sma:
+                self._sma[key] = [(daily.sma(full["c"], n), n) for n in (10, 50, 200)]
+            return full, self.charts_d.get("dates", []), self.charts_d.get("spx"), self._sma[key]
+        full = self.stocks_full.get(ticker)
+        return full, self.weeks, self.charts.get("spx"), [((full or {}).get("sma10") or [], 10), ((full or {}).get("sma40") or [], 40)]
 
     def row(self, ticker):
         return next((r for r in self.rows if r["ticker"] == ticker), None)
@@ -103,12 +141,15 @@ class Store:
         write_json(self.dir / "pinned.json", self.pinned)
         r = self.row(ticker)
         if r:
-            enrich(r, self.stocks_full.get(ticker), self.pinned.get(ticker), self.weeks)
+            ps = darvas.pin_status(self.pinned.get(ticker), r.get("price")) if ticker in self.pinned else {"state": "NONE", "rank": 9, "text": ""}
+            r["pbox"], r["pbox_text"], r["pbox_rank"] = ps["state"], ps["text"], ps["rank"]
 
     def overview(self):
-        items = [{"ticker": r["ticker"], "price": r.get("price"), "c": self.stocks_full.get(r["ticker"], {}).get("c"),
-                  "v": self.stocks_full.get(r["ticker"], {}).get("v")} for r in self.rows]
-        return darvas.overview(items, self.weeks, self.pinned)
+        daily_on = self.tf == "D"
+        src = (self.charts_d.get("stocks") or {}) if daily_on else self.stocks_full
+        items = [{"ticker": r["ticker"], "price": r.get("price"), "c": src.get(r["ticker"], {}).get("c"),
+                  "v": src.get(r["ticker"], {}).get("v")} for r in self.rows]
+        return darvas.overview(items, self.charts_d.get("dates", []) if daily_on else self.weeks, self.pinned, params=darvas.DAILY if daily_on else None)
 
     def finviz_config(self):
         return read_json(self.dir / "finviz_screen.json", {}) or {}
@@ -122,7 +163,7 @@ class Store:
 # ---------- skaner (filtry po danych już pobranych) ----------
 
 DEFAULT_FILTERS = {"rs_min": None, "eps_min": None, "comp_min": None, "max_to_pivot": None, "max_from_high": None,
-                   "states": [], "sector": "", "base_only": False, "min_adr": None, "pinned_only": False, "text": ""}
+                   "states": [], "sector": "", "base_only": False, "min_adr": None, "pinned_only": False, "text": "", "cs_min": None, "cs_core": False}
 
 
 def _num(v):
@@ -151,6 +192,10 @@ def scan(rows, f):
             d = _num(r.get("pct_from_high_52w"))
             if d is None or d < -abs(f["max_from_high"]):
                 continue
+        if f["cs_min"] is not None and (_num(r.get("cs")) is None or r["cs"] < f["cs_min"]):
+            continue
+        if f["cs_core"] and not (r.get("canslim") and canslim.core_ok(r)):
+            continue
         if f["states"] and r.get("darvas") not in f["states"]:
             continue
         if f["sector"] and r.get("sector") != f["sector"]:
@@ -170,5 +215,6 @@ PRESETS = {
     "Liderzy RS ≥ 80 blisko szczytu": {"rs_min": 80, "max_from_high": 10},
     "Blisko pivotu (≤ 5 %)": {"max_to_pivot": 5, "base_only": True},
     "Silne fundamenty: Composite ≥ 80": {"comp_min": 80},
+    "CANSLIM ≥ 5/7 (C i A obowiązkowe)": {"cs_min": 5, "cs_core": True},
     "Box czeka na wybicie": {"states": ["WAIT"]},
 }

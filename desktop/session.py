@@ -9,7 +9,8 @@ MAX_RECENT = 30
 def load(root):
     d = store.read_json(Path(root) / "session.json", {}) or {}
     return {"recent": [s for s in d.get("recent", []) if isinstance(s, str)], "open": [s for s in d.get("open", []) if isinstance(s, str)],
-            "launcher": bool(d.get("launcher", False)), "main_hidden": bool(d.get("main_hidden", False))}
+            "launcher": bool(d.get("launcher", False)), "main_hidden": bool(d.get("main_hidden", False)),
+            "symbols": [s for s in d.get("symbols", []) if isinstance(s, str)]}
 
 
 def save(root, sess):

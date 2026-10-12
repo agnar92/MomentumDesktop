@@ -39,6 +39,16 @@ def build_daily(frames, benchmark=None, keep=KEEP):
     return out
 
 
+def align_frame(df, idx):
+    """Dzienne arrays {o,h,l,c,v} jednej spółki wyrównane do osi dat idx (DatetimeIndex); None tam, gdzie spółka nie handlowała."""
+    import pandas as pd
+    d = df.copy()
+    d.index = pd.DatetimeIndex(d.index).tz_localize(None) if d.index.tz is not None else pd.DatetimeIndex(d.index)
+    d = d[~d.index.duplicated()].reindex(idx)
+    return {"o": [_r(v) for v in d["Open"].values], "h": [_r(v) for v in d["High"].values], "l": [_r(v) for v in d["Low"].values],
+            "c": [_r(v) for v in d["Close"].values], "v": [None if math.isnan(v) else int(v / 1000) for v in d["Volume"].values]}
+
+
 def sma(values, n):
     """Prosta średnia krocząca (None, dopóki nie ma n kolejnych wartości)."""
     out, win, s = [None] * len(values), [], 0.0

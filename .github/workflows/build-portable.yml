@@ -1,6 +1,6 @@
 name: Build portable
 
-# Wersja portable: jeden plik (Windows .exe / Linux / macOS) bez instalacji. Dane (Finviz + yfinance) program pobiera sam
+# Wersja portable: jeden plik (Windows .exe / Linux) bez instalacji; macOS pomijamy (build się zawiesza — do odtworzenia osobno). Dane (Finviz + yfinance) program pobiera sam
 # przyciskiem "Sync" do folderu data/ obok pliku. Gotowe pliki: Actions -> uruchomienie -> Artifacts (albo Releases po tagu v*).
 on:
   push:
@@ -23,10 +23,6 @@ jobs:
             sep: ";"
           - os: ubuntu-latest
             name: Linux
-            ext: ""
-            sep: ":"
-          - os: macos-latest
-            name: macOS
             ext: ""
             sep: ":"
     runs-on: ${{ matrix.os }}
@@ -56,7 +52,6 @@ jobs:
             --collect-data certifi --copy-metadata yfinance \
             main.py
       - name: Selftest zbudowanego pliku (silnik Finviz / yfinance się ładuje)
-        if: runner.os != 'macOS'
         shell: bash
         run: |
           if [ "$RUNNER_OS" = "Linux" ]; then xvfb-run -a "dist/MomentumDesktop${{ matrix.ext }}" --selftest; else "dist/MomentumDesktop${{ matrix.ext }}" --selftest; fi

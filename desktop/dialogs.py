@@ -1,8 +1,11 @@
 """Okna pomocnicze widoku skanera: filtr lokalny, boxy Darvasa, kryteria Finviz, CANSLIM, wybór kolumn."""
+import queue
+import threading
 import tkinter as tk
-from tkinter import ttk
+from tkinter import messagebox, ttk
 
-from . import canslim, changes, finviz_codes, store
+from . import adhoc, canslim, changes, finviz_codes, store
+from . import alerts as alerts_mod
 from . import columns as columns_mod
 from .theme import BG, FG, MONO, PANEL, SEL, apply_dark
 from .widgets import STATE_COLORS, StockTable
@@ -351,7 +354,8 @@ class WhatsNewWindow(tk.Toplevel):
             for t in items:
                 r = self.view.store.row(t)
                 if r:
-                    state = r.get("darvas_text_d") if key == "buy_d" else r.get("pbox_text") if key == "zone" else r.get("darvas_text") if key in ("buy_w", "sell") else \
+                    last = self.view.app.alerts.last_triggered(t) if key == "alert" else None
+                    state = alerts_mod.Alerts.describe(last) if last else r.get("darvas_text_d") if key == "buy_d" else r.get("pbox_text") if key == "zone" else r.get("darvas_text") if key in ("buy_w", "sell") else \
                         f"CANSLIM {r.get('cs')}/7  {r.get('cs_letters', '')}" if key == "canslim" else (r.get("company") or "")
                     self.tree.insert(sec, "end", iid=f"{key}:{t}", text=t, values=(f"{r['price']:.2f}" if r.get("price") else "", state or ""),
                                      tags=(r.get("darvas_d" if key == "buy_d" else "darvas_w", ""),))
@@ -392,4 +396,179 @@ class ListNamesWindow(tk.Toplevel):
         for lid, v in self.vars.items():
             self.app.flags.rename(lid, v.get())
         self.app.refresh_flag_views()
+        self.destroy()
+
+
+class AlertDialog(tk.Toplevel):
+    """Nowy alert cenowy: poziom, kierunek (domyślnie z położenia poziomu względem ceny), notatka."""
+
+    def __init__(self, view, ticker, price=None, on_done=None):
+        super().__init__(view.root)
+        self.view, self.ticker, self.on_done = view, ticker, on_done
+        full, dates, _spx, _ = view.store.series(ticker, "D")
+        if not full:
+            full, dates, _spx, _ = view.store.series(ticker, "W")
+        self.ref_price = next((v for v in reversed((full or {}).get("c") or []) if v is not None), None)
+        self.ref_date = dates[max(i for i, v in enumerate(full["c"]) if v is not None)] if full and self.ref_price else None
+        self.title(f"Alert cenowy — {ticker}")
+        self.configure(bg=BG)
+        apply_dark(self)
+        tk.Label(self, text=f"{ticker}   ostatnia cena {self.ref_price:.2f} ({self.ref_date})" if self.ref_price else ticker, bg=PANEL).grid(row=0, column=0, columnspan=3, padx=10, pady=8)
+        tk.Label(self, text="Poziom:", bg=PANEL).grid(row=1, column=0, padx=10, sticky="e")
+        self.price = tk.StringVar(value=f"{price:.2f}" if price else (f"{self.ref_price:.2f}" if self.ref_price else ""))
+        e = tk.Entry(self, textvariable=self.price, width=12)
+        e.grid(row=1, column=1, sticky="w")
+        e.focus_set()
+        tk.Label(self, text="Kierunek:", bg=PANEL).grid(row=2, column=0, padx=10, pady=4, sticky="e")
+        self.dir = tk.StringVar(value="")
+        fr = tk.Frame(self, bg=PANEL)
+        fr.grid(row=2, column=1, columnspan=2, sticky="w")
+        for text, val in (("auto", ""), ("↑ powyżej", "above"), ("↓ poniżej", "below")):
+            tk.Radiobutton(fr, text=text, value=val, variable=self.dir, bg=PANEL, indicatoron=False, padx=8).pack(side="left", padx=1)
+        tk.Label(self, text="Notatka:", bg=PANEL).grid(row=3, column=0, padx=10, sticky="e")
+        self.note = tk.StringVar()
+        tk.Entry(self, textvariable=self.note, width=34).grid(row=3, column=1, columnspan=2, sticky="w", pady=4)
+        tk.Label(self, text="Alert sprawdzany po każdym Sync na świecach po dzisiejszej dacie danych (High / Low sesji).", bg=PANEL, fg="#8b95a3").grid(row=4, column=0, columnspan=3, padx=10, pady=4)
+        bar = tk.Frame(self, bg=PANEL)
+        bar.grid(row=5, column=0, columnspan=3, sticky="e", pady=8)
+        tk.Button(bar, text="Zapisz", command=self.save).pack(side="right", padx=8)
+        tk.Button(bar, text="Anuluj", command=self.destroy).pack(side="right")
+        self.bind("<Return>", lambda ev: self.save())
+        self.bind("<Escape>", lambda ev: self.destroy())
+
+    def save(self):
+        try:
+            level = float(self.price.get().replace(",", "."))
+        except ValueError:
+            messagebox.showerror("Alert", "Poziom musi być liczbą.", parent=self)
+            return
+        if level <= 0:
+            messagebox.showerror("Alert", "Poziom musi być dodatni.", parent=self)
+            return
+        direction = self.dir.get() or alerts_mod.infer_direction(level, self.ref_price or level)
+        self.view.app.alerts.add(self.ticker, level, direction, self.note.get(), self.ref_date)
+        self.view.app.refresh_alert_views()
+        if self.on_done:
+            self.on_done()
+        self.destroy()
+
+
+class AlertsWindow(tk.Toplevel):
+    """Wszystkie alerty cenowe (aktywne i przebite): usuń, reaktywuj, dodaj."""
+
+    def __init__(self, app):
+        super().__init__(app.root)
+        self.app = app
+        self.title("Alerty cenowe")
+        self.geometry("820x420")
+        self.configure(bg=BG)
+        apply_dark(self)
+        self.tree = ttk.Treeview(self, columns=("level", "dir", "state", "created", "note"), show="tree headings", selectmode="browse")
+        for col, text, w, anc in (("#0", "Spółka", 90, "w"), ("level", "Poziom", 90, "e"), ("dir", "Kierunek", 90, "w"), ("state", "Stan", 260, "w"),
+                                  ("created", "Utworzony", 130, "w"), ("note", "Notatka", 200, "w")):
+            self.tree.heading(col, text=text)
+            self.tree.column(col, width=w, anchor=anc)
+        self.tree.pack(fill="both", expand=True)
+        self.tree.tag_configure("hit", foreground="#ffd166")
+        self.tree.tag_configure("off", foreground="#6b7684")
+        bar = tk.Frame(self, bg=PANEL)
+        bar.pack(fill="x")
+        tk.Button(bar, text="Usuń", command=self.remove).pack(side="left", padx=6, pady=5)
+        tk.Button(bar, text="Reaktywuj", command=self.reactivate).pack(side="left", padx=2)
+        tk.Button(bar, text="Otwórz wykres", command=self.open_chart).pack(side="left", padx=2)
+        self.tree.bind("<Double-1>", lambda e: self.open_chart())
+        self.refresh()
+
+    def refresh(self):
+        self.tree.delete(*self.tree.get_children())
+        for a in sorted(self.app.alerts.items, key=lambda x: (not x["active"], x["ticker"], x["price"])):
+            hit = bool(a.get("triggered_on"))
+            self.tree.insert("", "end", iid=a["id"], text=a["ticker"], values=(f"{a['price']:.2f}", "↑ powyżej" if a["dir"] == "above" else "↓ poniżej",
+                             f"PRZEBITY {a['triggered_on']} (zamknięcie {a['triggered_close']:.2f})" if hit and a.get("triggered_close") else "aktywny" if a["active"] else "wyłączony",
+                             a.get("created", ""), a.get("note", "")), tags=("hit",) if hit else ("off",) if not a["active"] else ())
+
+    def current(self):
+        sel = self.tree.selection()
+        return sel[0] if sel else None
+
+    def remove(self):
+        if self.current():
+            self.app.alerts.remove(self.current())
+            self.app.refresh_alert_views()
+
+    def reactivate(self):
+        if self.current():
+            self.app.alerts.reactivate(self.current())
+            self.app.refresh_alert_views()
+
+    def open_chart(self):
+        a = next((x for x in self.app.alerts.items if x["id"] == self.current()), None)
+        if a:
+            self.app.view.open_chart(a["ticker"]) if self.app.view.store.row(a["ticker"]) else self.app.view.open_symbol(a["ticker"])
+
+
+class SymbolDialog(tk.Toplevel):
+    """Szybkie wyszukiwanie dowolnego symbolu (Ctrl+K lub /): spółka ze skanera otwiera się od razu, inna jest pobierana z yfinance na żądanie."""
+
+    def __init__(self, view):
+        super().__init__(view.root)
+        self.view = view
+        self.title("Szukaj symbolu")
+        self.configure(bg=BG)
+        apply_dark(self)
+        self.geometry("+%d+%d" % (view.root.winfo_rootx() + 80, view.root.winfo_rooty() + 80))
+        tk.Label(self, text="Wpisz symbol (np. NVDA, BRK-B, ^GSPC) i Enter:", bg=PANEL).pack(padx=12, pady=(10, 4))
+        self.var = tk.StringVar()
+        self.box = ttk.Combobox(self, textvariable=self.var, values=view.app.session.get("symbols", []), width=24)
+        self.box.pack(padx=12)
+        self.box.focus_set()
+        self.msg = tk.Label(self, text="", bg=PANEL, fg="#8b95a3", wraplength=300, justify="left")
+        self.msg.pack(padx=12, pady=8)
+        self.q = queue.Queue()
+        self.busy = False
+        self.box.bind("<Return>", lambda e: self.go())
+        self.bind("<Escape>", lambda e: self.destroy())
+        self.after(150, self.poll)
+
+    def go(self):
+        sym = adhoc.normalize(self.var.get())
+        if not sym:
+            self.msg.config(text="To nie wygląda na symbol giełdowy.", fg="#ff5c5c")
+            return
+        if self.busy:
+            return
+        if self.view.store.row(sym) or sym in self.view.store.adhoc:
+            self.done(sym)
+            return
+        self.busy = True
+        self.msg.config(text=f"Pobieram {sym} z yfinance… (kilka sekund)", fg="#8b95a3")
+        store_ = self.view.store
+
+        def work():
+            try:
+                self.q.put(("ok", sym, adhoc.fetch(sym, store_.weeks or None, store_.charts_d.get("dates") or None)))
+            except Exception as e:
+                self.q.put(("err", sym, str(e)))
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def poll(self):
+        try:
+            while True:
+                kind, sym, val = self.q.get_nowait()
+                self.busy = False
+                if kind == "ok":
+                    data, name = val
+                    self.view.store.add_adhoc(sym, data, name)
+                    self.done(sym)
+                    return
+                self.msg.config(text=val, fg="#ff5c5c")
+        except queue.Empty:
+            pass
+        if self.winfo_exists():
+            self.after(150, self.poll)
+
+    def done(self, sym):
+        self.view.app.remember_symbol(sym)
+        self.view.open_chart(sym)
         self.destroy()

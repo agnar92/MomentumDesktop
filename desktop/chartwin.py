@@ -32,6 +32,8 @@ class ChartWindow(tk.Toplevel):
         tk.Label(head, text=" ", bg=PANEL).pack(side="right")
         for text, val in (("Dzień", "D"), ("Tydz.", "W")):
             tk.Radiobutton(head, text=text, value=val, variable=self.tf, command=self.change_tf, bg=PANEL, indicatoron=False, padx=8).pack(side="right", padx=1, pady=3)
+        tk.Button(head, text="▦ Siatka", command=lambda: view.open_grid(), relief="flat", padx=6).pack(side="right", padx=2)
+        tk.Button(head, text="🔔 Alert", command=lambda: self.add_alert(), relief="flat", padx=6).pack(side="right", padx=2)
         self.log = tk.BooleanVar(value=True)    # skala logarytmiczna ceny (domyślnie); L przełącza
         self.macd_on = tk.BooleanVar(value=True)
         tk.Checkbutton(head, text="MACD", variable=self.macd_on, command=self.redraw, bg=PANEL).pack(side="right", padx=4)
@@ -69,11 +71,13 @@ class ChartWindow(tk.Toplevel):
             cv.bind("<Button-4>", lambda e: self.zoom(0.85))
             cv.bind("<Button-5>", lambda e: self.zoom(1.18))
             cv.bind("<Motion>", lambda e, c=cv: self.on_motion(e, c))
+            cv.bind("<Button-3>", lambda e, c=cv: self.add_alert_at(e, c))   # prawy klik = alert na tej cenie
             cv.bind("<Leave>", lambda e: self.cv_bars.delete("cross") or self.cv_card.delete("cross"))
         for key, fn in (("<Up>", lambda e: view.step_chart(-1)), ("<Down>", lambda e: view.step_chart(1)),
                         ("<Left>", lambda e: self.scroll(-4)), ("<Right>", lambda e: self.scroll(4)),
                         ("<space>", lambda e: self.toggle_mode()), ("<l>", lambda e: (self.log.set(not self.log.get()), self.redraw())),
-                        ("<m>", lambda e: (self.macd_on.set(not self.macd_on.get()), self.redraw())), ("<plus>", lambda e: self.zoom(0.85)), ("<minus>", lambda e: self.zoom(1.18)),
+                        ("<m>", lambda e: (self.macd_on.set(not self.macd_on.get()), self.redraw())), ("<g>", lambda e: view.open_grid()),
+                        ("<slash>", lambda e: view.open_symbol_dialog()), ("<Control-k>", lambda e: view.open_symbol_dialog()), ("<plus>", lambda e: self.zoom(0.85)), ("<minus>", lambda e: self.zoom(1.18)),
                         ("<Escape>", lambda e: self.deselect() if self.selected is not None else self.focus_box and self.clear_focus() or self.destroy())):
             self.bind(key, fn)
         self.set_ticker(ticker)
@@ -166,10 +170,10 @@ class ChartWindow(tk.Toplevel):
         pinned = st.pinned.get(self.ticker)
         if self.mode.get() == "darcard":
             self.update_idletasks()
-            self.geoms["card"] = charts.draw_darcard(self.cv_card, full, dates, win, {"pinned": pinned, "selected": self.selected, "log": self.log.get()})
+            self.geoms["card"] = charts.draw_darcard(self.cv_card, full, dates, win, {"pinned": pinned, "selected": self.selected, "log": self.log.get(), "alerts": self.alerts()})
             self.hit_geom = self.geoms["card"]
         if self.mode.get() == "bars":
-            opts = {"macd": self.macd_on.get(), "spx": True, "smas": smas, "tf": self.tf.get(), "log": self.log.get()}
+            opts = {"macd": self.macd_on.get(), "spx": True, "smas": smas, "tf": self.tf.get(), "log": self.log.get(), "alerts": self.alerts()}
             fb = self.focus_box or (self.selected_box())
             if fb:
                 opts["tags"] = [(fb["top"], charts.GREEN), (fb["bottom"], charts.WHITE), (round(fb["bottom"] * 0.95, 2), charts.RED)]
@@ -180,6 +184,19 @@ class ChartWindow(tk.Toplevel):
             if row.get("pivot") and row.get("base_type") in store.BUYABLE_BASES and abs(row.get("pct_to_pivot") or 99) < 15:
                 opts["pivot"] = row["pivot"]
             self.geoms["bars"] = charts.draw_bars(self.cv_bars, full, dates, spx, win, opts)
+
+    def alerts(self):
+        return self.app.app.alerts.for_ticker(self.ticker)
+
+    def add_alert(self, price=None):
+        from .dialogs import AlertDialog
+        AlertDialog(self.app, self.ticker, price, on_done=self.redraw)
+
+    def add_alert_at(self, e, cv):
+        """Prawy klik na wykresie: nowy alert na cenie pod kursorem."""
+        geom = self.geoms.get("card" if cv is self.cv_card else "bars")
+        if geom and geom.get("price_at"):
+            self.add_alert(round(geom["price_at"](e.y), 2))
 
     SMA_HOVER_PX = 6   # tak blisko linii średniej (w pikselach) kursor ją „łapie”
 

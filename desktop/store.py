@@ -88,6 +88,7 @@ class Store:
         self.rows = []
         self.tf = "W"   # „W” tygodniowy / „D” dzienny — wpływa na stan Darvasa w liście
         self._sma = {}
+        self.adhoc = {}   # tickery spoza skanera pobrane na żądanie (Ctrl+K): {T: {weekly, weeks, daily, dates, row}}
         self.reload()
 
     @property
@@ -129,12 +130,23 @@ class Store:
     def set_tf(self, tf):
         """Przełącznik listy: tygodniowy / dzienny stan Darvasa (kolumna Darvas i filtry skanera)."""
         self.tf = "D" if tf == "D" and self.charts_d.get("stocks") else "W"
-        for r in self.rows:
+        for r in self.rows + [x["row"] for x in self.adhoc.values()]:
             r["darvas"] = r["darvas_d"] if self.tf == "D" else r["darvas_w"]
             r["darvas_text"] = r["darvas_text_d"] if self.tf == "D" else r["darvas_text_w"]
 
     def series(self, ticker, tf):
         """(dane OHLCV, lista dat, S&P 500, średnie [(tablica, nazwa)]) dla wykresu w danej skali czasu; dane dzienne mają SMA 10 / 50 / 200."""
+        ad = self.adhoc.get(ticker) if ticker not in self.stocks_full else None
+        if ad is not None:   # ticker spoza skanera: własne serie, oś S&P tylko gdy zgadza się z osią skanera
+            if tf == "D":
+                key = ("AD", ticker)
+                if key not in self._sma:
+                    self._sma[key] = [(daily.sma(ad["daily"]["c"], n), n) for n in (10, 50, 200)]
+                same = ad["dates"] == self.charts_d.get("dates")
+                return ad["daily"], ad["dates"], self.charts_d.get("spx") if same else None, self._sma[key]
+            w = ad["weekly"]
+            same = ad["weeks"] == self.weeks
+            return w, ad["weeks"], self.charts.get("spx") if same else None, [((w or {}).get("sma10") or [], 10), ((w or {}).get("sma40") or [], 40)]
         if tf == "D":
             full = (self.charts_d.get("stocks") or {}).get(ticker)
             if not full:
@@ -147,7 +159,15 @@ class Store:
         return full, self.weeks, self.charts.get("spx"), [((full or {}).get("sma10") or [], 10), ((full or {}).get("sma40") or [], 40)]
 
     def row(self, ticker):
-        return next((r for r in self.rows if r["ticker"] == ticker), None)
+        return next((r for r in self.rows if r["ticker"] == ticker), None) or (self.adhoc.get(ticker) or {}).get("row")
+
+    def add_adhoc(self, symbol, data, company=None):
+        """Dodaje dane dowolnego tickera (adhoc.build): wiersz z Darvasem i CANSLIM (bez fundamentów) + serie do wykresów."""
+        stock = {"ticker": symbol, "company": company or symbol, "price": round(data["price"], 2), "as_of": data["last_date"], "_adhoc": True}
+        stock = canslim.tag(enrich(stock, data["weekly"], self.pinned.get(symbol), data["weeks"], self.tf, data["daily"]), self.mkt)
+        stock["flag"] = None
+        self.adhoc[symbol] = {**data, "row": stock}
+        return stock
 
     def pin(self, ticker, box):
         """box = {top, bottom, start} albo None (odepnij)."""

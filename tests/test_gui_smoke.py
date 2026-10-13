@@ -491,3 +491,5 @@ def test_dialog_buttons_not_clipped(app):
             opened.append(w)
     for w in opened:
         assert not _clipped_buttons(w), (w.title(), _clipped_buttons(w))
+    # lista Qullamaggie: domyślnie kolumny cena/min Low i sortowanie po największej wartości
+    assert {"low_ratio_1m", "low_ratio_3m", "low_ratio_6m", "qm_max_ratio"} <= set(mv.columns()) or mv.scanner.get("columns")

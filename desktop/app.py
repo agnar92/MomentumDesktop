@@ -516,8 +516,9 @@ class App:
         if sid in self.syncing:
             messagebox.showinfo("Synchronizacja", "Ten skaner już się synchronizuje — poczekaj, aż skończy (inne skanery możesz synchronizować równolegle).", parent=view.root)
             return
-        upgraded = mode == sync.PRICES and sid != scanners.DEFAULT_ID and not (view.store.dir / "sync_state.json").exists()
-        if upgraded:   # nowy skaner nie ma jeszcze EPS ani estymat — pierwszy Sync musi pobrać fundamenty
+        no_cache = not any((d / "eps_cache.json").exists() for d in (view.store.dir, self.data_root))
+        upgraded = mode == sync.PRICES and not (view.store.dir / "sync_state.json").exists() and no_cache
+        if upgraded:   # nigdzie nie ma jeszcze EPS ani estymat (ani w skanerze, ani we wspólnym cache) — pierwszy Sync pobiera fundamenty
             mode = sync.FUNDAMENTALS
         view.set_sync_enabled(False)
         fund = mode == sync.FUNDAMENTALS
@@ -525,6 +526,8 @@ class App:
         win = SyncWindow(self, f"Synchronizacja {'fundamentów' if fund else 'cen'} — {name}")
         self.syncing[sid] = win
         win.log(f"Skaner: {name}")
+        if mode == sync.PRICES and sid != scanners.DEFAULT_ID and not (view.store.dir / "sync_state.json").exists():
+            win.log("Nowy skaner: ceny pobieram szybko, EPS bierzemy ze wspólnego cache; spółki bez EPS dostaną dane po „Fundamenty”.")
         if upgraded:
             win.log("To pierwsza synchronizacja tego skanera — pobieram też fundamenty (EPS, estymaty), żeby CANSLIM i oceny miały dane.")
         if not skip_finviz:   # co dokładnie pobieramy z Finviz

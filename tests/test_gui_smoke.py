@@ -132,9 +132,24 @@ def test_first_sync_of_new_scanner_fetches_fundamentals(app, monkeypatch):
     view = app.view_for(sc["id"])
     seen = {}
     monkeypatch.setattr(sync, "run_in_subprocess", lambda data_dir, log, **k: seen.update(k) or 0)
+    (app.data_root / "eps_cache.json").unlink(missing_ok=True)   # nigdzie nie ma EPS -> pierwszy Sync pobiera fundamenty
     app.start_sync(view, sync.PRICES)
     assert _wait(app, lambda: not app.syncing)
     assert seen["mode"] == sync.FUNDAMENTALS and seen["shared_root"] == app.data_root
+
+
+def test_new_scanner_with_shared_eps_cache_syncs_only_prices(app, monkeypatch):
+    from desktop import scanners, sync
+    monkeypatch.setattr("tkinter.messagebox.showinfo", lambda *a, **k: None)
+    sc = scanners.upsert(app.data_root, {"name": "Nowy2"}, "geo_usa", 20)
+    app.open_scanner_window(sc["id"])
+    view = app.view_for(sc["id"])
+    seen = {}
+    monkeypatch.setattr(sync, "run_in_subprocess", lambda data_dir, log, **k: seen.update(k) or 0)
+    (app.data_root / "eps_cache.json").write_text("{}")
+    app.start_sync(view, sync.PRICES)
+    assert _wait(app, lambda: not app.syncing)
+    assert seen["mode"] == sync.PRICES
 
 
 def test_two_scanners_sync_in_parallel(app, monkeypatch):

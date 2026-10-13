@@ -364,12 +364,11 @@ def test_export_actions(app, monkeypatch, tmp_path):
     assert t.read_text(encoding="utf-8").split(",") == v.table.visible()
 
 
-def test_symbol_search_and_alerts_and_grid(app, monkeypatch):
+def test_symbol_search(app, monkeypatch):
     import numpy as np
     import pandas as pd
     from desktop import adhoc
-    from desktop.dialogs import AlertDialog, AlertsWindow, SymbolDialog
-    from desktop.grid import GridWindow
+    from desktop.dialogs import SymbolDialog
     monkeypatch.setattr("tkinter.messagebox.showinfo", lambda *a, **k: None)
     monkeypatch.setattr("tkinter.messagebox.showerror", lambda *a, **k: None)
     v = app.view
@@ -396,89 +395,3 @@ def test_symbol_search_and_alerts_and_grid(app, monkeypatch):
     d.go()
     assert "nie wygląda" in d.msg["text"]
     d.destroy()
-    # --- alert: prawy klik na wykresie -> dialog z ceną z kursora -> rysowanie poziomu
-    ch = v.chart
-    ch.mode.set("bars")
-    ch.redraw()
-    ch.update()
-    g = ch.geoms["bars"]
-    Ev = type("E", (), {})
-    e = Ev()
-    e.x, e.y = g["xf"](g["i1"] - 3), (g["p_top"] + g["p_bot"]) / 2
-    ch.add_alert_at(e, ch.cv_bars)
-    dlg = [w for w in app.root.winfo_children() if isinstance(w, AlertDialog)][-1]
-    level = float(dlg.price.get())
-    assert dlg.ref_price and abs(level - round(g["price_at"](e.y), 2)) < 0.01
-    dlg.note.set("test")
-    dlg.save()
-    al = app.alerts.for_ticker("OBCA")
-    assert len(al) == 1 and al[0]["dir"] == alerts_dir(level, dlg.ref_price) and al[0]["note"] == "test"
-    ch.redraw()
-    ch.update()
-    assert any("🔔" in ch.cv_bars.itemcget(it, "text") and "test" in ch.cv_bars.itemcget(it, "text") for it in ch.cv_bars.find_all() if ch.cv_bars.type(it) == "text")
-    aw = AlertsWindow(app)
-    aw.update()
-    assert aw.tree.exists(al[0]["id"])
-    aw.tree.selection_set(al[0]["id"])
-    aw.remove()
-    assert app.alerts.for_ticker("OBCA") == []
-    # --- siatka: układy, podążanie za listą, zaznaczanie komórki
-    v.table.tree.selection_set(v.table.visible()[2])
-    v.open_grid()
-    gw = v.grid
-    assert isinstance(gw, GridWindow)
-    gw.update()
-    gw.refresh()
-    gw.update()
-    assert len(gw.cells) == 4 and [c["ticker"] for c in gw.cells] == v.table.visible()[2:6] and all(c["geom"] for c in gw.cells)
-    v._link()
-    v.table.step(1)
-    gw.refresh()
-    assert gw.cells[0]["ticker"] == v.table.current()
-    want = gw.cells[2]["ticker"]
-    gw.select(gw.cells[2])                                   # klik w nagłówek komórki: ta spółka staje się pierwszą w siatce i zaznaczoną na liście
-    assert v.table.current() == want and gw.cells[0]["ticker"] == want
-    gw.layout_var.set("td")
-    gw.rebuild()
-    gw.update()
-    gw.refresh()
-    gw.update()
-    assert len(gw.cells) == 2 and [c["tf"] for c in gw.cells] == ["W", "D"] and all(c["geom"] for c in gw.cells)
-    gw.layout_var.set("cb")
-    gw.rebuild()
-    gw.update()
-    gw.refresh()
-    gw.update()
-    assert [c["mode"] for c in gw.cells] == ["darcard", "bars"]
-    cell = gw.cells[1]
-    e.x, e.y = cell["geom"]["xf"](cell["geom"]["i1"] - 3), 120
-    gw.on_motion(e, cell)
-    assert any(cell["cv"].itemcget(it, "text").startswith("SMA") for it in cell["cv"].find_withtag("cross") if cell["cv"].type(it) == "text")
-    gw.zoom(0.5)
-    gw.scroll(8)
-    gw.close()
-    assert v.grid is None
-
-
-def alerts_dir(level, ref):
-    from desktop import alerts
-    return alerts.infer_direction(level, ref)
-
-
-def test_alert_triggered_after_sync_shows_in_whats_new(app, monkeypatch):
-    v = app.view
-    full, dates, _spx, _ = v.store.series("NVDA", "D")
-    ref = dates[-20]
-    level = round(max(h for h in full["h"][-19:] if h) * 0.99, 2)                   # poziom, który w ostatnich 19 sesjach został przebity
-    app.alerts.add("NVDA", level, "above", "test", ref_date=ref)
-    app.alerts.add("AMD", 99999, "above", ref_date=ref)                              # nieprzebity
-    opened = []
-    monkeypatch.setattr(v, "open_changes", lambda: opened.append(1))
-    app.after_sync(v)
-    d = v.store.changes["diff"]
-    assert d["alert"] == ["NVDA"] and opened == [1] and v.store.row("NVDA")["change"] == "🔔 alert"
-    assert app.alerts.last_triggered("NVDA")["triggered_on"] > ref and len(app.alerts.for_ticker("AMD", active_only=True)) == 1
-    from desktop.dialogs import WhatsNewWindow
-    w = WhatsNewWindow(v)
-    w.update()
-    assert w.tree.exists("sec:alert") and "alert" in w.tree.item("alert:NVDA")["values"][1]

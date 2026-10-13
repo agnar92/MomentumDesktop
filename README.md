@@ -31,14 +31,8 @@ Prosta, „retro” aplikacja okienkowa (Python + Tkinter, styl TC2000) oparta n
   z widocznymi kolumnami (wariant dla Excela PL: średnik i przecinek dziesiętny, albo standardowy).
 - **Średnia wolumenu** na wykresie: SMA 10 tygodni (tygodniowy) i SMA 50 sesji (dzienny) jako pomarańczowa linia w panelu wolumenu; słupki z wolumenem
   ≥ 1,4× poprzedniej średniej (wolumen wybicia wg reguły Darvasa) mają złotą obwódkę.
-- **Siatka wykresów** (Narzędzia → Siatka wykresów… albo `G` w wykresie; jak okna powiązane w TC2000): kilka wykresów naraz, wszystkie podążają za
-  zaznaczeniem na liście skanera (↑/↓). Układy: 4 kolejne spółki z listy (2×2), ta sama spółka tydzień | dzień, ta sama spółka Dar-Card | słupkowy;
-  wspólny zoom i przewijanie, dymek przy kursorze w każdej komórce, klik w nagłówek zaznacza spółkę, dwuklik otwiera pełny wykres.
-- **Alerty cenowe**: prawy klik na wykresie (albo przycisk „🔔 Alert”) dodaje poziom na cenie pod kursorem (kierunek ustala się sam; notatka); poziom jest
-  rysowany na słupkowym i Dar-Card. Po każdym Sync program sprawdza alerty na świecach, które zamknęły się po zapisaniu alertu (wystarczy High / Low
-  sesji, więc ruch między synchronizacjami nie ucieknie), a przebite trafiają do „Co nowego” z oznaczeniem 🔔. Zarządzanie: Narzędzia → Alerty cenowe.
 - **Szukaj dowolnego symbolu** (`Ctrl+K` lub `/`): spółka ze skanera otwiera się od razu, każda inna (np. NVDA, BRK-B, ^GSPC) jest pobierana z yfinance
-  na żądanie i dostaje te same wykresy, boxy, alerty i flagi (bez fundamentów, więc CANSLIM będzie niepełny); ostatnie symbole zapamiętane.
+  na żądanie i dostaje te same wykresy, boxy i flagi (bez fundamentów, więc CANSLIM będzie niepełny); ostatnie symbole zapamiętane.
 - **Filtr…** (osobne okno, na skaner) — filtry po już pobranych danych: RS, EPS Rating, Composite, CANSLIM (≥ n/7, opcjonalnie C i A
   obowiązkowe), odległość do pivotu, od szczytu 52 tyg., ADR, stan Darvasa, sektor, baza, przypięte boxy; gotowe skany; „Zastosuj na liście”.
 - **Boxy…** (osobne okno) — przegląd boxów Darvasa w sekcjach: monitorowane, nowe, KUP, do sprawdzenia, trzymaj, sprzedaj, czekaj.

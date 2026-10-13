@@ -5,16 +5,14 @@ import threading
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
-from . import alerts as alerts_mod
 from . import changes, exporter, finviz_codes, scanners, session, store, sync
 from . import columns as columns_mod
 from . import flags as flags_mod
 from .builder import ScannerEditor, ScannerManager
 from .chartwin import ChartWindow
 from .launcher import LauncherWindow
-from .dialogs import (AlertsWindow, BoxesWindow, CanslimWindow, ColumnsWindow, FilterWindow, FinvizCriteriaWindow, ListNamesWindow, SymbolDialog,
+from .dialogs import (BoxesWindow, CanslimWindow, ColumnsWindow, FilterWindow, FinvizCriteriaWindow, ListNamesWindow, SymbolDialog,
                       WhatsNewWindow)
-from .grid import GridWindow
 from .theme import BG, FG, PANEL, MenuBar, apply_dark, setup_style
 from .widgets import StockTable, SyncWindow
 
@@ -27,7 +25,7 @@ class ScannerView(tk.Frame):
         self.app, self.scanner, self.root = app, scanner, root_window
         default = scanner["id"] == scanners.DEFAULT_ID
         self.store = store.Store(scanners.scanner_dir(app.data_root, scanner["id"]), seed=default)
-        self.chart = self.filter_win = self.boxes = self.grid = None
+        self.chart = self.filter_win = self.boxes = None
         self.main_filter = {}
         tb = tk.Frame(self, bg=PANEL)
         tb.pack(fill="x")
@@ -41,7 +39,7 @@ class ScannerView(tk.Frame):
         self.news_btn.pack(side="left", padx=2)
         mb = tk.Menubutton(tb, text="Narzędzia ▾", relief="flat", bg=PANEL, fg=FG, activebackground="#2d3744", padx=8)
         tools = tk.Menu(mb, tearoff=0)
-        for item in (("Szukaj dowolnego symbolu…  (Ctrl+K lub /)", self.open_symbol_dialog), ("Siatka wykresów…", self.open_grid), ("Alerty cenowe…", self.app.open_alerts), None,
+        for item in (("Szukaj dowolnego symbolu…  (Ctrl+K lub /)", self.open_symbol_dialog), None,
                      ("Kolumny…", self.choose_columns), ("Kryteria Finviz (co synchronizujemy)", self.open_criteria), ("✎ Edytuj skaner…", self.edit_scanner), None,
                      ("Kopiuj tickery (przecinki — np. do TradingView)", lambda: self.copy_tickers(",")), ("Kopiuj tickery (po jednym w linii)", lambda: self.copy_tickers("\n")),
                      ("Zapisz tickery do pliku .txt…", self.save_tickers), ("Zapisz CSV — Excel PL (średnik)…", lambda: self.save_csv("xl")),
@@ -76,7 +74,6 @@ class ScannerView(tk.Frame):
         self.table.pack(fill="both", expand=True)
         self.table.tree.bind("<Up>", lambda e: self.root.after_idle(self._link))
         self.table.tree.bind("<Down>", lambda e: self.root.after_idle(self._link))
-        self.table.on_select = lambda t: self.grid is not None and self.grid.winfo_exists() and self.grid.refresh()   # siatka podąża za zaznaczeniem
         self.table.tree.bind("<slash>", lambda e: self.open_symbol_dialog())
         self.root.bind("<Control-k>", lambda e: self.open_symbol_dialog())
         self.set_title()
@@ -207,14 +204,6 @@ class ScannerView(tk.Frame):
     def _link(self):
         if self.chart is not None and self.chart.winfo_exists() and self.table.current():
             self.chart.set_ticker(self.table.current())
-        if self.grid is not None and self.grid.winfo_exists():
-            self.grid.refresh()
-
-    def open_grid(self):
-        if self.grid is None or not self.grid.winfo_exists():
-            self.grid = GridWindow(self)
-        self.grid.lift()
-        self.grid.refresh()
 
     def open_symbol_dialog(self):
         SymbolDialog(self)
@@ -298,8 +287,6 @@ class App:
         self.data_root = store.data_dir(data_base)
         self.windows = {}   # id skanera -> ScannerListWindow
         self.flags = flags_mod.Flags(self.data_root)
-        self.alerts = alerts_mod.Alerts(self.data_root)
-        self.alerts_win = None
         self.q = queue.Queue()
         self.syncing = {}   # id skanera -> okno dziennika; synchronizacje różnych skanerów mogą trwać równolegle
         self.session = session.prune(session.load(self.data_root), [s["id"] for s in scanners.load(self.data_root)])
@@ -353,21 +340,6 @@ class App:
         for v in self.all_views():
             self.flags.tag(v.store.rows)
             v.refresh_lists()
-
-    def open_alerts(self):
-        if self.alerts_win is None or not self.alerts_win.winfo_exists():
-            self.alerts_win = AlertsWindow(self)
-        self.alerts_win.refresh()
-        self.alerts_win.lift()
-
-    def refresh_alert_views(self):
-        """Po zmianie alertów: odśwież okno alertów, wykresy i siatki."""
-        if self.alerts_win is not None and self.alerts_win.winfo_exists():
-            self.alerts_win.refresh()
-        for v in self.all_views():
-            for w in (v.chart, v.grid):
-                if w is not None and w.winfo_exists():
-                    w.redraw() if w is v.chart else w.refresh()
 
     def remember_symbol(self, sym):
         self.session["symbols"] = [sym] + [s for s in self.session.get("symbols", []) if s != sym][:14]
@@ -579,26 +551,13 @@ class App:
         view.reload()
         new = changes.snapshot(view.store.rows)
         fresh = changes.diff(old, new)
-        hit = self.alerts.evaluate(lambda t: self._daily_or_weekly(view, t), tickers={r["ticker"] for r in view.store.rows})   # alerty cenowe przebite od ostatnich danych
-        if hit:
-            fresh["alert"] = sorted({a["ticker"] for a in hit})
-        d = changes.merge(view.store.changes["diff"], fresh) if (old or hit) else view.store.changes["diff"]
+        d = changes.merge(view.store.changes["diff"], fresh) if old else view.store.changes["diff"]
         names = {t: old[t].get("name") for t in d.get("dropped", []) if t in old}
         names = {**view.store.changes.get("names", {}), **names}
         view.store.set_changes(d, sync.now_iso(), names)
         view.refresh_lists()
         if changes.total(fresh):
             view.open_changes()
-        self.refresh_alert_views()
-
-    @staticmethod
-    def _daily_or_weekly(view, ticker):
-        """(daty, High, Low, zamknięcia) do sprawdzania alertów: dzienne świece, a bez nich tygodniowe."""
-        for tf in ("D", "W"):
-            full, dates, _spx, _ = view.store.series(ticker, tf)
-            if full and full.get("c"):
-                return dates, full["h"], full["l"], full["c"]
-        return None
 
     def run(self):
         self.root.mainloop()

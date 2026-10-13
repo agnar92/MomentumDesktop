@@ -13,7 +13,8 @@ class ChartWindow(tk.Toplevel):
         super().__init__(view.root)
         self.app, self.ticker = view, ticker   # „app” = widok skanera, z którego otwarto wykres (jego dane, lista, CANSLIM)
         self.title("Wykres")
-        self.geometry("1180x720")
+        h = min(940, max(600, self.winfo_screenheight() - 90))   # okno pionowe (prostokąt w pionie) — wykres wygląda lepiej niż w poziomie
+        self.geometry(f"{min(720, int(h * 0.78))}x{h}")
         self.configure(bg=BG)
         apply_dark(self)
         self.mode = tk.StringVar(value="darcard")

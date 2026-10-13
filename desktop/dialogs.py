@@ -4,7 +4,7 @@ import threading
 import tkinter as tk
 from tkinter import ttk
 
-from . import adhoc, canslim, changes, finviz_codes, qm, scanners, store
+from . import adhoc, canslim, changes, finviz_codes, store
 from . import columns as columns_mod
 from .theme import BG, FG, MONO, PANEL, SEL, apply_dark
 from .widgets import STATE_COLORS, StockTable
@@ -461,67 +461,4 @@ class SymbolDialog(tk.Toplevel):
     def done(self, sym):
         self.view.app.remember_symbol(sym)
         self.view.open_chart(sym)
-        self.destroy()
-
-
-class QmWindow(tk.Toplevel):
-    """Progi skanera Qullamaggie na bieżąco: obrót (cena × wolumen), ADR, górne X % ceny / min Low w oknach 1M / 3M / 6M — bez ponownego pobierania."""
-
-    TARGET = (30, 50)   # ile spółek dziennie chcemy przeglądać
-
-    def __init__(self, view):
-        super().__init__(view.root)
-        self.view = view
-        self.title(f"Qullamaggie — {view.scanner['name']}")
-        self.configure(bg=BG)
-        apply_dark(self)
-        self.geometry("+%d+%d" % (view.root.winfo_rootx() + 60, view.root.winfo_rooty() + 60))
-        q = scanners.load_config(view.store.dir).get("qm") or qm.normalize(None)
-        self.keep = q
-        form = tk.Frame(self, bg=PANEL)
-        form.pack(fill="x", padx=2, pady=2)
-        self.vars = {}
-        for n, (label, key) in enumerate((("Obrót dzienny (cena × wolumen) ≥ mln $", "min_dollar_mln"), ("ADR ≥ %", "min_adr"), ("Górne % w oknie (cena / min Low)", "top_pct"))):
-            tk.Label(form, text=label, bg=PANEL, anchor="e").grid(row=n, column=0, sticky="e", padx=(10, 4), pady=4)
-            self.vars[key] = tk.StringVar(value=f"{q[key]:g}")
-            e = tk.Entry(form, textvariable=self.vars[key], width=8)
-            e.grid(row=n, column=1, sticky="w")
-            self.vars[key].trace_add("write", lambda *_: self.after_idle(self.update_count))
-        wf = tk.Frame(form, bg=PANEL)
-        wf.grid(row=3, column=0, columnspan=2, sticky="w", padx=10, pady=4)
-        tk.Label(wf, text="Okna:", bg=PANEL).pack(side="left")
-        self.wvars = {}
-        for w, text in (("1m", "1M (~22 sesji)"), ("3m", "3M (~66)"), ("6m", "6M (~132)")):
-            v = tk.BooleanVar(value=w in q["windows"])
-            self.wvars[w] = v
-            tk.Checkbutton(wf, text=text, variable=v, bg=PANEL, command=self.update_count).pack(side="left", padx=4)
-        self.count = tk.Label(self, text="", bg=BG, anchor="w", justify="left", wraplength=420)
-        self.count.pack(fill="x", padx=10, pady=(6, 2))
-        self.note = tk.Label(self, text="", bg=BG, fg="#ff9f43", anchor="w", justify="left", wraplength=420)
-        self.note.pack(fill="x", padx=10)
-        bar = tk.Frame(self, bg=PANEL)
-        bar.pack(fill="x", pady=(8, 0))
-        tk.Button(bar, text="Zastosuj i zapisz", command=self.apply).pack(side="right", padx=6, pady=6)
-        tk.Button(bar, text="Zamknij", command=self.destroy).pack(side="right")
-        self.update_count()
-
-    def cfg(self):
-        c = {k: v.get() for k, v in self.vars.items()}
-        c["windows"] = [w for w, v in self.wvars.items() if v.get()]
-        return qm.normalize({**self.keep, **c})
-
-    def update_count(self):
-        c = self.cfg()
-        rows = self.view.store.rows
-        pool, picks = len(qm.liquid(rows, c)), qm.select(rows, c, self.view.store.watchlist.get("qm_pool"))
-        n = len(picks)
-        lo, hi = self.TARGET
-        hint = "" if lo <= n <= hi else f"  (cel {lo}–{hi}: {'zmniejsz górne % albo podnieś obrót / ADR' if n > hi else 'zwiększ górne % albo obniż obrót / ADR'})"
-        self.count.config(text=f"Zapisanych spółek: {len(rows)}   płynnych: {pool}   na liście: {n}{hint}")
-        self.note.config(text="⚠ Progi niższe niż progi pobierania — część spółek nie została zapisana. Obniż „Pobieraj” w edytorze skanera i zrób Sync cen."
-                         if qm.below_keep(c) else "")
-
-    def apply(self):
-        scanners.save_qm(self.view.store.dir, self.cfg())
-        self.view.refresh_lists()
         self.destroy()

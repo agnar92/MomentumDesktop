@@ -12,7 +12,19 @@ from . import qm, store
 
 DEFAULT_ID = "default"
 DEFAULT_NAME = "CANSLIM (domyślny)"
-KIND_FINVIZ, KIND_QM, KIND_MERGE = "finviz", "qm", "merge"   # zwykły skaner Finviz / Qullamaggie (cena × ADR × cena/min Low) / scalenie kilku skanerów w jedną listę
+KIND_FINVIZ, KIND_QM, KIND_WATCHLIST = "finviz", "qm", "watchlist"
+# skan Finviz / skan Qullamaggie (cena × ADR × cena/min Low: tylko pobiera dane, pełne okno z filtrami) / watchlista (małe okno z tickerami
+# złożonymi z kilku skanów wg kryteriów; nic nie pobiera)
+RULE_ALL, RULE_QM, RULE_CANSLIM = "all", "qm", "canslim"
+
+
+def norm_source(s):
+    """Źródło watchlisty: {id, rule}; stary zapis (samo id skanu) = wszystkie spółki skanu."""
+    if isinstance(s, str):
+        return {"id": s, "rule": {"type": RULE_ALL}}
+    rule = dict((s or {}).get("rule") or {})
+    rule["type"] = rule.get("type") if rule.get("type") in (RULE_ALL, RULE_QM, RULE_CANSLIM) else RULE_ALL
+    return {"id": (s or {}).get("id"), "rule": rule}
 
 
 def scanner_dir(root, sid):
@@ -48,7 +60,8 @@ def load(root):
     """Lista skanerów; domyślny zawsze pierwszy."""
     items = store.read_json(Path(root) / "scanners.json", []) or []
     items = [{"id": s["id"], "name": s.get("name") or s["id"], "columns": s.get("columns"), "extra": list(s.get("extra") or []),
-              "kind": s.get("kind") if s.get("kind") in (KIND_QM, KIND_MERGE) else KIND_FINVIZ, "sources": list(s.get("sources") or [])}
+              "kind": KIND_WATCHLIST if s.get("kind") in (KIND_WATCHLIST, "merge") else KIND_QM if s.get("kind") == KIND_QM else KIND_FINVIZ,
+              "sources": [norm_source(x) for x in s.get("sources") or [] if x]}
              for s in items if isinstance(s, dict) and s.get("id")]
     if not any(s["id"] == DEFAULT_ID for s in items):
         items.insert(0, {"id": DEFAULT_ID, "name": DEFAULT_NAME, "columns": None, "extra": [], "kind": KIND_FINVIZ, "sources": []})

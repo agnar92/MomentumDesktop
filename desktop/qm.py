@@ -78,7 +78,7 @@ def keep(rows, cfg):
     return liquid(rows, k)
 
 
-DEFAULT_COLUMNS = ["ticker", "flag", "company", "price", "dollar_volume_avg", "adr_pct", "low_ratio_1m", "low_ratio_3m", "low_ratio_6m", "qm_windows", "qm_max_ratio",
+DEFAULT_COLUMNS = ["ticker", "flag", "company", "price", "dollar_volume_avg", "adr_pct", "low_ratio_1m", "low_ratio_3m", "low_ratio_6m",
                    "darvas", "pbox", "change", "sector"]
 AVGVOL_LEVELS = (100, 200, 300, 500, 1000)   # progi średniego wolumenu (tys.), które ma Finviz
 MAX_SAFE_PRICE = 150.0                        # do tej ceny filtr wolumenu Finviz niczego nie obcina: cena × wolumen ≥ próg pobierania

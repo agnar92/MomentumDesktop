@@ -6,7 +6,7 @@ import sys
 import threading
 from pathlib import Path
 
-from . import canslim, changes, darvas, daily, qm
+from . import canslim, changes, darvas, daily
 
 STATE_LABELS = {"BUY": "KUP", "NOVOL": "bez wolumenu", "LATE": "za późno", "HOLD": "trzymaj", "SELL": "SPRZEDAJ",
                 "OUT": "poza", "WAIT": "czekaj", "NONE": ""}
@@ -204,7 +204,7 @@ class Store:
 # ---------- skaner (filtry po danych już pobranych) ----------
 
 DEFAULT_FILTERS = {"rs_min": None, "eps_min": None, "comp_min": None, "max_to_pivot": None, "max_from_high": None,
-                   "states": [], "sector": "", "base_only": False, "min_adr": None, "pinned_only": False, "text": "", "cs_min": None, "cs_core": False, "flag": "", "qm": None, "qm_pool": None}
+                   "states": [], "sector": "", "base_only": False, "min_adr": None, "pinned_only": False, "text": "", "cs_min": None, "cs_core": False, "flag": ""}
 
 
 def _num(v):
@@ -216,12 +216,7 @@ def scan(rows, f):
     f = {**DEFAULT_FILTERS, **(f or {})}
     out = []
     text = (f["text"] or "").strip().lower()
-    picks = qm.select(rows, f["qm"], f["qm_pool"]) if f["qm"] else None   # skaner Qullamaggie: górne X % cena / min Low z płynnych spółek
     for r in rows:
-        if picks is not None:
-            if r["ticker"] not in picks:
-                continue
-            qm.annotate(r, picks[r["ticker"]])
         if f["rs_min"] is not None and (_num(r.get("rs_rating")) is None or r["rs_rating"] < f["rs_min"]):
             continue
         if f["eps_min"] is not None and (_num(r.get("eps_rating")) is None or r["eps_rating"] < f["eps_min"]):

@@ -5,13 +5,13 @@ import threading
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
-from . import changes, exporter, finviz_codes, merge, qm, scanners, session, store, sync
+from . import changes, exporter, finviz_codes, merge, scanners, session, store, sync
 from . import columns as columns_mod
 from . import flags as flags_mod
-from .builder import MergeEditor, ScannerEditor, ScannerManager
+from .builder import ScannerEditor, ScannerManager, WatchlistEditor
 from .chartwin import ChartWindow
 from .launcher import LauncherWindow
-from .dialogs import (QmWindow, BoxesWindow, CanslimWindow, ColumnsWindow, FilterWindow, FinvizCriteriaWindow, ListNamesWindow, SymbolDialog,
+from .dialogs import (BoxesWindow, CanslimWindow, ColumnsWindow, FilterWindow, FinvizCriteriaWindow, ListNamesWindow, SymbolDialog,
                       WhatsNewWindow)
 from .theme import BG, FG, PANEL, MenuBar, apply_dark, setup_style
 from .widgets import StockTable, SyncWindow
@@ -25,7 +25,7 @@ class ScannerView(tk.Frame):
         self.app, self.scanner, self.root = app, scanner, root_window
         default = scanner["id"] == scanners.DEFAULT_ID
         self.store = store.Store(scanners.scanner_dir(app.data_root, scanner["id"]), seed=default)
-        self.chart = self.filter_win = self.boxes = self.qm_win = None
+        self.chart = self.filter_win = self.boxes = None
         self.main_filter = {}
         self.kind = scanner.get("kind") or scanners.KIND_FINVIZ
         tb = tk.Frame(self, bg=PANEL)
@@ -35,12 +35,8 @@ class ScannerView(tk.Frame):
         self.fund_btn = tk.Button(tb, text="⟳ Fundamenty", command=lambda: self.start_sync(sync.FUNDAMENTALS), width=13, relief="flat")
         if self.kind == scanners.KIND_FINVIZ:
             self.fund_btn.pack(side="left", padx=2)
-        elif self.kind == scanners.KIND_MERGE:
-            self.prices_btn.config(text="⟳ Scal ponownie", width=14)
         else:
             self.prices_btn.config(text="⟳ Ceny", width=12)
-        if self.kind == scanners.KIND_QM:
-            tk.Button(tb, text="Qullamaggie…", command=self.open_qm, relief="flat", fg="#ffd166").pack(side="left", padx=(12, 2))
         tk.Button(tb, text="Filtr…", command=self.open_filter, relief="flat").pack(side="left", padx=(12, 2))
         tk.Button(tb, text="Boxy…", command=self.open_boxes, relief="flat").pack(side="left", padx=2)
         self.news_btn = tk.Button(tb, text="Co nowego", command=self.open_changes, relief="flat")
@@ -80,8 +76,6 @@ class ScannerView(tk.Frame):
         self.status = tk.Label(self, text="", anchor="w", bg=PANEL)
         self.status.pack(fill="x", side="bottom")
         self.table.pack(fill="both", expand=True)
-        if self.kind == scanners.KIND_QM and "qm_max_ratio" in self.columns():
-            self.table.sort_col, self.table.sort_rev = "qm_max_ratio", True   # najsilniejsze (największa cena / min Low) na górze
         self.table.tree.bind("<Up>", lambda e: self.root.after_idle(self._link))
         self.table.tree.bind("<Down>", lambda e: self.root.after_idle(self._link))
         self.table.tree.bind("<slash>", lambda e: self.open_symbol_dialog())
@@ -126,16 +120,7 @@ class ScannerView(tk.Frame):
 
     def _rows(self):
         self.flag_box.config(values=list(self.FLAG_CHOICES) + [f"{lst['icon']} {lst['name']}" for lst in self.app.flags.lists])
-        f = {**self.main_filter, "text": self.search.get(), "flag": self._flag_code()}
-        if self.kind == scanners.KIND_QM:   # progi Qullamaggiego z pliku skanera (zmieniane w „Qullamaggie…”)
-            f["qm"] = scanners.load_config(self.store.dir).get("qm") or qm.normalize(None)
-            f["qm_pool"] = self.store.watchlist.get("qm_pool")   # szybki Sync: wielkość całego płynnego zbioru z Finviz
-        return store.scan(self.store.rows, f)
-
-    def open_qm(self):
-        if self.qm_win is None or not self.qm_win.winfo_exists():
-            self.qm_win = QmWindow(self)
-        self.qm_win.lift()
+        return store.scan(self.store.rows, {**self.main_filter, "text": self.search.get(), "flag": self._flag_code()})
 
     def set_flag(self, ticker, lid):
         if ticker:
@@ -282,6 +267,79 @@ class ScannerView(tk.Frame):
         self.app.start_sync(self, mode, skip_finviz)
 
 
+class WatchlistView(ScannerView):
+    """Watchlista: mała lista tickerów (z kilku skanów wg kryteriów) do odpalania Dar-Card i wykresu słupkowego. Bez filtrów i paska narzędzi skanera —
+    kliknięcie tickera (albo ↑/↓) otwiera / przełącza wykres."""
+
+    DEFAULT_COLUMNS = ["ticker", "flag", "price", "qm_windows", "darvas", "merge_src"]
+
+    def __init__(self, master, app, scanner, root_window):
+        tk.Frame.__init__(self, master, bg=PANEL)
+        self.app, self.scanner, self.root = app, scanner, root_window
+        self.store = store.Store(scanners.scanner_dir(app.data_root, scanner["id"]), seed=False)
+        self.chart = self.filter_win = self.boxes = None
+        self.main_filter = {}
+        self.kind = scanners.KIND_WATCHLIST
+        self.tf = tk.StringVar(value=self.store.tf)
+        self.search, self.flag_filter = tk.StringVar(), tk.StringVar(value="Wszystkie")
+        tb = tk.Frame(self, bg=PANEL)
+        tb.pack(fill="x")
+        self.prices_btn = tk.Button(tb, text="⟳ Odśwież", command=lambda: self.start_sync(sync.PRICES), relief="flat")
+        self.prices_btn.pack(side="left", padx=(6, 2), pady=4)
+        tk.Button(tb, text="✎ Kryteria…", command=self.edit_scanner, relief="flat").pack(side="left", padx=2)
+        for text, val in (("Tydz.", "W"), ("Dzień", "D")):
+            tk.Radiobutton(tb, text=text, value=val, variable=self.tf, command=lambda: self.set_tf(self.tf.get()), bg=PANEL,
+                           indicatoron=False, padx=7, relief="flat").pack(side="right", padx=1)
+        self.status = tk.Label(self, text="", anchor="w", bg=PANEL, fg="#8b95a3")
+        self.status.pack(fill="x", side="bottom")
+        self.table = StockTable(self, self.open_chart, self.open_chart_new, self.open_canslim, columns=self.columns(), flags=app.flags, on_flag=self.set_flag)
+        self.table.pack(fill="both", expand=True)
+        self.table.on_select = lambda t: self.open_chart(t)   # zaznaczenie (kliknięcie, ↑/↓) przełącza wykres
+        self.table.tree.bind("<slash>", lambda e: self.open_symbol_dialog())
+        self.set_title()
+        self.app.flags.tag(self.store.rows)
+        self.refresh_lists()
+
+    def columns(self):
+        cols = self.scanner.get("columns") or self.DEFAULT_COLUMNS
+        return cols if "ticker" in cols else ["ticker"] + list(cols)
+
+    def set_title(self):
+        self.root.title(f"Watchlista — {self.scanner['name']}")
+
+    def _rows(self):
+        return list(self.store.rows)
+
+    def refresh_lists(self):
+        rows = self._rows()
+        self.table.set_rows(rows)
+        self.table.set_tf_label(self.store.tf)
+        wl = self.store.watchlist
+        src = ", ".join(x["name"] for x in (scanners.get(self.app.data_root, s["id"]) for s in self.scanner.get("sources") or []) if x)
+        self.status.config(text=f"  {len(rows)} tickerów · dane z sesji: {wl.get('data_as_of', '—')} · ze skanów: {src or '—'}")
+        if self.boxes and self.boxes.winfo_exists():
+            self.boxes.refresh()
+
+    def update_age(self):
+        pass
+
+    def set_sync_enabled(self, on):
+        self.prices_btn.config(state="normal" if on else "disabled")
+
+
+class WatchlistWindow(tk.Toplevel):
+    """Małe okno watchlisty (wąskie, z samymi tickerami)."""
+
+    def __init__(self, app, scanner):
+        super().__init__(app.root)
+        self.geometry("430x620")
+        self.configure(bg=BG)
+        apply_dark(self)
+        self.view = WatchlistView(self, app, scanner, self)
+        self.view.pack(fill="both", expand=True)
+        self.protocol("WM_DELETE_WINDOW", lambda: app.window_closed(scanner["id"]))
+
+
 class ScannerListWindow(tk.Toplevel):
     """Osobne okno własnego skanera."""
 
@@ -339,7 +397,8 @@ class App:
                       ("Ceny tylko z yfinance (bez Finviz)", lambda: v().start_sync(sync.PRICES, skip_finviz=True)),
                       ("Wczytaj dane z dysku", lambda: v().reload()), None, ("Zakończ", self.quit_app)]),
             ("Skanery", [("Szybkie okno skanerów", self.open_launcher), ("Moje skanery…", self.open_manager), ("Nowy skaner Finviz…", self.new_scanner),
-                         ("Nowy skaner Qullamaggie…", lambda: self.new_scanner(scanners.KIND_QM)), ("Scal skanery w jedną listę…", lambda: self.new_scanner(scanners.KIND_MERGE)),
+                         ("Nowy skan Qullamaggie (dane do watchlisty)…", lambda: self.new_scanner(scanners.KIND_QM)),
+                         ("Nowa watchlista (lista tickerów z kilku skanów)…", lambda: self.new_scanner(scanners.KIND_WATCHLIST)),
                          ("Edytuj skaner domyślny…", lambda: self.edit_scanner(scanners.DEFAULT_ID))]),
             ("Widok", [("Filtr listy…", lambda: v().open_filter()), ("Boxy Darvasa…", lambda: v().open_boxes()), ("Kolumny…", lambda: v().choose_columns()),
                        ("Kryteria Finviz (co synchronizujemy)…", lambda: v().open_criteria()),
@@ -382,12 +441,12 @@ class App:
         self.manager.lift()
 
     def new_scanner(self, kind=scanners.KIND_FINVIZ):
-        (MergeEditor(self) if kind == scanners.KIND_MERGE else ScannerEditor(self, kind=kind))
+        (WatchlistEditor(self) if kind == scanners.KIND_WATCHLIST else ScannerEditor(self, kind=kind))
 
     def edit_scanner(self, sid):
         sc = scanners.get(self.data_root, sid)
         if sc:
-            (MergeEditor(self, sc) if sc.get("kind") == scanners.KIND_MERGE else ScannerEditor(self, sc))
+            (WatchlistEditor(self, sc) if sc.get("kind") == scanners.KIND_WATCHLIST else ScannerEditor(self, sc))
 
     def open_scanner_window(self, sid):
         session.touch(self.session, sid)
@@ -400,7 +459,7 @@ class App:
             else:
                 sc = scanners.get(self.data_root, sid)
                 if sc:
-                    self.windows[sid] = ScannerListWindow(self, sc)
+                    self.windows[sid] = (WatchlistWindow if sc.get("kind") == scanners.KIND_WATCHLIST else ScannerListWindow)(self, sc)
         self.save_session()
         self.refresh_launcher()
 
@@ -510,7 +569,7 @@ class App:
             return
         no_cache = not any((d / "eps_cache.json").exists() for d in (view.store.dir, self.data_root))
         kind = view.scanner.get("kind") or scanners.KIND_FINVIZ
-        if kind == scanners.KIND_MERGE:
+        if kind == scanners.KIND_WATCHLIST:
             self.start_merge(view)
             return
         upgraded = kind == scanners.KIND_FINVIZ and mode == sync.PRICES and not (view.store.dir / "sync_state.json").exists() and no_cache
@@ -551,30 +610,30 @@ class App:
         self.refresh_launcher()
 
     def start_merge(self, view):
-        """Scalony skaner: składa listę z danych źródeł (bez sieci); przy okazji odświeża okno."""
+        """Watchlista: składa listę z danych skanów wg kryteriów (bez sieci)."""
         sid = view.scanner["id"]
         if sid in self.syncing:
             return
         sc = scanners.get(self.data_root, sid) or view.scanner
         view.set_sync_enabled(False)
-        win = SyncWindow(self, f"Scalanie — {sc['name']}")
+        win = SyncWindow(self, f"Watchlista — {sc['name']}")
         self.syncing[sid] = win
-        win.log("Scalanie z: " + ", ".join(s["name"] for s in (scanners.get(self.data_root, x) for x in sc.get("sources") or []) if s))
+        win.log("Składam z: " + ", ".join(s["name"] for s in (scanners.get(self.data_root, x["id"]) for x in sc.get("sources") or []) if s))
 
         def work():
             try:
                 n = merge.build(self.data_root, sc, log=lambda s: self.q.put(("log", sid, s)))
                 self.q.put(("done", sid, n > 0))
-            except Exception as e:   # błąd scalania nie może zawiesić okna synchronizacji
-                self.q.put(("log", sid, f"❌ Błąd scalania: {e}"))
+            except Exception as e:   # błąd składania listy nie może zawiesić okna synchronizacji
+                self.q.put(("log", sid, f"❌ Błąd składania watchlisty: {e}"))
                 self.q.put(("done", sid, False))
 
         threading.Thread(target=work, daemon=True).start()
 
     def refresh_merges(self, source_id):
-        """Po Sync skanera-źródła odświeża scalone listy, które go używają (bez okna, po cichu)."""
+        """Po Sync skanu odświeża watchlisty, które z niego korzystają (po cichu)."""
         for sc in scanners.load(self.data_root):
-            if sc.get("kind") == scanners.KIND_MERGE and source_id in sc.get("sources", []):
+            if sc.get("kind") == scanners.KIND_WATCHLIST and any(x["id"] == source_id for x in sc.get("sources", [])):
                 v = self.view_for(sc["id"])
                 try:
                     merge.build(self.data_root, sc, log=lambda s: None)
@@ -597,7 +656,7 @@ class App:
                     if view is not None:
                         view.set_sync_enabled(True)
                         if val:
-                            self.after_sync(view)
+                            view.reload() if view.kind == scanners.KIND_WATCHLIST else self.after_sync(view)
                     if val:
                         self.refresh_merges(sid)
                     if self.manager is not None and self.manager.winfo_exists():

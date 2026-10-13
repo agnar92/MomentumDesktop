@@ -26,7 +26,7 @@ class ScannerEditor(tk.Toplevel):
             cfg = {"filters": qm.suggest_filters(qm.DEFAULTS), "max_tickers": 3000, "qm": qm.normalize(None)}
         else:
             cfg = {"filters": "", "max_tickers": 300}
-        self.title(("Edytor skanera" if scanner else "Nowy skaner") + (" Qullamaggie" if self.is_qm else " Finviz"))
+        self.title(("Edytor skanera" if scanner else "Nowy skaner") + (" skan Qullamaggie" if self.is_qm else " Finviz"))
         self.geometry("1040x740")
         self.configure(bg=BG)
         apply_dark(self)
@@ -96,37 +96,26 @@ class ScannerEditor(tk.Toplevel):
 
     # --- Qullamaggie: progi listy (zmieniane na bieżąco) i progi pobierania (co zostaje na dysku)
     def build_qm_frame(self, q):
-        box = tk.LabelFrame(self, text=" Qullamaggie: obrót (cena × wolumen), ADR, cena / min Low ", bg=PANEL, fg=FG)
+        box = tk.LabelFrame(self, text=" Skan Qullamaggie: pobieranie danych (obrót = cena × wolumen, ADR, cena / min Low) ", bg=PANEL, fg=FG)
         box.pack(fill="x", padx=6, pady=4)
-        self.qv = {k: tk.StringVar(value=f"{q[k]:g}") for k in ("min_dollar_mln", "min_adr", "top_pct", "keep_dollar_mln", "keep_adr")}
-        rows = (("Na liście — obrót dzienny ≥ (mln $):", "min_dollar_mln"), ("ADR ≥ (%):", "min_adr"), ("górne (%) w oknie:", "top_pct"),
-                ("Pobieraj — obrót ≥ (mln $):", "keep_dollar_mln"), ("ADR ≥ (%):", "keep_adr"))
+        self.qv = {k: tk.StringVar(value=f"{q[k]:g}") for k in ("top_pct", "keep_dollar_mln", "keep_adr")}
+        rows = (("Pobieraj spółki z obrotem ≥ (mln $):", "keep_dollar_mln"), ("ADR ≥ (%):", "keep_adr"), ("Największe „górne %” w watchlistach:", "top_pct"))
         for n, (label, key) in enumerate(rows):
-            r, c = n // 3, (n % 3) * 2
-            tk.Label(box, text=label, bg=PANEL, anchor="e").grid(row=r, column=c, sticky="e", padx=(10, 3), pady=3)
-            e = tk.Entry(box, textvariable=self.qv[key], width=7)
-            e.grid(row=r, column=c + 1, sticky="w")
+            tk.Label(box, text=label, bg=PANEL, anchor="e").grid(row=0, column=n * 2, sticky="e", padx=(10, 3), pady=3)
+            tk.Entry(box, textvariable=self.qv[key], width=7).grid(row=0, column=n * 2 + 1, sticky="w")
         wf = tk.Frame(box, bg=PANEL)
-        wf.grid(row=2, column=0, columnspan=6, sticky="w", padx=10, pady=3)
-        tk.Label(wf, text="Okna cena / min Low (suma wyników):", bg=PANEL).pack(side="left")
-        self.qw = {}
-        for w, (_key, lbl) in qm.WINDOWS.items():
-            v = tk.BooleanVar(value=w in q["windows"])
-            self.qw[w] = v
-            tk.Checkbutton(wf, text={"1m": "1M (~22 sesji)", "3m": "3M (~66)", "6m": "6M (~132)"}[w], variable=v, bg=PANEL).pack(side="left", padx=4)
-        tk.Button(wf, text="Dobierz filtry Finviz do progów pobierania", command=self.suggest_filters).pack(side="left", padx=12)
+        wf.grid(row=1, column=0, columnspan=6, sticky="w", padx=10, pady=3)
+        tk.Button(wf, text="Dobierz filtry Finviz do tych progów", command=self.suggest_filters).pack(side="left")
         self.two_stage = tk.BooleanVar(value=q.get("two_stage", True))
         tk.Checkbutton(box, text="Szybki Sync (dwa etapy): najpierw tylko Finviz, ceny z yfinance tylko dla kandydatów z czołówki zwrotów 1M / 3M / 6M "
                                  "(ranking przybliżony; wyłącz, by pobrać ceny wszystkich spółek)", variable=self.two_stage, bg=PANEL, anchor="w",
-                       justify="left", wraplength=980).grid(row=4, column=0, columnspan=6, sticky="w", padx=10)
-        self.qm_hint = tk.Label(box, text="Progi „na liście” zmieniasz potem w oknie skanera (Qullamaggie…) bez ponownego pobierania, byle nie niżej niż progi pobierania. "
-                                          "Finviz tnie wstępnie po średnim wolumenie, cenie i zmienności miesiąca (≈ ADR; próg filtra o 1 pkt niżej dla zapasu); dokładny obrót i ADR liczy program.",
-                                bg=PANEL, fg="#8b95a3", wraplength=1000, justify="left")
-        self.qm_hint.grid(row=3, column=0, columnspan=6, sticky="w", padx=10, pady=(0, 4))
+                       justify="left", wraplength=980).grid(row=2, column=0, columnspan=6, sticky="w", padx=10)
+        tk.Label(box, text="To jest skan: pobiera i zapisuje dane (okno z filtrami jak każdy skan). Krótką listę tickerów — górne X % w oknach 1M, 3M i 6M, "
+                           "obrót, ADR — ustawiasz w WATCHLIŚCIE (Skanery → Nowa watchlista) i wskazujesz ten skan jako źródło.",
+                 bg=PANEL, fg="#8b95a3", wraplength=1000, justify="left").grid(row=3, column=0, columnspan=6, sticky="w", padx=10, pady=(2, 4))
 
     def qm_values(self):
         cfg = {k: v.get() for k, v in self.qv.items()}
-        cfg["windows"] = [w for w, v in self.qw.items() if v.get()]
         cfg["two_stage"] = self.two_stage.get()
         return qm.normalize(cfg)
 
@@ -238,8 +227,8 @@ class ScannerManager(tk.Toplevel):
         self.tree.bind("<Double-1>", lambda e: self.open())
         bar = tk.Frame(self, bg=PANEL)
         bar.pack(fill="x")
-        for text, cmd in (("Otwórz w oknie", self.open), ("Nowy Finviz…", self.new), ("Nowy Qullamaggie…", lambda: self.app.new_scanner(scanners.KIND_QM)),
-                          ("Scal skanery…", lambda: self.app.new_scanner(scanners.KIND_MERGE)), ("Edytuj…", self.edit), ("Duplikuj", self.duplicate), ("Usuń", self.delete),
+        for text, cmd in (("Otwórz w oknie", self.open), ("Nowy skan Finviz…", self.new), ("Nowy skan Qullamaggie…", lambda: self.app.new_scanner(scanners.KIND_QM)),
+                          ("Nowa watchlista…", lambda: self.app.new_scanner(scanners.KIND_WATCHLIST)), ("Edytuj…", self.edit), ("Duplikuj", self.duplicate), ("Usuń", self.delete),
                           ("⟳ Ceny", lambda: self.sync(sync.PRICES)), ("⟳ Fundamenty", lambda: self.sync(sync.FUNDAMENTALS))):
             tk.Button(bar, text=text, command=cmd).pack(side="left", padx=4, pady=6)
         self.refresh()
@@ -259,9 +248,9 @@ class ScannerManager(tk.Toplevel):
                 a = sync.age_days(iso)
                 return "—" if a is None else "dziś" if a < 1 else f"{int(a)} d temu"
 
-            if sc.get("kind") == scanners.KIND_MERGE:
-                names = [x["name"] for x in (scanners.get(self.app.data_root, i) for i in sc.get("sources", [])) if x]
-                desc = "scalone z: " + ", ".join(names)
+            if sc.get("kind") == scanners.KIND_WATCHLIST:
+                names = [x["name"] for x in (scanners.get(self.app.data_root, i["id"]) for i in sc.get("sources", [])) if x]
+                desc = "watchlista ze skanów: " + ", ".join(names)
             else:
                 desc = ("Qullamaggie · " if sc.get("kind") == scanners.KIND_QM else "") + f"{len(finviz_codes.describe(cfg['filters']))} filtrów: " + cfg["filters"][:70]
             self.tree.insert("", "end", iid=sc["id"], text=sc["name"], values=(n if n is not None else "—", desc,
@@ -308,46 +297,117 @@ class ScannerManager(tk.Toplevel):
                 self.app.start_sync(view, mode)
 
 
-class MergeEditor(tk.Toplevel):
-    """Scalony skaner: zaznacz skanery-źródła; lista = suma ich spółek (bez duplikatów). Nic nie jest pobierane z sieci."""
+class WatchlistEditor(tk.Toplevel):
+    """Watchlista = mała lista tickerów z kilku skanów wg kryteriów. Dla każdego skanu: pomijaj / wszystkie spółki / Qullamaggie (górne X % w oknach
+    1M, 3M, 6M wśród płynnych) / CANSLIM ≥ n/7. Nic nie jest pobierane — watchlista składa się z już pobranych skanów."""
+
+    RULES = {"pomiń": None, "wszystkie spółki skanu": scanners.RULE_ALL, "Qullamaggie: górne X % w oknach": scanners.RULE_QM, "CANSLIM ≥ n/7": scanners.RULE_CANSLIM}
 
     def __init__(self, app, scanner=None):
         super().__init__(app.root)
         self.app, self.scanner = app, dict(scanner) if scanner else None
-        self.title("Scalony skaner" if scanner else "Nowy scalony skaner")
+        self.title("Watchlista" if scanner else "Nowa watchlista")
         self.configure(bg=BG)
         apply_dark(self)
-        self.geometry("520x420")
+        self.geometry("900x520")
         top = tk.Frame(self, bg=PANEL)
         top.pack(fill="x")
         tk.Label(top, text="Nazwa:", bg=PANEL).pack(side="left", padx=(8, 2), pady=6)
-        self.name = tk.StringVar(value=scanner["name"] if scanner else "Scalona lista")
+        self.name = tk.StringVar(value=scanner["name"] if scanner else "Watchlista")
         tk.Entry(top, textvariable=self.name, width=36).pack(side="left")
-        tk.Label(self, text="Scal spółki z tych skanerów (zrób najpierw ich Sync):", bg=BG, anchor="w").pack(fill="x", padx=8, pady=(8, 2))
-        self.vars = {}
-        have = set((scanner or {}).get("sources") or [])
-        box = tk.Frame(self, bg=PANEL)
-        box.pack(fill="both", expand=True, padx=8, pady=4)
-        for sc in scanners.load(app.data_root):
-            if sc["kind"] == scanners.KIND_MERGE or sc["id"] == (scanner or {}).get("id"):
-                continue
-            v = tk.BooleanVar(value=sc["id"] in have)
-            self.vars[sc["id"]] = v
-            label = sc["name"] + ("   (Qullamaggie — tylko spółki wybrane jego progami)" if sc["kind"] == scanners.KIND_QM else "")
-            tk.Checkbutton(box, text=label, variable=v, bg=PANEL, anchor="w").pack(fill="x", padx=8, pady=2)
+        tk.Label(self, text="Z których skanów i po jakich kryteriach złożyć listę (zrób najpierw Sync tych skanów):", bg=BG, anchor="w").pack(fill="x", padx=8, pady=(8, 2))
+        body = tk.Frame(self, bg=PANEL)
+        body.pack(fill="both", expand=True, padx=8, pady=4)
+        have = {x["id"]: x["rule"] for x in (scanner or {}).get("sources") or []}
+        self.rows = {}
+        for n, sc in enumerate(x for x in scanners.load(app.data_root) if x["kind"] != scanners.KIND_WATCHLIST):
+            rule = have.get(sc["id"])
+            default = scanners.RULE_QM if sc["kind"] == scanners.KIND_QM else scanners.RULE_ALL
+            box = tk.LabelFrame(body, text=f" {sc['name']}{'  (Qullamaggie)' if sc['kind'] == scanners.KIND_QM else ''} ", bg=PANEL, fg=FG)
+            box.grid(row=n, column=0, sticky="we", padx=4, pady=3)
+            body.columnconfigure(0, weight=1)
+            t = (rule or {}).get("type") or None
+            kind = tk.StringVar(value=next((k for k, v in self.RULES.items() if v == t), "pomiń"))
+            cb = ttk.Combobox(box, textvariable=kind, values=list(self.RULES), state="readonly", width=30)
+            cb.grid(row=0, column=0, padx=6, pady=4, sticky="w")
+            q = qm.normalize(rule if t == scanners.RULE_QM else None)
+            vars_ = {"min_dollar_mln": tk.StringVar(value=f"{q['min_dollar_mln']:g}"), "min_adr": tk.StringVar(value=f"{q['min_adr']:g}"),
+                     "top_pct": tk.StringVar(value=f"{q['top_pct']:g}"), "cs_min": tk.StringVar(value=str((rule or {}).get("cs_min") or 5))}
+            wv = {w: tk.BooleanVar(value=w in q["windows"]) for w in qm.WINDOWS}
+            core = tk.BooleanVar(value=bool((rule or {}).get("cs_core", True)))
+            qf, cf = tk.Frame(box, bg=PANEL), tk.Frame(box, bg=PANEL)
+            col = 0
+            for label, key in (("obrót ≥ mln $", "min_dollar_mln"), ("ADR ≥ %", "min_adr"), ("górne % w oknie", "top_pct")):
+                tk.Label(qf, text=label, bg=PANEL).grid(row=0, column=col, padx=(10, 2))
+                tk.Entry(qf, textvariable=vars_[key], width=6).grid(row=0, column=col + 1)
+                col += 2
+            tk.Label(qf, text="okna:", bg=PANEL).grid(row=0, column=col, padx=(12, 2))
+            wf = tk.Frame(qf, bg=PANEL)
+            wf.grid(row=0, column=col + 1)
+            for w, text in (("1m", "1M"), ("3m", "3M"), ("6m", "6M")):
+                tk.Checkbutton(wf, text=text, variable=wv[w], bg=PANEL).pack(side="left")
+            tk.Label(cf, text="CANSLIM ≥ n/7:", bg=PANEL).pack(side="left", padx=(10, 2))
+            tk.Entry(cf, textvariable=vars_["cs_min"], width=4).pack(side="left")
+            tk.Checkbutton(cf, text="C i A obowiązkowe", variable=core, bg=PANEL).pack(side="left", padx=6)
+            self.rows[sc["id"]] = {"sc": sc, "kind": kind, "vars": vars_, "wv": wv, "core": core, "default": default, "qf": qf, "cf": cf}
+            if t is None and not self.scanner and sc["kind"] == scanners.KIND_QM:
+                kind.set("Qullamaggie: górne X % w oknach")
+            cb.bind("<<ComboboxSelected>>", lambda e, sid=sc["id"]: self.show_params(sid))
+            self.show_params(sc["id"])
+        self.count = tk.Label(self, text="", bg=BG, fg="#8b95a3", anchor="w", justify="left", wraplength=720)
+        self.count.pack(fill="x", padx=10)
         bar = tk.Frame(self, bg=PANEL)
         bar.pack(fill="x")
         tk.Button(bar, text="Anuluj", command=self.destroy).pack(side="right", padx=6, pady=6)
-        tk.Button(bar, text="Zapisz i scal", command=self.save).pack(side="right", padx=2)
+        tk.Button(bar, text="Zapisz i złóż listę", command=self.save).pack(side="right", padx=2)
+        tk.Button(bar, text="Podgląd liczby tickerów", command=self.preview).pack(side="left", padx=8)
+
+    def show_params(self, sid):
+        """Pokazuje tylko pola kryterium wybranego dla skanu (Qullamaggie albo CANSLIM)."""
+        r = self.rows[sid]
+        t = self.RULES.get(r["kind"].get())
+        for key, frame in (("qf", r["qf"]), ("cf", r["cf"])):
+            frame.grid_forget()
+        if t == scanners.RULE_QM:
+            r["qf"].grid(row=1, column=0, sticky="w", pady=(0, 4))
+        elif t == scanners.RULE_CANSLIM:
+            r["cf"].grid(row=1, column=0, sticky="w", pady=(0, 4))
+
+    def sources(self):
+        out = []
+        for sid, r in self.rows.items():
+            t = self.RULES.get(r["kind"].get())
+            if t is None:
+                continue
+            rule = {"type": t}
+            if t == scanners.RULE_QM:
+                rule.update({k: r["vars"][k].get() for k in ("min_dollar_mln", "min_adr", "top_pct")})
+                rule["windows"] = [w for w, v in r["wv"].items() if v.get()]
+                rule = {"type": t, **{k: v for k, v in qm.normalize(rule).items() if k in ("min_dollar_mln", "min_adr", "top_pct", "windows")}}
+            elif t == scanners.RULE_CANSLIM:
+                try:
+                    rule["cs_min"] = int(r["vars"]["cs_min"].get())
+                except ValueError:
+                    rule["cs_min"] = 5
+                rule["cs_core"] = r["core"].get()
+            out.append({"id": sid, "rule": rule})
+        return out
+
+    def preview(self):
+        from . import merge
+        parts, seen = [], set()
+        for src in self.sources():
+            items = merge.select_source(self.app.data_root, self.rows[src["id"]]["sc"], src["rule"])[0]
+            parts.append(f"{self.rows[src['id']]['sc']['name']}: {len(items)}")
+            seen.update(s["ticker"] for s, _ in items)
+        self.count.config(text=("Z kryteriów wychodzi: " + "  ·  ".join(parts) + f"   →   razem {len(seen)} tickerów (bez duplikatów)") if parts else "Wybierz co najmniej jeden skan.")
 
     def save(self):
-        src = [sid for sid, v in self.vars.items() if v.get()]
-        if len(src) < 1:
-            messagebox.showinfo("Scalanie", "Zaznacz co najmniej jeden skaner.", parent=self)
+        src = self.sources()
+        if not src:
+            messagebox.showinfo("Watchlista", "Wybierz co najmniej jeden skan (kryterium inne niż „pomiń”).", parent=self)
             return
-        sc = {**(self.scanner or {}), "name": self.name.get().strip() or "Scalona lista", "kind": scanners.KIND_MERGE, "sources": src}
-        if not sc.get("columns"):
-            sc["columns"] = ["ticker", "flag", "company", "price", "merge_src", "qm_windows", "dollar_volume_avg", "adr_pct", "rs_rating", "cs", "darvas", "pbox", "change", "sector"]
+        sc = {**(self.scanner or {}), "name": self.name.get().strip() or "Watchlista", "kind": scanners.KIND_WATCHLIST, "sources": src}
         saved = scanners.upsert(self.app.data_root, sc)
         self.app.scanner_saved(saved, sync.PRICES)
         self.destroy()

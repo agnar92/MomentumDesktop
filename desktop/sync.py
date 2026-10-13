@@ -7,12 +7,13 @@
 
 Silnik (engine/watchlist.py) jest niezmieniony; tryb „ceny” podmienia tylko dwa kroki sieciowe na odczyt zapisanych plików."""
 import contextlib
+import shutil
 import sys
 import traceback
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import daily, finviz_catalog, scanners, store
+from . import daily, finviz_catalog, qm, scanners, store
 
 PRICES, FUNDAMENTALS = "prices", "fundamentals"
 FUNDAMENTALS_STALE_DAYS = 7
@@ -65,7 +66,52 @@ def age_days(iso, now=None):
     return ((now or datetime.now(timezone.utc)) - t).total_seconds() / 86400
 
 
-def build_daily_json(data_dir, log):
+FREE_LIMIT = 1000   # darmowy screener Finviz nie oddaje wierszy powyżej 1000 (r=1001 -> 403), więc większe zbiory dzielimy po sektorach
+SECTORS = ("technology", "healthcare", "financial", "industrials", "consumercyclical", "communicationservices", "consumerdefensive",
+           "energy", "basicmaterials", "realestate", "utilities")
+
+
+def fetch_sliced(finviz, filters, max_tickers, log=print):
+    """Lista z widoku Overview (111) bez limitu 1000 wierszy: gdy wyników jest więcej, pobiera osobno każdy sektor i skleja bez duplikatów.
+    -> (wiersze, razem)."""
+    _, total = finviz.fetch_view("111", filters, PAGE_PROBE)
+    if total is None or total <= FREE_LIMIT or "sec_" in filters:
+        rows, total2 = finviz.fetch_view("111", filters, min(max_tickers, FREE_LIMIT))
+        if total2 and total2 > FREE_LIMIT:
+            log(f"⚠️  Finviz ma {total2} wyników, a darmowy screener oddaje tylko {FREE_LIMIT} — zawęź filtry.")
+        return rows, total2
+    log(f"Finviz: {total} wyników (limit darmowego screenera to {FREE_LIMIT}) — pobieram sektor po sektorze…")
+    out, seen = [], set()
+    for sec in SECTORS:
+        part, tot = finviz.fetch_view("111", f"{filters},sec_{sec}", FREE_LIMIT)
+        if tot and tot > FREE_LIMIT:
+            log(f"⚠️  Sektor {sec}: {tot} wyników > {FREE_LIMIT} — pobieram tylko pierwsze {FREE_LIMIT}; zawęź filtry.")
+        for r in part:
+            if r["ticker"] not in seen:
+                seen.add(r["ticker"])
+                out.append(r)
+        log(f"  {sec}: {len(part)} (razem {len(out)})")
+    return out[:max_tickers], len(out)
+
+
+PAGE_PROBE = 20
+
+
+def prune_to(data_dir, tickers, log=print):
+    """Zostawia w watchlist.json / charts.json tylko podane tickery (zbiór pobrany z Finviz bywa wielokrotnie większy niż to, co zapisujemy)."""
+    keep = set(tickers)
+    wl = store.read_json(data_dir / "watchlist.json", {}) or {}
+    before = len(wl.get("stocks", []))
+    wl["stocks"] = [s for s in wl.get("stocks", []) if s["ticker"] in keep]
+    wl["qm_universe"], wl["n_stocks"] = before, len(wl["stocks"])
+    store.write_json(data_dir / "watchlist.json", wl)
+    ch = store.read_json(data_dir / "charts.json", {}) or {}
+    ch["stocks"] = {t: v for t, v in (ch.get("stocks") or {}).items() if t in keep}
+    store.write_json(data_dir / "charts.json", ch)
+    log(f"Zapisuję {len(wl['stocks'])} z {before} pobranych spółek (obrót i ADR powyżej progów pobierania).")
+
+
+def build_daily_json(data_dir, log, only=None):
     """Dzienne wykresy z migawki cen zapisanej przez silnik (bez ostatniej, jeszcze trwającej sesji)."""
     import pandas as pd
     import watchlist
@@ -76,6 +122,8 @@ def build_daily_json(data_dir, log):
     now = pd.Timestamp(raw["fetched_at"])
     frames = {}
     for t, df in raw["frames"].items():
+        if only is not None and t not in only:
+            continue
         try:
             frames[t] = watchlist.drop_incomplete_bar(df, now)
         except Exception:
@@ -116,6 +164,9 @@ def run_sync(data_dir, log=print, mode=FUNDAMENTALS, skip_finviz=False, max_tick
         return 1
     if shared_root is not None:   # wspólny cache EPS / estymat: nie pobieramy drugi raz tego, co zna inny skaner
         scanners.merge_cache(shared_root, data_dir)
+    qm_cfg = scanners.load_config(data_dir).get("qm")   # skaner Qullamaggie: tylko ceny (bez fundamentów), lista z Overview dzielona po sektorach
+    if qm_cfg:
+        mode = PRICES
     prev_state = read_state(data_dir)   # przed uruchomieniem: bez pliku stanu daty biorą się z generated_at, które silnik zaraz nadpisze
     cfg_path = data_dir / "finviz_screen.json"
     orig_load = getattr(finviz, "_orig_load_config", None) or finviz.load_config
@@ -131,7 +182,9 @@ def run_sync(data_dir, log=print, mode=FUNDAMENTALS, skip_finviz=False, max_tick
         watchlist.update_eps_cache, watchlist.update_estimates = orig_eps, orig_est
     orig_fw = getattr(finviz, "_orig_fetch_watchlist", None) or getattr(finviz, "fetch_watchlist", None)
     finviz._orig_fetch_watchlist = orig_fw
-    if extra_keys and not skip_finviz and orig_fw is not None:
+    if qm_cfg and not skip_finviz:
+        finviz.fetch_watchlist = lambda filters, max_t=300, *a, **k: fetch_sliced(finviz, filters, max_t, log)
+    elif extra_keys and not skip_finviz and orig_fw is not None:
         def fetch_with_extra(filters, max_t=300, *a, **k):
             rows, total = orig_fw(filters, max_t, *a, **k)
             try:
@@ -151,7 +204,14 @@ def run_sync(data_dir, log=print, mode=FUNDAMENTALS, skip_finviz=False, max_tick
                                  stage="all", raw_dir=data_dir / "raw", save_snapshot=True)
             out.flush()
             if not code:
-                build_daily_json(data_dir, log)
+                if qm_cfg:
+                    wl = store.read_json(data_dir / "watchlist.json", {}) or {}
+                    kept = {r["ticker"] for r in qm.keep(wl.get("stocks", []), qm_cfg)}
+                    prune_to(data_dir, kept, log)
+                    build_daily_json(data_dir, log, only=kept)
+                    shutil.rmtree(data_dir / "raw", ignore_errors=True)   # migawka całego zbioru jest duża, a desktop jej nie potrzebuje
+                else:
+                    build_daily_json(data_dir, log)
         if not code:
             st = prev_state
             st["prices"] = now_iso()

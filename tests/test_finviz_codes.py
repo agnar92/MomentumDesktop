@@ -8,9 +8,9 @@ SEED = json.loads((Path(__file__).resolve().parent.parent / "seed_data" / "finvi
 
 def test_all_seed_filters_are_known():
     items = fc.describe(SEED)
-    assert len(items) == 10 and all(known for _, _, known in items)
+    assert len(items) == 8 and all(known for _, _, known in items)
     texts = [t for _, t, _ in items]
-    assert "Kapitalizacja ≥ 300 mln USD (small i większe)" in texts and "Cena powyżej SMA 200" in texts and "Kraj: USA" in texts
+    assert "Kapitalizacja ≥ 300 mln USD (small i większe)" in texts and "Cena powyżej SMA 200" in texts and "Wzrost EPS TTM r/r: wysoki (> 25 %)" in texts
 
 
 def test_pattern_decoding_and_unknown():

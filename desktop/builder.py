@@ -5,7 +5,7 @@ import tkinter as tk
 from tkinter import messagebox, ttk
 
 from . import finviz_catalog as fc
-from . import finviz_codes, scanners, sync
+from . import finviz_codes, qm, scanners, sync
 from .theme import BG, FG, PANEL, apply_dark
 
 NONE = "—"
@@ -14,12 +14,19 @@ NONE = "—"
 class ScannerEditor(tk.Toplevel):
     """Edytor skanera: nazwa, filtry Finviz (zakładki Opisowe / Fundamentalne / Techniczne), kody ręcznie, kolumny z Finviz, test liczby wyników."""
 
-    def __init__(self, app, scanner=None):
+    def __init__(self, app, scanner=None, kind=None):
         super().__init__(app.root)
         self.app = app
         self.scanner = dict(scanner) if scanner else None   # None = nowy
-        cfg = scanners.load_config(scanners.scanner_dir(app.data_root, scanner["id"])) if scanner else {"filters": "", "max_tickers": 300}
-        self.title("Edytor skanera Finviz" if scanner else "Nowy skaner Finviz")
+        self.kind = (scanner or {}).get("kind") or kind or scanners.KIND_FINVIZ
+        self.is_qm = self.kind == scanners.KIND_QM
+        if scanner:
+            cfg = scanners.load_config(scanners.scanner_dir(app.data_root, scanner["id"]))
+        elif self.is_qm:
+            cfg = {"filters": qm.suggest_filters(qm.DEFAULTS), "max_tickers": 3000, "qm": qm.normalize(None)}
+        else:
+            cfg = {"filters": "", "max_tickers": 300}
+        self.title(("Edytor skanera" if scanner else "Nowy skaner") + (" Qullamaggie" if self.is_qm else " Finviz"))
         self.geometry("1040x740")
         self.configure(bg=BG)
         apply_dark(self)
@@ -27,12 +34,14 @@ class ScannerEditor(tk.Toplevel):
         self.rest, self.lock = [], False
         top = tk.Frame(self, bg=PANEL)
         top.pack(fill="x")
-        self.name = tk.StringVar(value=scanner["name"] if scanner else "Nowy skaner")
+        self.name = tk.StringVar(value=scanner["name"] if scanner else "Qullamaggie" if self.is_qm else "Nowy skaner")
         self.max_t = tk.StringVar(value=str(cfg["max_tickers"]))
         tk.Label(top, text="Nazwa:", bg=PANEL).pack(side="left", padx=(8, 2), pady=6)
         tk.Entry(top, textvariable=self.name, width=34).pack(side="left")
         tk.Label(top, text="max spółek:", bg=PANEL).pack(side="left", padx=(14, 2))
         tk.Entry(top, textvariable=self.max_t, width=6).pack(side="left")
+        if self.is_qm:
+            self.build_qm_frame(cfg.get("qm") or qm.normalize(None))
         imp = tk.Frame(self, bg=PANEL)
         imp.pack(fill="x")
         tk.Label(imp, text="Wklej adres skanera z finviz.com (lub same kody):", bg=PANEL).pack(side="left", padx=8, pady=4)
@@ -77,12 +86,47 @@ class ScannerEditor(tk.Toplevel):
         self.count_lbl = tk.Label(bar, text="", bg=PANEL)
         self.count_lbl.pack(side="left")
         tk.Button(bar, text="Anuluj", command=self.destroy).pack(side="right", padx=6)
-        tk.Button(bar, text="⟳ Zapisz i pobierz fundamenty", command=lambda: self.save(sync.FUNDAMENTALS)).pack(side="right", padx=2)
+        if not self.is_qm:
+            tk.Button(bar, text="⟳ Zapisz i pobierz fundamenty", command=lambda: self.save(sync.FUNDAMENTALS)).pack(side="right", padx=2)
         tk.Button(bar, text="⟳ Zapisz i pobierz ceny", command=lambda: self.save(sync.PRICES)).pack(side="right", padx=2)
         tk.Button(bar, text="Zapisz", command=lambda: self.save(None)).pack(side="right", padx=2)
         self.raw.trace_add("write", lambda *_: self.from_raw())
         self.from_raw()
         self.after(150, self.poll)
+
+    # --- Qullamaggie: progi listy (zmieniane na bieżąco) i progi pobierania (co zostaje na dysku)
+    def build_qm_frame(self, q):
+        box = tk.LabelFrame(self, text=" Qullamaggie: obrót (cena × wolumen), ADR, cena / min Low ", bg=PANEL, fg=FG)
+        box.pack(fill="x", padx=6, pady=4)
+        self.qv = {k: tk.StringVar(value=f"{q[k]:g}") for k in ("min_dollar_mln", "min_adr", "top_pct", "keep_dollar_mln", "keep_adr")}
+        rows = (("Na liście — obrót dzienny ≥ (mln $):", "min_dollar_mln"), ("ADR ≥ (%):", "min_adr"), ("górne (%) w oknie:", "top_pct"),
+                ("Pobieraj — obrót ≥ (mln $):", "keep_dollar_mln"), ("ADR ≥ (%):", "keep_adr"))
+        for n, (label, key) in enumerate(rows):
+            r, c = n // 3, (n % 3) * 2
+            tk.Label(box, text=label, bg=PANEL, anchor="e").grid(row=r, column=c, sticky="e", padx=(10, 3), pady=3)
+            e = tk.Entry(box, textvariable=self.qv[key], width=7)
+            e.grid(row=r, column=c + 1, sticky="w")
+        wf = tk.Frame(box, bg=PANEL)
+        wf.grid(row=2, column=0, columnspan=6, sticky="w", padx=10, pady=3)
+        tk.Label(wf, text="Okna cena / min Low (suma wyników):", bg=PANEL).pack(side="left")
+        self.qw = {}
+        for w, (_key, lbl) in qm.WINDOWS.items():
+            v = tk.BooleanVar(value=w in q["windows"])
+            self.qw[w] = v
+            tk.Checkbutton(wf, text={"1m": "1M (~22 sesji)", "3m": "3M (~66)", "6m": "6M (~132)"}[w], variable=v, bg=PANEL).pack(side="left", padx=4)
+        tk.Button(wf, text="Dobierz filtry Finviz do progów pobierania", command=self.suggest_filters).pack(side="left", padx=12)
+        self.qm_hint = tk.Label(box, text="Progi „na liście” zmieniasz potem w oknie skanera (Qullamaggie…) bez ponownego pobierania, byle nie niżej niż progi pobierania. "
+                                          "Finviz tnie wstępnie po średnim wolumenie, cenie i zmienności miesiąca (≈ ADR − 1 pkt); dokładny obrót i ADR liczy program.",
+                                bg=PANEL, fg="#8b95a3", wraplength=1000, justify="left")
+        self.qm_hint.grid(row=3, column=0, columnspan=6, sticky="w", padx=10, pady=(0, 4))
+
+    def qm_values(self):
+        cfg = {k: v.get() for k, v in self.qv.items()}
+        cfg["windows"] = [w for w, v in self.qw.items() if v.get()]
+        return qm.normalize(cfg)
+
+    def suggest_filters(self):
+        self.raw.set(qm.suggest_filters(self.qm_values()))   # tylko na jawne kliknięcie — nie nadpisujemy filtrów zmienionych ręcznie
 
     # --- synchronizacja pól: listy wyboru <-> ciąg kodów
     def from_combos(self):
@@ -156,8 +200,10 @@ class ScannerEditor(tk.Toplevel):
             return
         name = self.name.get().strip() or "Skaner"
         extra = [k for k, v in self.extra_vars.items() if v.get()]
-        sc = {**(self.scanner or {}), "name": name, "extra": extra}
-        saved = scanners.upsert(self.app.data_root, sc, self.raw.get(), max_t)
+        sc = {**(self.scanner or {}), "name": name, "extra": extra, "kind": self.kind}
+        if self.is_qm and not sc.get("columns"):
+            sc["columns"] = list(qm.DEFAULT_COLUMNS)
+        saved = scanners.upsert(self.app.data_root, sc, self.raw.get(), max_t, self.qm_values() if self.is_qm else None)
         self.app.scanner_saved(saved, then_sync)
         self.destroy()
 
@@ -187,7 +233,8 @@ class ScannerManager(tk.Toplevel):
         self.tree.bind("<Double-1>", lambda e: self.open())
         bar = tk.Frame(self, bg=PANEL)
         bar.pack(fill="x")
-        for text, cmd in (("Otwórz w oknie", self.open), ("Nowy…", self.new), ("Edytuj…", self.edit), ("Duplikuj", self.duplicate), ("Usuń", self.delete),
+        for text, cmd in (("Otwórz w oknie", self.open), ("Nowy Finviz…", self.new), ("Nowy Qullamaggie…", lambda: self.app.new_scanner(scanners.KIND_QM)),
+                          ("Scal skanery…", lambda: self.app.new_scanner(scanners.KIND_MERGE)), ("Edytuj…", self.edit), ("Duplikuj", self.duplicate), ("Usuń", self.delete),
                           ("⟳ Ceny", lambda: self.sync(sync.PRICES)), ("⟳ Fundamenty", lambda: self.sync(sync.FUNDAMENTALS))):
             tk.Button(bar, text=text, command=cmd).pack(side="left", padx=4, pady=6)
         self.refresh()
@@ -207,7 +254,12 @@ class ScannerManager(tk.Toplevel):
                 a = sync.age_days(iso)
                 return "—" if a is None else "dziś" if a < 1 else f"{int(a)} d temu"
 
-            self.tree.insert("", "end", iid=sc["id"], text=sc["name"], values=(n if n is not None else "—", f"{len(finviz_codes.describe(cfg['filters']))} filtrów: " + cfg["filters"][:70],
+            if sc.get("kind") == scanners.KIND_MERGE:
+                names = [x["name"] for x in (scanners.get(self.app.data_root, i) for i in sc.get("sources", [])) if x]
+                desc = "scalone z: " + ", ".join(names)
+            else:
+                desc = ("Qullamaggie · " if sc.get("kind") == scanners.KIND_QM else "") + f"{len(finviz_codes.describe(cfg['filters']))} filtrów: " + cfg["filters"][:70]
+            self.tree.insert("", "end", iid=sc["id"], text=sc["name"], values=(n if n is not None else "—", desc,
                                                                           ago(st.get("prices")), ago(st.get("fundamentals"))))
 
     def current(self):
@@ -249,3 +301,48 @@ class ScannerManager(tk.Toplevel):
             view = self.app.view_for(sid)
             if view:
                 self.app.start_sync(view, mode)
+
+
+class MergeEditor(tk.Toplevel):
+    """Scalony skaner: zaznacz skanery-źródła; lista = suma ich spółek (bez duplikatów). Nic nie jest pobierane z sieci."""
+
+    def __init__(self, app, scanner=None):
+        super().__init__(app.root)
+        self.app, self.scanner = app, dict(scanner) if scanner else None
+        self.title("Scalony skaner" if scanner else "Nowy scalony skaner")
+        self.configure(bg=BG)
+        apply_dark(self)
+        self.geometry("520x420")
+        top = tk.Frame(self, bg=PANEL)
+        top.pack(fill="x")
+        tk.Label(top, text="Nazwa:", bg=PANEL).pack(side="left", padx=(8, 2), pady=6)
+        self.name = tk.StringVar(value=scanner["name"] if scanner else "Scalona lista")
+        tk.Entry(top, textvariable=self.name, width=36).pack(side="left")
+        tk.Label(self, text="Scal spółki z tych skanerów (zrób najpierw ich Sync):", bg=BG, anchor="w").pack(fill="x", padx=8, pady=(8, 2))
+        self.vars = {}
+        have = set((scanner or {}).get("sources") or [])
+        box = tk.Frame(self, bg=PANEL)
+        box.pack(fill="both", expand=True, padx=8, pady=4)
+        for sc in scanners.load(app.data_root):
+            if sc["kind"] == scanners.KIND_MERGE or sc["id"] == (scanner or {}).get("id"):
+                continue
+            v = tk.BooleanVar(value=sc["id"] in have)
+            self.vars[sc["id"]] = v
+            label = sc["name"] + ("   (Qullamaggie — tylko spółki wybrane jego progami)" if sc["kind"] == scanners.KIND_QM else "")
+            tk.Checkbutton(box, text=label, variable=v, bg=PANEL, anchor="w").pack(fill="x", padx=8, pady=2)
+        bar = tk.Frame(self, bg=PANEL)
+        bar.pack(fill="x")
+        tk.Button(bar, text="Anuluj", command=self.destroy).pack(side="right", padx=6, pady=6)
+        tk.Button(bar, text="Zapisz i scal", command=self.save).pack(side="right", padx=2)
+
+    def save(self):
+        src = [sid for sid, v in self.vars.items() if v.get()]
+        if len(src) < 1:
+            messagebox.showinfo("Scalanie", "Zaznacz co najmniej jeden skaner.", parent=self)
+            return
+        sc = {**(self.scanner or {}), "name": self.name.get().strip() or "Scalona lista", "kind": scanners.KIND_MERGE, "sources": src}
+        if not sc.get("columns"):
+            sc["columns"] = ["ticker", "flag", "company", "price", "merge_src", "qm_windows", "dollar_volume_avg", "adr_pct", "rs_rating", "cs", "darvas", "pbox", "change", "sector"]
+        saved = scanners.upsert(self.app.data_root, sc)
+        self.app.scanner_saved(saved, sync.PRICES)
+        self.destroy()

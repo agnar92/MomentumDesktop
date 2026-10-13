@@ -2,10 +2,9 @@
 import queue
 import threading
 import tkinter as tk
-from tkinter import messagebox, ttk
+from tkinter import ttk
 
-from . import adhoc, canslim, changes, finviz_codes, store
-from . import alerts as alerts_mod
+from . import adhoc, canslim, changes, finviz_codes, qm, scanners, store
 from . import columns as columns_mod
 from .theme import BG, FG, MONO, PANEL, SEL, apply_dark
 from .widgets import STATE_COLORS, StockTable
@@ -354,8 +353,7 @@ class WhatsNewWindow(tk.Toplevel):
             for t in items:
                 r = self.view.store.row(t)
                 if r:
-                    last = self.view.app.alerts.last_triggered(t) if key == "alert" else None
-                    state = alerts_mod.Alerts.describe(last) if last else r.get("darvas_text_d") if key == "buy_d" else r.get("pbox_text") if key == "zone" else r.get("darvas_text") if key in ("buy_w", "sell") else \
+                    state = r.get("darvas_text_d") if key == "buy_d" else r.get("pbox_text") if key == "zone" else r.get("darvas_text") if key in ("buy_w", "sell") else \
                         f"CANSLIM {r.get('cs')}/7  {r.get('cs_letters', '')}" if key == "canslim" else (r.get("company") or "")
                     self.tree.insert(sec, "end", iid=f"{key}:{t}", text=t, values=(f"{r['price']:.2f}" if r.get("price") else "", state or ""),
                                      tags=(r.get("darvas_d" if key == "buy_d" else "darvas_w", ""),))
@@ -397,114 +395,6 @@ class ListNamesWindow(tk.Toplevel):
             self.app.flags.rename(lid, v.get())
         self.app.refresh_flag_views()
         self.destroy()
-
-
-class AlertDialog(tk.Toplevel):
-    """Nowy alert cenowy: poziom, kierunek (domyślnie z położenia poziomu względem ceny), notatka."""
-
-    def __init__(self, view, ticker, price=None, on_done=None):
-        super().__init__(view.root)
-        self.view, self.ticker, self.on_done = view, ticker, on_done
-        full, dates, _spx, _ = view.store.series(ticker, "D")
-        if not full:
-            full, dates, _spx, _ = view.store.series(ticker, "W")
-        self.ref_price = next((v for v in reversed((full or {}).get("c") or []) if v is not None), None)
-        self.ref_date = dates[max(i for i, v in enumerate(full["c"]) if v is not None)] if full and self.ref_price else None
-        self.title(f"Alert cenowy — {ticker}")
-        self.configure(bg=BG)
-        apply_dark(self)
-        tk.Label(self, text=f"{ticker}   ostatnia cena {self.ref_price:.2f} ({self.ref_date})" if self.ref_price else ticker, bg=PANEL).grid(row=0, column=0, columnspan=3, padx=10, pady=8)
-        tk.Label(self, text="Poziom:", bg=PANEL).grid(row=1, column=0, padx=10, sticky="e")
-        self.price = tk.StringVar(value=f"{price:.2f}" if price else (f"{self.ref_price:.2f}" if self.ref_price else ""))
-        e = tk.Entry(self, textvariable=self.price, width=12)
-        e.grid(row=1, column=1, sticky="w")
-        e.focus_set()
-        tk.Label(self, text="Kierunek:", bg=PANEL).grid(row=2, column=0, padx=10, pady=4, sticky="e")
-        self.dir = tk.StringVar(value="")
-        fr = tk.Frame(self, bg=PANEL)
-        fr.grid(row=2, column=1, columnspan=2, sticky="w")
-        for text, val in (("auto", ""), ("↑ powyżej", "above"), ("↓ poniżej", "below")):
-            tk.Radiobutton(fr, text=text, value=val, variable=self.dir, bg=PANEL, indicatoron=False, padx=8).pack(side="left", padx=1)
-        tk.Label(self, text="Notatka:", bg=PANEL).grid(row=3, column=0, padx=10, sticky="e")
-        self.note = tk.StringVar()
-        tk.Entry(self, textvariable=self.note, width=34).grid(row=3, column=1, columnspan=2, sticky="w", pady=4)
-        tk.Label(self, text="Alert sprawdzany po każdym Sync na świecach po dzisiejszej dacie danych (High / Low sesji).", bg=PANEL, fg="#8b95a3").grid(row=4, column=0, columnspan=3, padx=10, pady=4)
-        bar = tk.Frame(self, bg=PANEL)
-        bar.grid(row=5, column=0, columnspan=3, sticky="e", pady=8)
-        tk.Button(bar, text="Zapisz", command=self.save).pack(side="right", padx=8)
-        tk.Button(bar, text="Anuluj", command=self.destroy).pack(side="right")
-        self.bind("<Return>", lambda ev: self.save())
-        self.bind("<Escape>", lambda ev: self.destroy())
-
-    def save(self):
-        try:
-            level = float(self.price.get().replace(",", "."))
-        except ValueError:
-            messagebox.showerror("Alert", "Poziom musi być liczbą.", parent=self)
-            return
-        if level <= 0:
-            messagebox.showerror("Alert", "Poziom musi być dodatni.", parent=self)
-            return
-        direction = self.dir.get() or alerts_mod.infer_direction(level, self.ref_price or level)
-        self.view.app.alerts.add(self.ticker, level, direction, self.note.get(), self.ref_date)
-        self.view.app.refresh_alert_views()
-        if self.on_done:
-            self.on_done()
-        self.destroy()
-
-
-class AlertsWindow(tk.Toplevel):
-    """Wszystkie alerty cenowe (aktywne i przebite): usuń, reaktywuj, dodaj."""
-
-    def __init__(self, app):
-        super().__init__(app.root)
-        self.app = app
-        self.title("Alerty cenowe")
-        self.geometry("820x420")
-        self.configure(bg=BG)
-        apply_dark(self)
-        self.tree = ttk.Treeview(self, columns=("level", "dir", "state", "created", "note"), show="tree headings", selectmode="browse")
-        for col, text, w, anc in (("#0", "Spółka", 90, "w"), ("level", "Poziom", 90, "e"), ("dir", "Kierunek", 90, "w"), ("state", "Stan", 260, "w"),
-                                  ("created", "Utworzony", 130, "w"), ("note", "Notatka", 200, "w")):
-            self.tree.heading(col, text=text)
-            self.tree.column(col, width=w, anchor=anc)
-        self.tree.pack(fill="both", expand=True)
-        self.tree.tag_configure("hit", foreground="#ffd166")
-        self.tree.tag_configure("off", foreground="#6b7684")
-        bar = tk.Frame(self, bg=PANEL)
-        bar.pack(fill="x")
-        tk.Button(bar, text="Usuń", command=self.remove).pack(side="left", padx=6, pady=5)
-        tk.Button(bar, text="Reaktywuj", command=self.reactivate).pack(side="left", padx=2)
-        tk.Button(bar, text="Otwórz wykres", command=self.open_chart).pack(side="left", padx=2)
-        self.tree.bind("<Double-1>", lambda e: self.open_chart())
-        self.refresh()
-
-    def refresh(self):
-        self.tree.delete(*self.tree.get_children())
-        for a in sorted(self.app.alerts.items, key=lambda x: (not x["active"], x["ticker"], x["price"])):
-            hit = bool(a.get("triggered_on"))
-            self.tree.insert("", "end", iid=a["id"], text=a["ticker"], values=(f"{a['price']:.2f}", "↑ powyżej" if a["dir"] == "above" else "↓ poniżej",
-                             f"PRZEBITY {a['triggered_on']} (zamknięcie {a['triggered_close']:.2f})" if hit and a.get("triggered_close") else "aktywny" if a["active"] else "wyłączony",
-                             a.get("created", ""), a.get("note", "")), tags=("hit",) if hit else ("off",) if not a["active"] else ())
-
-    def current(self):
-        sel = self.tree.selection()
-        return sel[0] if sel else None
-
-    def remove(self):
-        if self.current():
-            self.app.alerts.remove(self.current())
-            self.app.refresh_alert_views()
-
-    def reactivate(self):
-        if self.current():
-            self.app.alerts.reactivate(self.current())
-            self.app.refresh_alert_views()
-
-    def open_chart(self):
-        a = next((x for x in self.app.alerts.items if x["id"] == self.current()), None)
-        if a:
-            self.app.view.open_chart(a["ticker"]) if self.app.view.store.row(a["ticker"]) else self.app.view.open_symbol(a["ticker"])
 
 
 class SymbolDialog(tk.Toplevel):
@@ -571,4 +461,67 @@ class SymbolDialog(tk.Toplevel):
     def done(self, sym):
         self.view.app.remember_symbol(sym)
         self.view.open_chart(sym)
+        self.destroy()
+
+
+class QmWindow(tk.Toplevel):
+    """Progi skanera Qullamaggie na bieżąco: obrót (cena × wolumen), ADR, górne X % ceny / min Low w oknach 1M / 3M / 6M — bez ponownego pobierania."""
+
+    TARGET = (30, 50)   # ile spółek dziennie chcemy przeglądać
+
+    def __init__(self, view):
+        super().__init__(view.root)
+        self.view = view
+        self.title(f"Qullamaggie — {view.scanner['name']}")
+        self.configure(bg=BG)
+        apply_dark(self)
+        self.geometry("+%d+%d" % (view.root.winfo_rootx() + 60, view.root.winfo_rooty() + 60))
+        q = scanners.load_config(view.store.dir).get("qm") or qm.normalize(None)
+        self.keep = q
+        form = tk.Frame(self, bg=PANEL)
+        form.pack(fill="x", padx=2, pady=2)
+        self.vars = {}
+        for n, (label, key) in enumerate((("Obrót dzienny (cena × wolumen) ≥ mln $", "min_dollar_mln"), ("ADR ≥ %", "min_adr"), ("Górne % w oknie (cena / min Low)", "top_pct"))):
+            tk.Label(form, text=label, bg=PANEL, anchor="e").grid(row=n, column=0, sticky="e", padx=(10, 4), pady=4)
+            self.vars[key] = tk.StringVar(value=f"{q[key]:g}")
+            e = tk.Entry(form, textvariable=self.vars[key], width=8)
+            e.grid(row=n, column=1, sticky="w")
+            self.vars[key].trace_add("write", lambda *_: self.after_idle(self.update_count))
+        wf = tk.Frame(form, bg=PANEL)
+        wf.grid(row=3, column=0, columnspan=2, sticky="w", padx=10, pady=4)
+        tk.Label(wf, text="Okna:", bg=PANEL).pack(side="left")
+        self.wvars = {}
+        for w, text in (("1m", "1M (~22 sesji)"), ("3m", "3M (~66)"), ("6m", "6M (~132)")):
+            v = tk.BooleanVar(value=w in q["windows"])
+            self.wvars[w] = v
+            tk.Checkbutton(wf, text=text, variable=v, bg=PANEL, command=self.update_count).pack(side="left", padx=4)
+        self.count = tk.Label(self, text="", bg=BG, anchor="w", justify="left", wraplength=420)
+        self.count.pack(fill="x", padx=10, pady=(6, 2))
+        self.note = tk.Label(self, text="", bg=BG, fg="#ff9f43", anchor="w", justify="left", wraplength=420)
+        self.note.pack(fill="x", padx=10)
+        bar = tk.Frame(self, bg=PANEL)
+        bar.pack(fill="x", pady=(8, 0))
+        tk.Button(bar, text="Zastosuj i zapisz", command=self.apply).pack(side="right", padx=6, pady=6)
+        tk.Button(bar, text="Zamknij", command=self.destroy).pack(side="right")
+        self.update_count()
+
+    def cfg(self):
+        c = {k: v.get() for k, v in self.vars.items()}
+        c["windows"] = [w for w, v in self.wvars.items() if v.get()]
+        return qm.normalize({**self.keep, **c})
+
+    def update_count(self):
+        c = self.cfg()
+        rows = self.view.store.rows
+        pool, picks = len(qm.liquid(rows, c)), qm.select(rows, c)
+        n = len(picks)
+        lo, hi = self.TARGET
+        hint = "" if lo <= n <= hi else f"  (cel {lo}–{hi}: {'zmniejsz górne % albo podnieś obrót / ADR' if n > hi else 'zwiększ górne % albo obniż obrót / ADR'})"
+        self.count.config(text=f"Zapisanych spółek: {len(rows)}   płynnych: {pool}   na liście: {n}{hint}")
+        self.note.config(text="⚠ Progi niższe niż progi pobierania — część spółek nie została zapisana. Obniż „Pobieraj” w edytorze skanera i zrób Sync cen."
+                         if qm.below_keep(c) else "")
+
+    def apply(self):
+        scanners.save_qm(self.view.store.dir, self.cfg())
+        self.view.refresh_lists()
         self.destroy()

@@ -5,10 +5,10 @@ from pathlib import Path
 from . import store
 
 CANSLIM_MIN = 5
-LABELS = {"alert": "🔔 Alerty cenowe przebite", "zone": "📌 Przypięty box w strefie zagrożenia / exit", "buy_w": "🟢 Nowe KUP — tydzień", "buy_d": "🟢 Nowe KUP — dzień",
+LABELS = {"zone": "📌 Przypięty box w strefie zagrożenia / exit", "buy_w": "🟢 Nowe KUP — tydzień", "buy_d": "🟢 Nowe KUP — dzień",
           "sell": "🔴 Nowe SPRZEDAJ / poza (tydzień)", "canslim": f"🏆 Weszły do CANSLIM ≥ {CANSLIM_MIN}/7", "new": "★ Nowe w skanerze", "dropped": "Wypadły ze skanera"}
-ORDER = ["alert", "zone", "buy_w", "buy_d", "sell", "canslim", "new", "dropped"]
-MARKS = {"alert": "🔔 alert", "zone": "⚠ strefa", "buy_w": "▲ KUP tyg.", "buy_d": "▲ KUP dzień", "sell": "▼ sprzedaj", "canslim": "🏆 CANSLIM", "new": "★ nowa"}   # etykieta w kolumnie „Zmiana”
+ORDER = ["zone", "buy_w", "buy_d", "sell", "canslim", "new", "dropped"]
+MARKS = {"zone": "⚠ strefa", "buy_w": "▲ KUP tyg.", "buy_d": "▲ KUP dzień", "sell": "▼ sprzedaj", "canslim": "🏆 CANSLIM", "new": "★ nowa"}   # etykieta w kolumnie „Zmiana”
 
 
 def snapshot(rows):

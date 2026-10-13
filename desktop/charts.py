@@ -51,16 +51,7 @@ def inverse_scale(lo, hi, y0, y1, log=True):
     return lambda y: lo + (y1 - y) / (y1 - y0) * (hi - lo)
 
 
-def draw_alerts(cv, y, alerts, W, p_top, p_bot):
-    """Poziomy alertów cenowych: aktywne pomarańczowe, przebite szare; znacznik z ceną na osi."""
-    for a in alerts or []:
-        yy = y(a["price"])
-        if not (p_top - 2 <= yy <= p_bot + 2):
-            continue
-        col = "#ff9f43" if a.get("active", True) else DIM
-        cv.create_line(LEFT, yy, W - RIGHT, yy, fill=col, dash=(8, 4))
-        _tag(cv, W - RIGHT + 2, yy, f"{a['price']:.2f}" if a["price"] < 1000 else f"{a['price']:.0f}", col)
-        cv.create_text(W - RIGHT - 6, yy - 2, text="🔔 " + ("↑ " if a.get("dir") == "above" else "↓ ") + (a.get("note") or ""), fill=col, font=FONT, anchor="se")
+
 
 
 _LOG_SETS = [(1, 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.8, 2, 2.2, 2.5, 2.8, 3, 3.5, 4, 4.5, 5, 5.5, 6, 7, 8, 9),
@@ -209,8 +200,6 @@ def draw_bars(cv, full, weeks, spx, win, opts=None):
     if not hs:
         return {}
     extra = [v for v in (opts.get("levels") or []) if v]
-    last_c = next((v for v in reversed(c[i0:i1]) if v is not None), None)
-    extra += [a["price"] for a in opts.get("alerts") or [] if a.get("active", True) and last_c and 0.7 * last_c <= a["price"] <= 1.4 * last_c]   # aktywne alerty w pobliżu ceny mieszczą się w skali
     lo, hi = min(ls + extra), max(hs + extra)
     smas = opts.get("smas") or [(full.get("sma10") or [], 10), (full.get("sma40") or [], 40)]
     band = 0.2 if opts.get("spx") and spx else 0.0   # S&P 500 jak w książce: cienka linia w górnym pasie wykresu, własna skala
@@ -247,7 +236,11 @@ def draw_bars(cv, full, weeks, spx, win, opts=None):
         if x1 > x0:
             zb = b["bottom"] * (1 - darvas.STOP_PCT / 100)
             cv.create_rectangle(x0, y(b["bottom"]), x1, y(zb), fill="#2a1d24", outline="")   # strefa zagrożenia: spokojne, ciemnoczerwone tło
-            cv.create_rectangle(x0, y(b["top"]), x1, y(b["bottom"]), fill="#1a2430", outline=b.get("color", "#8892a0"))
+            cv.create_rectangle(x0, y(b["top"]), x1, y(b["bottom"]), fill="#243448", outline=b.get("color", "#8892a0"), width=2)   # zaznaczony box wyraźnie podświetlony
+            if not b.get("confirmed", True):   # dół niepotwierdzony: czerwona przerywana linia
+                cv.create_line(x0, y(b["bottom"]), x1, y(b["bottom"]), fill=RED, width=2, dash=(6, 3))
+            cv.create_text(x0 + 4, y(b["top"]) + 3, text="▣ zaznaczony box" + ("" if b.get("confirmed", True) else " · dół niepotwierdzony"),
+                           fill=b.get("color", "#8892a0"), font=FONT, anchor="nw")
     # średnie
     for arr, n_ma in smas:
         col = SMA_COLORS.get(n_ma, SMA40)
@@ -289,7 +282,6 @@ def draw_bars(cv, full, weeks, spx, win, opts=None):
     if lastv is not None:
         cv.create_text(LEFT + 74, v_top, text=f"— średnia {vavg_n} {unit_v}: {fmt_vol(vavg[lastv])}   ▯ złota obwódka = ≥ {darvas.BREAKOUT_VOL}× średniej", fill="#ff9f43", font=FONT, anchor="nw")
     # poziomy boxa na osi ceny (wejście / dół / exit)
-    draw_alerts(cv, y, opts.get("alerts"), W, p_top, p_bot)
     for price, col in opts.get("tags") or []:
         yy = y(price)
         cv.create_line(LEFT, yy, W - RIGHT, yy, fill=col, dash=(4, 3))
@@ -372,10 +364,8 @@ def draw_darcard(cv, full, weeks, win, opts=None):
     if not cs:
         return {}
     pin = opts.get("pinned")
-    last_c = next((v for v in reversed(cs) if v is not None), None)
-    near = [a["price"] for a in opts.get("alerts") or [] if a.get("active", True) and last_c and 0.7 * last_c <= a["price"] <= 1.4 * last_c]
-    lo = min(cs + near + [b["bottom"] * (1 - darvas.STOP_PCT / 100) for _, b in vis] + ([pin["bottom"] * 0.95] if pin else []))
-    hi = max(cs + near + [b["top"] for _, b in vis] + ([pin["top"]] if pin else []))
+    lo = min(cs + [b["bottom"] * (1 - darvas.STOP_PCT / 100) for _, b in vis] + ([pin["bottom"] * 0.95] if pin else []))
+    hi = max(cs + [b["top"] for _, b in vis] + ([pin["top"]] if pin else []))
     log = opts.get("log", True)
     if log and lo > 0:
         pad = math.log(hi / lo) * 0.06 + 0.002
@@ -407,8 +397,10 @@ def draw_darcard(cv, full, weeks, win, opts=None):
         hatch(cv, x0, yb, x1, yz)   # strefa zagrożenia 5 % pod dołem (ukośne kreski)
         cv.create_rectangle(x0, yt, x1, yb, fill="#7a2f2f" if bad else (BOX_PLAIN if b["confirmed"] else BOX_FILL),
                             outline=RED if bad else DIM, dash=() if b["confirmed"] else (3, 2))
+        if not b["confirmed"] and not bad:   # dół niepotwierdzony: czerwona przerywana linia
+            cv.create_line(x0, yb, x1, yb, fill=RED, width=2, dash=(6, 3))
         hits.append({"rect": (x0, yt, x1, yz), "box": {"top": b["top"], "bottom": b["bottom"], "i0": b["i0"], "i1": b["i1"], "kind": "darvas",
-                                                       "outcome": b["outcome"], "start": weeks[b["i0"]] if b["i0"] < len(weeks) else ""}})
+                                                       "outcome": b["outcome"], "confirmed": b["confirmed"], "start": weeks[b["i0"]] if b["i0"] < len(weeks) else ""}})
     if pin:   # przypięty (monitorowany) box — kontur w kolorze statusu od początku do prawej krawędzi
         st = darvas.pin_status(pin, c[last_idx(c)] if last_idx(c) >= 0 else None)
         col = {"ABOVE": GREEN, "INSIDE": GOLD, "ZONE": RED, "EXIT": RED}.get(st["state"], GOLD)
@@ -419,7 +411,6 @@ def draw_darcard(cv, full, weeks, win, opts=None):
         cv.create_text(x0 + 4, y(pin["top"]) + 3, text=f"📌 {st['text']}", fill=col, font=FONT, anchor="nw")
         hits.append({"rect": (x0, y(pin["top"]), x1, y(pin["bottom"] * 0.95)), "box": {"top": pin["top"], "bottom": pin["bottom"], "i0": start,
                                                                                     "i1": last_idx(c), "kind": "pinned", "outcome": "open", "start": pin.get("start", "")}})
-    draw_alerts(cv, y, opts.get("alerts"), W, TOP, H - BOTTOM)
     # ostatnia cena
     li = last_idx(c)
     if i0 <= li < i1:

@@ -26,6 +26,8 @@ DEFS = {
     "eps_yr0": ("EPS rok 0 %", 92, "e", "n1"), "eps_yr1": ("EPS rok −1 %", 98, "e", "n1"), "eps_yr2": ("EPS rok −2 %", 98, "e", "n1"),
     "eps_accel": ("Akceleracja", 92, "w", "bool"), "shares_chg_pct": ("Zmiana liczby akcji %", 140, "e", "n1"), "inst_sponsor": ("Sponsor inst.", 100, "w", "bool"),
     "base_status": ("Status bazy", 110, "w", "text"), "climax_top": ("Climax", 64, "w", "bool"), "dist_top": ("Dystrybucja", 92, "w", "bool"),
+    "low_ratio_1m": ("Cena/min 1M", 96, "e", "n2"), "low_ratio_3m": ("Cena/min 3M", 96, "e", "n2"), "low_ratio_6m": ("Cena/min 6M", 96, "e", "n2"),
+    "qm_windows": ("Okna QM", 84, "w", "text"), "qm_max_ratio": ("Max cena/min", 104, "e", "n2"), "merge_src": ("Źródła", 170, "w", "text"),
     "rs_line_state": ("Linia RS", 90, "w", "text"), "vol_surge_5d": ("Skok wol. 5d ×", 100, "e", "n2"),
 }
 DEFAULT_COLUMNS = ["ticker", "flag", "company", "price", "rs_rating", "eps_rating", "composite_rating", "cs", "cs_letters", "pct_from_high_52w", "base",

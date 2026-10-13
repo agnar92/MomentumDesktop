@@ -6,13 +6,17 @@ import sys
 import threading
 from pathlib import Path
 
-from . import canslim, changes, darvas, daily
+from . import canslim, changes, darvas, daily, qm
 
 STATE_LABELS = {"BUY": "KUP", "NOVOL": "bez wolumenu", "LATE": "za późno", "HOLD": "trzymaj", "SELL": "SPRZEDAJ",
                 "OUT": "poza", "WAIT": "czekaj", "NONE": ""}
 BASE_LABELS = {"cup": "cup", "double_bottom": "double bottom", "flat": "flat", "square_box": "square box", "ascending": "ascending",
                "htf": "high tight flag", "ipo": "ipo", "correction": "korekta", "deep": "głęboka"}
 BUYABLE_BASES = {"cup", "double_bottom", "flat", "square_box", "ascending", "htf", "ipo"}
+
+
+OLD_DEFAULT_FILTERS = "cap_smallover,fa_epsqoq_high,fa_epsyoy_high,fa_epsyoy1_high,fa_salesqoq_high,geo_usa,ind_stocksonly,sh_avgvol_o300,sh_price_o1,ta_sma200_pa"
+NEW_DEFAULT_FILTERS = "cap_smallover,fa_epsqoq_high,fa_epsyoyttm_high,fa_salesqoq_high,ind_stocksonly,sh_avgvol_o300,sh_price_o1,ta_sma200_pa"
 
 
 def app_dir():
@@ -37,6 +41,11 @@ def data_dir(base=None, seed=True):
         for f in seed_dir.glob("*.json"):
             if not (d / f.name).exists():
                 shutil.copy(f, d / f.name)
+        fs = d / "finviz_screen.json"   # dawny domyślny filtr CANSLIM -> aktualny (tylko gdy użytkownik go nie zmieniał)
+        cfg = read_json(fs, None)
+        if isinstance(cfg, dict) and cfg.get("filters") == OLD_DEFAULT_FILTERS:
+            cfg["filters"] = NEW_DEFAULT_FILTERS
+            write_json(fs, cfg)
     return d
 
 
@@ -195,7 +204,7 @@ class Store:
 # ---------- skaner (filtry po danych już pobranych) ----------
 
 DEFAULT_FILTERS = {"rs_min": None, "eps_min": None, "comp_min": None, "max_to_pivot": None, "max_from_high": None,
-                   "states": [], "sector": "", "base_only": False, "min_adr": None, "pinned_only": False, "text": "", "cs_min": None, "cs_core": False, "flag": ""}
+                   "states": [], "sector": "", "base_only": False, "min_adr": None, "pinned_only": False, "text": "", "cs_min": None, "cs_core": False, "flag": "", "qm": None}
 
 
 def _num(v):
@@ -207,7 +216,12 @@ def scan(rows, f):
     f = {**DEFAULT_FILTERS, **(f or {})}
     out = []
     text = (f["text"] or "").strip().lower()
+    picks = qm.select(rows, f["qm"]) if f["qm"] else None   # skaner Qullamaggie: górne X % cena / min Low z płynnych spółek
     for r in rows:
+        if picks is not None:
+            if r["ticker"] not in picks:
+                continue
+            qm.annotate(r, picks[r["ticker"]])
         if f["rs_min"] is not None and (_num(r.get("rs_rating")) is None or r["rs_rating"] < f["rs_min"]):
             continue
         if f["eps_min"] is not None and (_num(r.get("eps_rating")) is None or r["eps_rating"] < f["eps_min"]):

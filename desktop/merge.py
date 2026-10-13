@@ -21,16 +21,21 @@ def _remap(val, src_axis, ref_axis):
     return conv(val)
 
 
-def _pick_stocks(root, sc):
-    """([(raw stock, windows|None)], watchlist, charts, charts_d) jednego źródła — tylko spółki, które to źródło faktycznie pokazuje."""
+def select_source(root, sc, rule):
+    """([(surowa spółka, okna Qullamaggiego|None)], watchlist, charts, charts_d) jednego skanu — tylko spółki spełniające kryterium watchlisty:
+    all = wszystkie z zapisanego skanu; qm = górne X % cena / min Low w każdym oknie (1M, 3M, 6M) wśród płynnych; canslim = co najmniej n/7."""
     d = scanners.scanner_dir(root, sc["id"])
     wl = store.read_json(d / "watchlist.json", {}) or {}
     stocks = wl.get("stocks", [])
     picks = None
-    if sc.get("kind") == scanners.KIND_QM:
-        cfg = scanners.load_config(d).get("qm")
-        picks = qm.select(stocks, cfg, wl.get("qm_pool"))
+    kind = (rule or {}).get("type", scanners.RULE_ALL)
+    if kind == scanners.RULE_QM:
+        picks = qm.select(stocks, qm.normalize(rule), wl.get("qm_pool"))
         stocks = [s for s in stocks if s["ticker"] in picks]
+    elif kind == scanners.RULE_CANSLIM:
+        rows = store.Store(d, seed=False).rows
+        ok = {r["ticker"] for r in store.scan(rows, {"cs_min": int(rule.get("cs_min") or 5), "cs_core": bool(rule.get("cs_core"))})}
+        stocks = [s for s in stocks if s["ticker"] in ok]
     return [(s, picks.get(s["ticker"]) if picks else None) for s in stocks], wl, store.read_json(d / "charts.json", {}) or {}, store.read_json(d / "charts_daily.json", {}) or {}
 
 
@@ -39,8 +44,12 @@ def build(root, scanner, log=print):
     root = Path(root)
     out_dir = scanners.scanner_dir(root, scanner["id"])
     out_dir.mkdir(parents=True, exist_ok=True)
-    srcs = [s for s in (scanners.get(root, sid) for sid in scanner.get("sources") or []) if s and s["id"] != scanner["id"] and s.get("kind") != scanners.KIND_MERGE]
-    parts = [(s, *_pick_stocks(root, s)) for s in srcs]
+    parts = []
+    for src in scanner.get("sources") or []:
+        src = scanners.norm_source(src)
+        sc = scanners.get(root, src["id"])
+        if sc and sc["id"] != scanner["id"] and sc.get("kind") != scanners.KIND_WATCHLIST:
+            parts.append((sc, *select_source(root, sc, src["rule"])))
     parts = [p for p in parts if p[1]]
     if not parts:
         log("⚠️  Brak spółek w źródłach (zrób najpierw Sync skanerów, które scalasz).")
@@ -50,7 +59,8 @@ def build(root, scanner, log=print):
     for sc, items, _wl, _c, _cd in parts:
         for stock, windows in items:
             t = stock["ticker"]
-            names.setdefault(t, []).append(sc["name"])
+            if sc["name"] not in names.setdefault(t, []):
+                names[t].append(sc["name"])
             if t not in merged:
                 merged[t] = dict(stock)
             if windows:   # okna Qullamaggie z tego źródła (jeśli spółka wpadła w kilku źródłach, sumujemy okna)

@@ -421,37 +421,35 @@ def test_unconfirmed_box_has_red_dashed_bottom_and_focus_keeps_flag(app):
     assert ch.focus_box["confirmed"] is False
 
 
-def test_qm_scanner_window_live_thresholds_and_merge(app, monkeypatch):
+def test_watchlist_window_from_qm_scan_and_canslim_scan(app, monkeypatch):
     import shutil
 
     from desktop import qm, scanners
-    from desktop.dialogs import QmWindow
     monkeypatch.setattr("tkinter.messagebox.showinfo", lambda *a, **k: None)
     sc = scanners.upsert(app.data_root, {"name": "QM", "kind": "qm", "columns": list(qm.DEFAULT_COLUMNS)}, "cap_smallover", 3000,
-                         {"min_dollar_mln": 50, "min_adr": 3, "top_pct": 10, "keep_dollar_mln": 25, "keep_adr": 2})
+                         {"keep_dollar_mln": 25, "keep_adr": 2, "top_pct": 10})
     d = scanners.scanner_dir(app.data_root, sc["id"])
     d.mkdir(parents=True, exist_ok=True)
     for f in ("watchlist.json", "charts.json", "charts_daily.json"):
         shutil.copy(app.data_root / f, d / f)
     app.open_scanner_window(sc["id"])
     v = app.view_for(sc["id"])
-    assert v.kind == "qm" and v.table.sort_col == "qm_max_ratio"
-    n_all = len(v.store.rows)
-    shown = len(v.table.visible())
-    assert 0 < shown < n_all and all(r["qm_windows"] for r in v.table_rows()) if hasattr(v, "table_rows") else shown < n_all
-    w = QmWindow(v)
-    w.update()
-    w.vars["top_pct"].set("100")
-    w.vars["min_dollar_mln"].set("0")
-    w.vars["min_adr"].set("0")
-    w.update_count()
-    assert "na liście" in w.count["text"] and w.note["text"]   # progi niższe niż pobierania -> ostrzeżenie
-    w.apply()
-    assert scanners.load_config(d)["qm"]["top_pct"] == 100 and len(v.table.visible()) == n_all
-    # scalona lista z QM + domyślnego
-    m = scanners.upsert(app.data_root, {"name": "Razem", "kind": "merge", "sources": [scanners.DEFAULT_ID, sc["id"]]})
-    app.open_scanner_window(m["id"])
-    mv = app.view_for(m["id"])
+    assert v.kind == "qm" and len(v.table.visible()) == len(v.store.rows)   # skan pokazuje wszystkie pobrane spółki (z filtrem, bez progów QM)
+    rule = {"type": "qm", "min_dollar_mln": 50, "min_adr": 3, "top_pct": 10, "windows": ["1m", "3m", "6m"]}
+    wl = scanners.upsert(app.data_root, {"name": "Małe okno", "kind": "watchlist", "sources": [{"id": sc["id"], "rule": rule},
+                                                                                              {"id": scanners.DEFAULT_ID, "rule": {"type": "canslim", "cs_min": 6, "cs_core": True}}]})
+    app.open_scanner_window(wl["id"])
+    w = app.windows[wl["id"]]
+    assert type(w).__name__ == "WatchlistWindow"
+    mv = app.view_for(wl["id"])
     app.start_sync(mv, "prices")
     assert _wait(app, lambda: not app.syncing)
-    assert len(mv.store.rows) == n_all and "merge_src" in mv.store.rows[0]
+    tickers = [r["ticker"] for r in mv.store.rows]
+    assert 0 < len(tickers) < len(v.store.rows) and len(set(tickers)) == len(tickers)
+    assert any(r.get("qm_windows") for r in mv.store.rows) and all(r.get("merge_src") for r in mv.store.rows)
+    # kliknięcie tickera na małej liście otwiera wykres
+    app.root.update()
+    t = mv.table.visible()[0]
+    mv.table.tree.selection_set(t)
+    app.root.update()
+    assert mv.chart is not None and mv.chart.ticker == t

@@ -33,17 +33,16 @@ def test_keep_below_keep_and_suggest_filters():
 
 def test_scan_qm_filter_and_scanner_kinds(tmp_path):
     rows = [stock(f"S{i}", r1=1 + i / 100) for i in range(10)]
-    out = store.scan(rows, {"qm": {"min_dollar_mln": 50, "min_adr": 3, "top_pct": 20, "windows": ["1m"]}})
-    assert [r["ticker"] for r in out] == ["S9", "S8"] or {r["ticker"] for r in out} == {"S8", "S9"}
-    assert out[0]["qm_windows"] == "1M"
+    assert len(store.scan(rows, {})) == 10   # skan pokazuje wszystkie pobrane spółki — progi Qullamaggiego są w watchliście
     root = tmp_path
     sc = scanners.upsert(root, {"name": "QM", "kind": "qm"}, "cap_smallover", 3000, {"min_adr": 4})
     assert scanners.get(root, sc["id"])["kind"] == "qm" and scanners.load_config(scanners.scanner_dir(root, sc["id"]))["qm"]["min_adr"] == 4
     scanners.save_qm(scanners.scanner_dir(root, sc["id"]), {"top_pct": 5})
     cfg = scanners.load_config(scanners.scanner_dir(root, sc["id"]))
     assert cfg["qm"]["top_pct"] == 5 and cfg["filters"] == "cap_smallover" and cfg["max_tickers"] == 3000
-    m = scanners.upsert(root, {"name": "M", "kind": "merge", "sources": [sc["id"]]})
-    assert scanners.get(root, m["id"])["sources"] == [sc["id"]]
+    m = scanners.upsert(root, {"name": "M", "kind": "merge", "sources": [sc["id"]]})   # stary zapis: kind merge + samo id
+    got = scanners.get(root, m["id"])
+    assert got["kind"] == "watchlist" and got["sources"] == [{"id": sc["id"], "rule": {"type": "all"}}]
     assert scanners.get(root, scanners.DEFAULT_ID)["kind"] == "finviz"
 
 
@@ -93,7 +92,7 @@ def test_merge_builds_union_with_sources_and_realigns_axes(tmp_path):
     b = scanners.upsert(root, {"name": "Beta"}, "x", 10)
     _write(scanners.scanner_dir(root, a["id"]), ["AAA", "BBB"], 10)
     _write(scanners.scanner_dir(root, b["id"]), ["BBB", "CCC"], 11)   # nowsza oś (przesunięta o tydzień)
-    m = scanners.upsert(root, {"name": "Razem", "kind": "merge", "sources": [a["id"], b["id"]]})
+    m = scanners.upsert(root, {"name": "Razem", "kind": "watchlist", "sources": [{"id": a["id"], "rule": {"type": "all"}}, {"id": b["id"], "rule": {"type": "all"}}]})
     assert merge.build(root, m, log=lambda s: None) == 3
     d = scanners.scanner_dir(root, m["id"])
     wl = json.loads((d / "watchlist.json").read_text())
@@ -110,14 +109,15 @@ def test_merge_builds_union_with_sources_and_realigns_axes(tmp_path):
 
 def test_merge_takes_only_qm_selected_stocks(tmp_path):
     root = tmp_path
-    q = scanners.upsert(root, {"name": "QM", "kind": "qm"}, "x", 10, {"min_dollar_mln": 50, "min_adr": 3, "top_pct": 25, "windows": ["1m"]})
+    q = scanners.upsert(root, {"name": "QM", "kind": "qm"}, "x", 10)
     qd = scanners.scanner_dir(root, q["id"])
     _write(qd, ["T1", "T2", "T3", "T4"], 10)
     w = json.loads((qd / "watchlist.json").read_text())
     for i, s in enumerate(w["stocks"]):
         s["low_ratio_1m"] = 1 + i
     (qd / "watchlist.json").write_text(json.dumps(w))
-    m = scanners.upsert(root, {"name": "M", "kind": "merge", "sources": [q["id"]]})
+    rule = {"type": "qm", "min_dollar_mln": 50, "min_adr": 3, "top_pct": 25, "windows": ["1m"]}
+    m = scanners.upsert(root, {"name": "M", "kind": "watchlist", "sources": [{"id": q["id"], "rule": rule}]})
     assert merge.build(root, m, log=lambda s: None) == 1   # górne 25 % z 4 spółek = 1
     wl = json.loads((scanners.scanner_dir(root, m["id"]) / "watchlist.json").read_text())
     assert [s["ticker"] for s in wl["stocks"]] == ["T4"] and wl["stocks"][0]["qm_windows"] == "1M"
@@ -188,3 +188,23 @@ def test_fetch_universe_uses_custom_view_and_restores_settings():
     rows, total = sync.fetch_universe(fv, "cap_smallover", 3000, lambda s: None)
     assert rows == [{"ticker": "A"}] and seen["cols"]["Perf Month"] == "p1m" and seen["params"]["c"] == qm.UNIVERSE_IDS
     assert fv.VIEW_COLUMNS["152"] == {"Recom": "recom"} and fv.VIEW_PARAMS["152"] == {"c": "0,1"} and fv.TEXT_KEYS == {"company"}
+
+
+def test_watchlist_takes_top_percent_of_each_window_separately_and_canslim_rule(tmp_path):
+    root = tmp_path
+    q = scanners.upsert(root, {"name": "QM", "kind": "qm"}, "x", 10)
+    qd = scanners.scanner_dir(root, q["id"])
+    tick = [f"T{i:02d}" for i in range(20)]
+    _write(qd, tick, 10)
+    w = json.loads((qd / "watchlist.json").read_text())
+    for i, s in enumerate(w["stocks"]):   # każde okno ma innego lidera: 1M rośnie z i, 3M maleje z i, 6M — liderem jest T10
+        s["low_ratio_1m"], s["low_ratio_3m"], s["low_ratio_6m"] = 1 + i / 100, 2 - i / 100, 1 + (5 if i == 10 else 0) + i / 1000
+    (qd / "watchlist.json").write_text(json.dumps(w))
+    rule = {"type": "qm", "min_dollar_mln": 50, "min_adr": 3, "top_pct": 10, "windows": ["1m", "3m", "6m"]}   # 10 % z 20 = 2 spółki na okno
+    items = merge.select_source(root, scanners.get(root, q["id"]), rule)[0]
+    got = {s["ticker"]: win for s, win in items}
+    assert got["T19"] == ["1m", "6m"] and got["T18"] == ["1m"] and got["T00"] == ["3m"] and got["T01"] == ["3m"] and got["T10"] == ["6m"]
+    assert set(got) == {"T19", "T18", "T00", "T01", "T10"}   # 2 spółki z każdego okna, suma bez duplikatów
+    # CANSLIM: tylko spółki z cs >= n
+    cs = merge.select_source(root, scanners.get(root, q["id"]), {"type": "canslim", "cs_min": 8})[0]
+    assert cs == []   # dane testowe nie mają CANSLIM >= 8/7

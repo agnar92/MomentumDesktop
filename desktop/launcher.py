@@ -25,9 +25,9 @@ class LauncherWindow(tk.Toplevel):
         tk.Button(bar, text="Otwórz", command=self.open, relief="flat").pack(side="left", padx=4, pady=5)
         new = tk.Menubutton(bar, text="＋ Nowy ▾", relief="flat", bg=PANEL, fg=FG, activebackground="#2d3744")
         menu = tk.Menu(new, tearoff=0)
-        menu.add_command(label="Skaner Finviz…", command=app.new_scanner)
-        menu.add_command(label="Skaner Qullamaggie…", command=lambda: app.new_scanner(scanners.KIND_QM))
-        menu.add_command(label="Scal skanery w jedną listę…", command=lambda: app.new_scanner(scanners.KIND_MERGE))
+        menu.add_command(label="Skan Finviz…", command=app.new_scanner)
+        menu.add_command(label="Skan Qullamaggie (dane do watchlisty)…", command=lambda: app.new_scanner(scanners.KIND_QM))
+        menu.add_command(label="Watchlista (lista tickerów z kilku skanów)…", command=lambda: app.new_scanner(scanners.KIND_WATCHLIST))
         new["menu"] = menu
         new.pack(side="left", padx=2)
         tk.Button(bar, text="☰ Zarządzaj", command=app.open_manager, relief="flat").pack(side="left", padx=2)

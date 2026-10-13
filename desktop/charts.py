@@ -239,8 +239,6 @@ def draw_bars(cv, full, weeks, spx, win, opts=None):
             cv.create_rectangle(x0, y(b["top"]), x1, y(b["bottom"]), fill="#243448", outline=b.get("color", "#8892a0"), width=2)   # zaznaczony box wyraźnie podświetlony
             if not b.get("confirmed", True):   # dół niepotwierdzony: czerwona przerywana linia
                 cv.create_line(x0, y(b["bottom"]), x1, y(b["bottom"]), fill=RED, width=2, dash=(6, 3))
-            cv.create_text(x0 + 4, y(b["top"]) + 3, text="▣ zaznaczony box" + ("" if b.get("confirmed", True) else " · dół niepotwierdzony"),
-                           fill=b.get("color", "#8892a0"), font=FONT, anchor="nw")
     # średnie
     for arr, n_ma in smas:
         col = SMA_COLORS.get(n_ma, SMA40)

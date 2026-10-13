@@ -494,3 +494,24 @@ def test_dialog_buttons_not_clipped(app):
             opened.append(w)
     for w in opened:
         assert not _clipped_buttons(w), (w.title(), _clipped_buttons(w))
+
+
+def test_tooltip_broken_box_and_chart_placement(app):
+    from desktop import darvas
+    # złamany box: bez „do wybicia”, z exitem / stopem; tooltip wybranego tygodnia
+    c = [10, 11, 12, 13, 12, 11, 10.5, 11, 11.5, 11, 10, 9.5, 9]
+    bx = [b for b in darvas.boxes(c) if b["outcome"] == "down"]
+    full = {"c": c}
+    dates = [f"2025-{n // 4 + 1:02d}-{n % 4 * 7 + 1:02d}" for n in range(len(c))]
+    assert bx
+    if bx:
+        i = bx[0]["i1"]
+        lines = [t for t, _ in charts.tooltip_card(full, dates, i, "W")]
+        assert any("złamany" in t for t in lines) and not any("do wybicia" in t for t in lines)
+    # wykres otwiera się przy lewej krawędzi skanera (prawa krawędź wykresu przylega do lewej skanera)
+    v = app.view
+    app.root.geometry("900x500+1000+100")
+    app.root.update()
+    v.open_chart("NVDA")
+    v.chart.update()
+    assert v.chart.winfo_x() + v.chart.winfo_width() <= app.root.winfo_x() + 2

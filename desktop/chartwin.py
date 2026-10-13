@@ -2,7 +2,7 @@
 import tkinter as tk
 
 from . import charts, darvas, store
-from .theme import BG, FG, PANEL, Flow, apply_dark, autowrap, fit_window
+from .theme import BG, FG, PANEL, Flow, apply_dark, autowrap, fit_window, place_left_of
 from .widgets import STATE_COLORS
 
 
@@ -82,6 +82,7 @@ class ChartWindow(tk.Toplevel):
             self.bind(key, fn)
         self.set_ticker(ticker)
         fit_window(self, min(720, int(h * 0.78)), h, min_w=420)
+        place_left_of(self, view.root)   # prawa krawędź wykresu przylega do lewej krawędzi skanera / watchlisty, z której go otwarto
 
     # --- dane
     def default_n(self):

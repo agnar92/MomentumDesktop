@@ -63,6 +63,67 @@ def apply_dark(win):
     win.after(60, lambda: dark_titlebar(win))
 
 
+def fit_window(win, w, h, min_w=520):
+    """Rozmiar okna: żądany w×h, ale nie mniejszy niż potrzebuje zawartość (żeby przyciski nie były ucięte) i nie większy niż ekran.
+    Wołaj na końcu budowania okna. Okno nie da się zmniejszyć poniżej wysokości potrzebnej na paski z przyciskami;
+    szerokości pilnują paski `Flow` i zawijane etykiety."""
+    win.update_idletasks()
+    sw, sh = win.winfo_screenwidth(), win.winfo_screenheight()
+    max_w, max_h = max(400, sw - 80), max(300, sh - 120)
+    rw, rh = win.winfo_reqwidth(), win.winfo_reqheight()
+    win.geometry(f"{min(w, max_w)}x{min(max(h, rh), max_h)}")   # szerokość: żądana (paski zawijają się same), wysokość: co najmniej tyle, ile trzeba
+    win.minsize(min(rw, min_w, max_w), min(rh, max_h))
+
+
+def autowrap(label, pad=24):
+    """Etykieta z zawijaniem tekstu do szerokości okna (zamiast ucinania długiego opisu)."""
+    label.configure(justify="left", anchor="w")
+    label.bind("<Configure>", lambda e: label.configure(wraplength=max(160, e.width - pad)) if abs(label.cget("wraplength") - e.width + pad) > 4 else None)
+    return label
+
+
+class Flow(tk.Frame):
+    """Pasek, który zawija elementy do kolejnych wierszy, gdy brakuje szerokości (zamiast ucinać przyciski).
+    Elementy twórz z mistrzem = ten pasek, a potem `flow.add(widget)` (zamiast pack)."""
+
+    def __init__(self, master, padx=4, pady=3, **kw):
+        kw.setdefault("bg", PANEL)
+        super().__init__(master, **kw)
+        self.items, self.padx, self.pady, self._fw, self._busy = [], padx, pady, 0, False
+        self.bind("<Configure>", self._conf)
+
+    def add(self, widget, **_):
+        self.items.append(widget)
+        widget.bind("<Configure>", lambda e: self.after_idle(self.relayout), add="+")
+        self.after_idle(self.relayout)
+        return widget
+
+    def _conf(self, e):
+        if e.width != self._fw:
+            self._fw = e.width
+            self.relayout()
+
+    def relayout(self):
+        if self._busy or not self.winfo_exists():
+            return
+        self._busy = True
+        try:
+            width = self._fw if self._fw > 1 else 10 ** 6   # przed pierwszym wyświetleniem zakładamy jeden wiersz
+            x = y = row_h = 0
+            widest = 0
+            for w in self.items:
+                rw, rh = w.winfo_reqwidth(), w.winfo_reqheight()
+                widest = max(widest, rw + 2 * self.padx)
+                if x and x + rw + self.padx > width:
+                    x, y, row_h = 0, y + row_h + self.pady, 0
+                w.place(x=x + self.padx, y=y + self.pady, width=rw, height=rh)
+                x += rw + self.padx
+                row_h = max(row_h, rh)
+            self.configure(height=y + row_h + 2 * self.pady, width=min(widest, 480))
+        finally:
+            self._busy = False
+
+
 class MenuBar(tk.Frame):
     """Własny pasek menu: [(tytuł, [(napis, polecenie) | None (separator)])]. Rysujemy go sami, bo natywny pasek menu Windows jest biały."""
 

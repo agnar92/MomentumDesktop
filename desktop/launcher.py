@@ -2,7 +2,7 @@
 import tkinter as tk
 
 from . import scanners, session, store
-from .theme import BG, FG, MONO, PANEL, SEL, apply_dark
+from .theme import BG, FG, MONO, PANEL, SEL, Flow, apply_dark
 
 
 class LauncherWindow(tk.Toplevel):
@@ -11,7 +11,7 @@ class LauncherWindow(tk.Toplevel):
         self.app = app
         self.title("Skanery")
         self.configure(bg=BG)
-        w, h = 310, 340
+        w, h = 340, 340
         self.geometry(f"{w}x{h}+{max(0, app.root.winfo_screenwidth() - w - 24)}+80")   # z prawej strony, nie zasłania listy
         apply_dark(self)
         self.ids = []
@@ -20,17 +20,19 @@ class LauncherWindow(tk.Toplevel):
         self.box.pack(fill="both", expand=True, padx=2, pady=2)
         self.box.bind("<Double-1>", lambda e: self.open())
         self.box.bind("<Return>", lambda e: self.open())
-        bar = tk.Frame(self, bg=PANEL)
-        bar.pack(fill="x")
-        tk.Button(bar, text="Otwórz", command=self.open, relief="flat").pack(side="left", padx=4, pady=5)
+        bar = Flow(self)
+        bar.pack(fill="x", side="bottom")
+        self.box.pack_forget()
+        self.box.pack(fill="both", expand=True, padx=2, pady=2)
+        bar.add(tk.Button(bar, text="Otwórz", command=self.open, relief="flat"))
         new = tk.Menubutton(bar, text="＋ Nowy ▾", relief="flat", bg=PANEL, fg=FG, activebackground="#2d3744")
         menu = tk.Menu(new, tearoff=0)
         menu.add_command(label="Skan Finviz…", command=app.new_scanner)
         menu.add_command(label="Skan Qullamaggie (dane do watchlisty)…", command=lambda: app.new_scanner(scanners.KIND_QM))
         menu.add_command(label="Watchlista (lista tickerów z kilku skanów)…", command=lambda: app.new_scanner(scanners.KIND_WATCHLIST))
         new["menu"] = menu
-        new.pack(side="left", padx=2)
-        tk.Button(bar, text="☰ Zarządzaj", command=app.open_manager, relief="flat").pack(side="left", padx=2)
+        bar.add(new)
+        bar.add(tk.Button(bar, text="☰ Zarządzaj", command=app.open_manager, relief="flat"))
         self.bind("<Escape>", lambda e: self.destroy())
         self.refresh()
 

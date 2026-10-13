@@ -457,3 +457,37 @@ def test_watchlist_window_from_qm_scan_and_canslim_scan(app, monkeypatch):
     mv.set_columns(mv.columns() + ["adr_pct"])
     assert "adr_pct" in mv.table.columns
     assert "adr_pct" in mv.columns()
+
+
+def _clipped_buttons(win):
+    win.update_idletasks()
+    win.update()
+    W, H, rx, ry = win.winfo_width(), win.winfo_height(), win.winfo_rootx(), win.winfo_rooty()
+    bad = []
+
+    def walk(w):
+        for c in w.winfo_children():
+            if isinstance(c, (tk.Button, tk.Checkbutton, tk.Radiobutton)) and c.winfo_ismapped():
+                if c.winfo_rootx() - rx + c.winfo_width() > W + 1 or c.winfo_rooty() - ry + c.winfo_height() > H + 1:
+                    bad.append(c.cget("text"))
+            walk(c)
+    walk(win)
+    return bad
+
+
+def test_dialog_buttons_not_clipped(app):
+    from desktop import scanners
+    v = app.view
+    app.root.update()
+    v.open_chart("NVDA")
+    opened = [v.chart, v.open_filter() or v.filter_win, v.open_boxes() or v.boxes]
+    app.open_manager()
+    opened.append(app.manager)
+    app.new_scanner(scanners.KIND_QM)
+    app.new_scanner(scanners.KIND_WATCHLIST)
+    v.choose_columns()
+    for w in app.root.winfo_children():
+        if isinstance(w, tk.Toplevel) and w not in opened:
+            opened.append(w)
+    for w in opened:
+        assert not _clipped_buttons(w), (w.title(), _clipped_buttons(w))

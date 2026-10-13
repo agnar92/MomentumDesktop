@@ -6,7 +6,7 @@ from tkinter import messagebox, ttk
 
 from . import finviz_catalog as fc
 from . import finviz_codes, qm, scanners, sync
-from .theme import BG, FG, PANEL, apply_dark
+from .theme import BG, FG, PANEL, Flow, apply_dark, autowrap, fit_window
 
 NONE = "—"
 
@@ -27,7 +27,6 @@ class ScannerEditor(tk.Toplevel):
         else:
             cfg = {"filters": "", "max_tickers": 300}
         self.title(("Edytor skanera" if scanner else "Nowy skaner") + (" skan Qullamaggie" if self.is_qm else " Finviz"))
-        self.geometry("1040x740")
         self.configure(bg=BG)
         apply_dark(self)
         self.q = queue.Queue()
@@ -48,6 +47,13 @@ class ScannerEditor(tk.Toplevel):
         self.url = tk.StringVar()
         tk.Entry(imp, textvariable=self.url).pack(side="left", fill="x", expand=True)
         tk.Button(imp, text="Importuj", command=self.import_url).pack(side="left", padx=6)
+        # dolne paski pakujemy PRZED notatnikiem (side=bottom), żeby przy małym oknie to zakładki się kurczyły, a nie przyciski
+        bar = Flow(self)
+        bar.pack(fill="x", side="bottom")
+        self.preview = autowrap(tk.Label(self, text="", bg=PANEL, fg="#8b95a3"))
+        self.preview.pack(fill="x", padx=8, pady=(0, 4), side="bottom")
+        raw = tk.Frame(self, bg=PANEL)
+        raw.pack(fill="x", side="bottom")
         nb = ttk.Notebook(self)
         nb.pack(fill="both", expand=True, padx=4, pady=4)
         self.combos, self.opts = {}, {}
@@ -73,31 +79,41 @@ class ScannerEditor(tk.Toplevel):
             v = tk.BooleanVar(value=key in have)
             self.extra_vars[key] = v
             tk.Checkbutton(ex, text=spec[1], variable=v, bg=PANEL, anchor="w").grid(row=1 + n // 3, column=n % 3, sticky="w", padx=10)
-        raw = tk.Frame(self, bg=PANEL)
-        raw.pack(fill="x")
         tk.Label(raw, text="Kody filtrów (f=):", bg=PANEL).pack(side="left", padx=8, pady=4)
         self.raw = tk.StringVar(value=cfg["filters"])
         tk.Entry(raw, textvariable=self.raw).pack(side="left", fill="x", expand=True, padx=(0, 8))
-        self.preview = tk.Label(self, text="", bg=PANEL, fg="#8b95a3", justify="left", anchor="w", wraplength=1000)
-        self.preview.pack(fill="x", padx=8, pady=(0, 4))
-        bar = tk.Frame(self, bg=PANEL)
-        bar.pack(fill="x")
-        tk.Button(bar, text="Sprawdź liczbę wyników (Finviz)", command=self.check_count).pack(side="left", padx=8, pady=6)
-        self.count_lbl = tk.Label(bar, text="", bg=PANEL)
-        self.count_lbl.pack(side="left")
-        tk.Button(bar, text="Anuluj", command=self.destroy).pack(side="right", padx=6)
+        bar.add(tk.Button(bar, text="Zapisz", command=lambda: self.save(None)))
+        bar.add(tk.Button(bar, text="⟳ Zapisz i pobierz ceny", command=lambda: self.save(sync.PRICES)))
         if not self.is_qm:
-            tk.Button(bar, text="⟳ Zapisz i pobierz fundamenty", command=lambda: self.save(sync.FUNDAMENTALS)).pack(side="right", padx=2)
-        tk.Button(bar, text="⟳ Zapisz i pobierz ceny", command=lambda: self.save(sync.PRICES)).pack(side="right", padx=2)
-        tk.Button(bar, text="Zapisz", command=lambda: self.save(None)).pack(side="right", padx=2)
+            bar.add(tk.Button(bar, text="⟳ Zapisz i pobierz fundamenty", command=lambda: self.save(sync.FUNDAMENTALS)))
+        bar.add(tk.Button(bar, text="Anuluj", command=self.destroy))
+        bar.add(tk.Button(bar, text="Sprawdź liczbę wyników (Finviz)", command=self.check_count))
+        self.count_lbl = tk.Label(bar, text="", bg=PANEL)
+        bar.add(self.count_lbl)
         self.raw.trace_add("write", lambda *_: self.from_raw())
         self.from_raw()
         self.after(150, self.poll)
+        fit_window(self, 1040, 740)
 
     # --- Qullamaggie: progi listy (zmieniane na bieżąco) i progi pobierania (co zostaje na dysku)
     def build_qm_frame(self, q):
-        box = tk.LabelFrame(self, text=" Skan Qullamaggie: pobieranie danych (obrót = cena × wolumen, ADR, cena / min Low) ", bg=PANEL, fg=FG)
-        box.pack(fill="x", padx=6, pady=4)
+        outer = tk.Frame(self, bg=PANEL)
+        outer.pack(fill="x", padx=6, pady=(4, 0))
+        title = "Skan Qullamaggie: pobieranie danych (obrót = cena × wolumen, ADR, cena / min Low)"
+        box = tk.Frame(outer, bg=PANEL, highlightthickness=1, highlightbackground="#27303a")
+        shown = tk.BooleanVar(value=self.winfo_screenheight() >= 900)   # na małym ekranie sekcja startuje zwinięta, żeby zostało miejsce na filtry
+
+        def toggle():
+            if shown.get():
+                box.pack_forget()
+            else:
+                box.pack(fill="x")
+            shown.set(not shown.get())
+            head.config(text=("▾ " if shown.get() else "▸ ") + title)
+        head = tk.Button(outer, text=("▾ " if shown.get() else "▸ ") + title, command=toggle, relief="flat", anchor="w")
+        head.pack(fill="x")
+        if shown.get():
+            box.pack(fill="x")
         self.qv = {k: tk.StringVar(value=f"{q[k]:g}") for k in ("top_pct", "keep_dollar_mln", "keep_adr")}
         rows = (("Pobieraj spółki z obrotem ≥ (mln $):", "keep_dollar_mln"), ("ADR ≥ (%):", "keep_adr"), ("Największe „górne %” w watchlistach:", "top_pct"))
         for n, (label, key) in enumerate(rows):
@@ -109,10 +125,10 @@ class ScannerEditor(tk.Toplevel):
         self.two_stage = tk.BooleanVar(value=q.get("two_stage", True))
         tk.Checkbutton(box, text="Szybki Sync (dwa etapy): najpierw tylko Finviz, ceny z yfinance tylko dla kandydatów z czołówki zwrotów 1M / 3M / 6M "
                                  "(ranking przybliżony; wyłącz, by pobrać ceny wszystkich spółek)", variable=self.two_stage, bg=PANEL, anchor="w",
-                       justify="left", wraplength=980).grid(row=2, column=0, columnspan=6, sticky="w", padx=10)
+                       justify="left", wraplength=860).grid(row=2, column=0, columnspan=6, sticky="w", padx=10)
         tk.Label(box, text="To jest skan: pobiera i zapisuje dane (okno z filtrami jak każdy skan). Krótką listę tickerów — górne X % w oknach 1M, 3M i 6M, "
                            "obrót, ADR — ustawiasz w WATCHLIŚCIE (Skanery → Nowa watchlista) i wskazujesz ten skan jako źródło.",
-                 bg=PANEL, fg="#8b95a3", wraplength=1000, justify="left").grid(row=3, column=0, columnspan=6, sticky="w", padx=10, pady=(2, 4))
+                 bg=PANEL, fg="#8b95a3", wraplength=860, justify="left").grid(row=3, column=0, columnspan=6, sticky="w", padx=10, pady=(2, 4))
 
     def qm_values(self):
         cfg = {k: v.get() for k, v in self.qv.items()}
@@ -209,9 +225,10 @@ class ScannerManager(tk.Toplevel):
         super().__init__(app.root)
         self.app = app
         self.title("Moje skanery")
-        self.geometry("900x440")
         self.configure(bg=BG)
         apply_dark(self)
+        bar = Flow(self)   # przyciski najpierw (na dole) i zawijane — nie giną w wąskim oknie
+        bar.pack(fill="x", side="bottom")
         self.tree = ttk.Treeview(self, columns=("n", "filters", "prices", "fund"), show="tree headings", selectmode="browse")
         self.tree.heading("#0", text="Skaner")
         self.tree.heading("n", text="Spółek")
@@ -225,13 +242,12 @@ class ScannerManager(tk.Toplevel):
         self.tree.column("fund", width=100)
         self.tree.pack(fill="both", expand=True)
         self.tree.bind("<Double-1>", lambda e: self.open())
-        bar = tk.Frame(self, bg=PANEL)
-        bar.pack(fill="x")
         for text, cmd in (("Otwórz w oknie", self.open), ("Nowy skan Finviz…", self.new), ("Nowy skan Qullamaggie…", lambda: self.app.new_scanner(scanners.KIND_QM)),
                           ("Nowa watchlista…", lambda: self.app.new_scanner(scanners.KIND_WATCHLIST)), ("Edytuj…", self.edit), ("Duplikuj", self.duplicate), ("Usuń", self.delete),
                           ("⟳ Ceny", lambda: self.sync(sync.PRICES)), ("⟳ Fundamenty", lambda: self.sync(sync.FUNDAMENTALS))):
-            tk.Button(bar, text=text, command=cmd).pack(side="left", padx=4, pady=6)
+            bar.add(tk.Button(bar, text=text, command=cmd))
         self.refresh()
+        fit_window(self, 900, 440)
 
     def refresh(self):
         self.tree.delete(*self.tree.get_children())
@@ -309,13 +325,16 @@ class WatchlistEditor(tk.Toplevel):
         self.title("Watchlista" if scanner else "Nowa watchlista")
         self.configure(bg=BG)
         apply_dark(self)
-        self.geometry("900x520")
         top = tk.Frame(self, bg=PANEL)
         top.pack(fill="x")
         tk.Label(top, text="Nazwa:", bg=PANEL).pack(side="left", padx=(8, 2), pady=6)
         self.name = tk.StringVar(value=scanner["name"] if scanner else "Watchlista")
         tk.Entry(top, textvariable=self.name, width=36).pack(side="left")
-        tk.Label(self, text="Z których skanów i po jakich kryteriach złożyć listę (zrób najpierw Sync tych skanów):", bg=BG, anchor="w").pack(fill="x", padx=8, pady=(8, 2))
+        bar = Flow(self)   # dolne paski pakujemy przed listą skanów, żeby przyciski były zawsze widoczne
+        bar.pack(fill="x", side="bottom")
+        self.count = autowrap(tk.Label(self, text="", bg=BG, fg="#8b95a3"))
+        self.count.pack(fill="x", padx=10, side="bottom")
+        autowrap(tk.Label(self, text="Z których skanów i po jakich kryteriach złożyć listę (zrób najpierw Sync tych skanów):", bg=BG)).pack(fill="x", padx=8, pady=(8, 2))
         body = tk.Frame(self, bg=PANEL)
         body.pack(fill="both", expand=True, padx=8, pady=4)
         have = {x["id"]: x["rule"] for x in (scanner or {}).get("sources") or []}
@@ -354,13 +373,10 @@ class WatchlistEditor(tk.Toplevel):
                 kind.set("Qullamaggie: górne X % w oknach")
             cb.bind("<<ComboboxSelected>>", lambda e, sid=sc["id"]: self.show_params(sid))
             self.show_params(sc["id"])
-        self.count = tk.Label(self, text="", bg=BG, fg="#8b95a3", anchor="w", justify="left", wraplength=720)
-        self.count.pack(fill="x", padx=10)
-        bar = tk.Frame(self, bg=PANEL)
-        bar.pack(fill="x")
-        tk.Button(bar, text="Anuluj", command=self.destroy).pack(side="right", padx=6, pady=6)
-        tk.Button(bar, text="Zapisz i złóż listę", command=self.save).pack(side="right", padx=2)
-        tk.Button(bar, text="Podgląd liczby tickerów", command=self.preview).pack(side="left", padx=8)
+        bar.add(tk.Button(bar, text="Zapisz i złóż listę", command=self.save))
+        bar.add(tk.Button(bar, text="Anuluj", command=self.destroy))
+        bar.add(tk.Button(bar, text="Podgląd liczby tickerów", command=self.preview))
+        fit_window(self, 900, 520)
 
     def show_params(self, sid):
         """Pokazuje tylko pola kryterium wybranego dla skanu (Qullamaggie albo CANSLIM)."""

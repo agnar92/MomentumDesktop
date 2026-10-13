@@ -17,6 +17,17 @@ Prosta, „retro” aplikacja okienkowa (Python + Tkinter, styl TC2000) oparta n
   z danych, które faktycznie mamy (pola Finviz, ratingi, CANSLIM, Darvas, bazy…); dodatkowe pola tylko z Finviz (dywidenda, beta, RSI, short
   float, wyniki tygodnia/miesiąca…) zamawiasz w kreatorze (zakładka *Kolumny z Finviz*) i pojawiają się po Sync. Pierwszy Sync nowego skanera
   pobiera też fundamenty; EPS i estymaty są wspólne dla wszystkich skanerów (spółka znana innemu skanerowi nie jest pobierana drugi raz).
+- **Skaner Qullamaggie** (*Skanery → Nowy skaner Qullamaggie…*): prosty skaner po cenie — **obrót dzienny** (cena × wolumen), **ADR** i **cena / min Low** z okna
+  1M (~22 sesji), 3M (~66), 6M (~132). Reguła jak w Momentum: z płynnych spółek (obrót ≥ próg, ADR ≥ próg) bierze górne X % rankingu cena / min Low
+  osobno dla każdego okna, a wynik to suma (kolumna *Okna QM* mówi, w których oknach spółka się załapała). Progi (obrót 50–100 mln, ADR 2–4, górne 10 %)
+  zmieniasz na bieżąco przyciskiem **Qullamaggie…** w oknie skanera — licznik pokazuje, ile spółek zostanie (cel 30–50), **bez ponownego pobierania**.
+  Sync pobiera tylko ceny (bez EPS) i zapisuje spółki powyżej *progów pobierania* (domyślnie obrót 25 mln, ADR 2 — obniż je w edytorze, jeśli chcesz
+  schodzić niżej na liście). **Co robi Finviz:** kreator dobiera filtr wstępny (`cap_smallover`, `ind_stocksonly`, średni wolumen, cena > 10 $, a przy ADR ≥ 3
+  zmienność miesiąca — Finviz liczy ją o ok. 0,5–1 pkt niżej niż ADR, więc próg jest o 1 pkt niższy); dokładny obrót i ADR liczy program. Darmowy screener
+  Finviz oddaje maksymalnie 1000 wierszy — większy zbiór program pobiera sektor po sektorze i skleja.
+- **Scalanie skanerów** (*Skanery → Scal skanery w jedną listę…*): jedna lista = suma spółek z wybranych skanerów (bez duplikatów, kolumna *Źródła*), z ich
+  wykresami i danymi; źródło Qullamaggie wnosi tylko spółki wybrane jego progami. Nic nie jest pobierane — lista odświeża się sama po Sync źródła
+  (albo przyciskiem *Scal ponownie*). Np. trzy skanery cena/min Low 1M, 3M i 6M scalisz w jedną watchlistę (to samo daje jeden skaner z trzema oknami).
 - **Równoległa synchronizacja i szybkie okno**: kilka skanerów może pobierać dane jednocześnie (każdy sync w osobnym procesie programu,
   własny dziennik w osobnym oknie; ten sam skaner naraz tylko raz). Zamknięcie głównego okna nie kończy programu, dopóki są inne okna (główne się chowa, wracasz z małego okna). Małe okno **Skanery** (menu *Skanery → Szybkie okno skanerów*) pokazuje skanery
   w kolejności ostatniego otwarcia (● otwarty, ⟳ trwa sync); program zapamiętuje, które okna były otwarte, i przy następnym starcie je odtwarza
@@ -67,7 +78,7 @@ pip install -r requirements-dev.txt && ruff check . && pytest
 
 - `main.py` — start; `desktop/app.py` — okna; `desktop/charts.py` — rysowanie (Canvas); `desktop/darvas.py` — reguły Darvasa;
   `desktop/store.py` — dane, przypięte boxy, filtr lokalny; `desktop/sync.py` — Sync w tle; `desktop/scanners.py` — własne skanery;
-  `desktop/builder.py` — kreator i menedżer skanerów; `desktop/finviz_catalog.py` — katalog filtrów i kolumn Finviz; `desktop/columns.py` — kolumny listy.
+  `desktop/builder.py` — kreator i menedżer skanerów; `desktop/qm.py` — skaner Qullamaggie; `desktop/merge.py` — scalanie skanerów; `desktop/finviz_catalog.py` — katalog filtrów i kolumn Finviz; `desktop/columns.py` — kolumny listy.
 - `engine/` — kopia `watchlist.py` + `finviz.py` z Momentum (patrz `engine/README.md`); `seed_data/` — dane startowe.
 
 ## Czego (jeszcze) nie ma względem Momentum

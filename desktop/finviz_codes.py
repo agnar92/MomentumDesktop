@@ -11,7 +11,7 @@ KNOWN = {
     "cap_small": "Kapitalizacja 300 mln – 2 mld USD (small)", "cap_mid": "Kapitalizacja 2–10 mld USD (mid)", "cap_large": "Kapitalizacja 10–200 mld USD (large)",
     "cap_mega": "Kapitalizacja > 200 mld USD (mega)",
     "fa_epsqoq_high": "Wzrost EPS kwartał do kwartału (r/r): wysoki (> 25 %)", "fa_epsyoy_high": "Wzrost EPS w tym roku: wysoki (> 25 %)",
-    "fa_epsyoy1_high": "Prognozowany wzrost EPS w przyszłym roku: wysoki (> 25 %)", "fa_salesqoq_high": "Wzrost sprzedaży kwartał do kwartału: wysoki (> 25 %)",
+    "fa_epsyoyttm_high": "Wzrost EPS TTM r/r: wysoki (> 25 %)", "fa_epsyoy1_high": "Prognozowany wzrost EPS w przyszłym roku: wysoki (> 25 %)", "fa_salesqoq_high": "Wzrost sprzedaży kwartał do kwartału: wysoki (> 25 %)",
     "fa_epsqoq_pos": "Wzrost EPS kwartał do kwartału: dodatni", "fa_epsyoy_pos": "Wzrost EPS w tym roku: dodatni",
     "fa_epsyoy1_pos": "Prognozowany wzrost EPS w przyszłym roku: dodatni", "fa_salesqoq_pos": "Wzrost sprzedaży kwartał do kwartału: dodatni",
     "geo_usa": "Kraj: USA", "ind_stocksonly": "Tylko akcje (bez funduszy ETF)", "idx_sp500": "Indeks: S&P 500", "idx_ndx": "Indeks: Nasdaq 100",
@@ -37,11 +37,14 @@ def describe_code(code):
     m = re.fullmatch(r"sh_price_([ou])(\d+)", code)
     if m:
         return f"Cena {_UNITS[m[1]]} {m[2]} USD", True
-    m = re.fullmatch(r"fa_(epsqoq|epsyoy|epsyoy1|salesqoq)_([ou])(\d+)", code)
+    m = re.fullmatch(r"fa_(epsqoq|epsyoy|epsyoyttm|epsyoy1|salesqoq)_([ou])(\d+)", code)
     if m:
-        name = {"epsqoq": "Wzrost EPS kwartał do kwartału", "epsyoy": "Wzrost EPS w tym roku", "epsyoy1": "Prognozowany wzrost EPS w przyszłym roku",
+        name = {"epsqoq": "Wzrost EPS kwartał do kwartału", "epsyoy": "Wzrost EPS w tym roku", "epsyoyttm": "Wzrost EPS TTM r/r", "epsyoy1": "Prognozowany wzrost EPS w przyszłym roku",
                 "salesqoq": "Wzrost sprzedaży kwartał do kwartału"}[m[1]]
         return f"{name} {_UNITS[m[2]]} {m[3]} %", True
+    m = re.fullmatch(r"ta_volatility_(mo|wo)(\d+)", code)
+    if m:
+        return f"Zmienność {'miesiąca' if m[1] == 'mo' else 'tygodnia'} > {m[2]} %", True
     m = re.fullmatch(r"fa_(roe|roa|roi)_([ou])(\d+)", code)
     if m:
         return f"{m[1].upper()} {_UNITS[m[2]]} {m[3]} %", True

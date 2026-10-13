@@ -8,10 +8,11 @@ import shutil
 import time
 from pathlib import Path
 
-from . import store
+from . import qm, store
 
 DEFAULT_ID = "default"
 DEFAULT_NAME = "CANSLIM (domyślny)"
+KIND_FINVIZ, KIND_QM, KIND_MERGE = "finviz", "qm", "merge"   # zwykły skaner Finviz / Qullamaggie (cena × ADR × cena/min Low) / scalenie kilku skanerów w jedną listę
 
 
 def scanner_dir(root, sid):
@@ -21,24 +22,36 @@ def scanner_dir(root, sid):
 
 def load_config(directory):
     cfg = store.read_json(Path(directory) / "finviz_screen.json", {}) or {}
-    return {"filters": str(cfg.get("filters") or "").strip(), "max_tickers": int(cfg.get("max_tickers") or 300)}
+    out = {"filters": str(cfg.get("filters") or "").strip(), "max_tickers": int(cfg.get("max_tickers") or 300)}
+    if isinstance(cfg.get("qm"), dict):   # skaner Qullamaggie: progi w tym samym pliku (czyta je też proces synchronizacji)
+        out["qm"] = qm.normalize(cfg["qm"])
+    return out
 
 
-def save_config(directory, filters, max_tickers):
+def save_config(directory, filters, max_tickers, qm_cfg=None):
     directory = Path(directory)
     directory.mkdir(parents=True, exist_ok=True)
     cfg = store.read_json(directory / "finviz_screen.json", {}) or {}
     cfg["filters"], cfg["max_tickers"] = ",".join(c.strip() for c in filters.split(",") if c.strip()), int(max_tickers)
+    if qm_cfg is not None:
+        cfg["qm"] = qm.normalize(qm_cfg)
     store.write_json(directory / "finviz_screen.json", cfg)
+
+
+def save_qm(directory, qm_cfg):
+    """Zapisuje same progi Qullamaggie (bez ruszania filtrów Finviz)."""
+    cfg = load_config(directory)
+    save_config(directory, cfg["filters"], cfg["max_tickers"], qm_cfg)
 
 
 def load(root):
     """Lista skanerów; domyślny zawsze pierwszy."""
     items = store.read_json(Path(root) / "scanners.json", []) or []
-    items = [{"id": s["id"], "name": s.get("name") or s["id"], "columns": s.get("columns"), "extra": list(s.get("extra") or [])}
+    items = [{"id": s["id"], "name": s.get("name") or s["id"], "columns": s.get("columns"), "extra": list(s.get("extra") or []),
+              "kind": s.get("kind") if s.get("kind") in (KIND_QM, KIND_MERGE) else KIND_FINVIZ, "sources": list(s.get("sources") or [])}
              for s in items if isinstance(s, dict) and s.get("id")]
     if not any(s["id"] == DEFAULT_ID for s in items):
-        items.insert(0, {"id": DEFAULT_ID, "name": DEFAULT_NAME, "columns": None, "extra": []})
+        items.insert(0, {"id": DEFAULT_ID, "name": DEFAULT_NAME, "columns": None, "extra": [], "kind": KIND_FINVIZ, "sources": []})
     items.sort(key=lambda s: s["id"] != DEFAULT_ID)
     return items
 
@@ -59,7 +72,7 @@ def get(root, sid):
     return next((s for s in load(root) if s["id"] == sid), None)
 
 
-def upsert(root, scanner, filters=None, max_tickers=None):
+def upsert(root, scanner, filters=None, max_tickers=None, qm_cfg=None):
     """Zapisuje skaner (nowy dostaje id z nazwy) i jego filtry; zwraca zapisany słownik."""
     items = load(root)
     scanner = dict(scanner)
@@ -71,14 +84,15 @@ def upsert(root, scanner, filters=None, max_tickers=None):
     items.sort(key=lambda s: s["id"] != DEFAULT_ID)
     save(root, items)
     if filters is not None:
-        save_config(scanner_dir(root, scanner["id"]), filters, max_tickers or 300)
+        save_config(scanner_dir(root, scanner["id"]), filters, max_tickers or 300, qm_cfg)
     return scanner
 
 
 def duplicate(root, sid, new_name):
     src = get(root, sid)
     cfg = load_config(scanner_dir(root, sid))
-    new = upsert(root, {"name": new_name, "columns": src.get("columns"), "extra": src.get("extra")}, cfg["filters"], cfg["max_tickers"])
+    new = upsert(root, {"name": new_name, "columns": src.get("columns"), "extra": src.get("extra"), "kind": src.get("kind"), "sources": src.get("sources")},
+                 cfg["filters"], cfg["max_tickers"], cfg.get("qm"))
     return new
 
 

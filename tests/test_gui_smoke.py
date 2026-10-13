@@ -395,3 +395,27 @@ def test_symbol_search(app, monkeypatch):
     d.go()
     assert "nie wygląda" in d.msg["text"]
     d.destroy()
+
+
+def test_unconfirmed_box_has_red_dashed_bottom_and_focus_keeps_flag(app):
+    from desktop import darvas
+    v = app.view
+    app.root.update()
+    for t in [r["ticker"] for r in v.store.rows]:
+        full = v.store.series(t, "W")[0]
+        bx = darvas.boxes(full["c"]) if full else []
+        if any(not b["confirmed"] and b["outcome"] != "down" for b in bx):
+            break
+    else:
+        pytest.skip("brak niepotwierdzonego boxa w danych testowych")
+    v.open_chart(t)
+    ch = v.chart
+    ch.update()
+    ch.redraw()
+    ch.update()
+    cv = ch.cv_card
+    reds = [i for i in cv.find_all() if cv.type(i) == "line" and cv.itemcget(i, "dash") and cv.itemcget(i, "fill") == charts.RED]
+    assert reds and any(not h["box"]["confirmed"] for h in ch.geoms["card"]["hits"])
+    ub = next(h["box"] for h in ch.geoms["card"]["hits"] if not h["box"]["confirmed"] and h["box"]["outcome"] != "down")
+    ch.set_focus({k: ub[k] for k in ("top", "bottom", "i0", "i1", "outcome")})
+    assert ch.focus_box["confirmed"] is False

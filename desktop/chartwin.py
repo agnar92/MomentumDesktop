@@ -134,6 +134,10 @@ class ChartWindow(tk.Toplevel):
 
     def set_focus(self, box):
         """Widok po „Przybliż”: wykres słupkowy zawężony do boxa + poziomy wejścia / dołu / exitu na osi ceny."""
+        if "confirmed" not in box:   # box z listy Boxy nie niesie flagi — bierzemy ją z boxów Darvasa tej spółki
+            full = self.series()[0]
+            m = next((b for b in darvas.boxes(full["c"]) if b["i0"] == box.get("i0")), None) if full else None
+            box = {**box, "confirmed": m["confirmed"] if m else True}
         self.focus_box = box
         n = len(self.dates)
         k = 5 if self.tf.get() == "D" else 1   # tygodnie -> sesje
@@ -176,7 +180,7 @@ class ChartWindow(tk.Toplevel):
                 opts["tags"] = [(fb["top"], charts.GREEN), (fb["bottom"], charts.WHITE), (round(fb["bottom"] * 0.95, 2), charts.RED)]
                 opts["levels"] = [v for v, _ in opts["tags"]]
                 opts["boxes"] = [{"i0": fb["i0"], "i1": fb["i1"] if fb.get("outcome") != "open" else len(full["c"]) - 1, "top": fb["top"], "bottom": fb["bottom"],
-                                  "extend": fb.get("outcome") == "open", "color": charts.GOLD}]
+                                  "extend": fb.get("outcome") == "open", "color": charts.GOLD, "confirmed": fb.get("confirmed", True)}]
             row = st.row(self.ticker) or {}
             if row.get("pivot") and row.get("base_type") in store.BUYABLE_BASES and abs(row.get("pct_to_pivot") or 99) < 15:
                 opts["pivot"] = row["pivot"]

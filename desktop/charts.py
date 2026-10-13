@@ -236,7 +236,11 @@ def draw_bars(cv, full, weeks, spx, win, opts=None):
         if x1 > x0:
             zb = b["bottom"] * (1 - darvas.STOP_PCT / 100)
             cv.create_rectangle(x0, y(b["bottom"]), x1, y(zb), fill="#2a1d24", outline="")   # strefa zagrożenia: spokojne, ciemnoczerwone tło
-            cv.create_rectangle(x0, y(b["top"]), x1, y(b["bottom"]), fill="#1a2430", outline=b.get("color", "#8892a0"))
+            cv.create_rectangle(x0, y(b["top"]), x1, y(b["bottom"]), fill="#243448", outline=b.get("color", "#8892a0"), width=2)   # zaznaczony box wyraźnie podświetlony
+            if not b.get("confirmed", True):   # dół niepotwierdzony: czerwona przerywana linia
+                cv.create_line(x0, y(b["bottom"]), x1, y(b["bottom"]), fill=RED, width=2, dash=(6, 3))
+            cv.create_text(x0 + 4, y(b["top"]) + 3, text="▣ zaznaczony box" + ("" if b.get("confirmed", True) else " · dół niepotwierdzony"),
+                           fill=b.get("color", "#8892a0"), font=FONT, anchor="nw")
     # średnie
     for arr, n_ma in smas:
         col = SMA_COLORS.get(n_ma, SMA40)
@@ -393,8 +397,10 @@ def draw_darcard(cv, full, weeks, win, opts=None):
         hatch(cv, x0, yb, x1, yz)   # strefa zagrożenia 5 % pod dołem (ukośne kreski)
         cv.create_rectangle(x0, yt, x1, yb, fill="#7a2f2f" if bad else (BOX_PLAIN if b["confirmed"] else BOX_FILL),
                             outline=RED if bad else DIM, dash=() if b["confirmed"] else (3, 2))
+        if not b["confirmed"] and not bad:   # dół niepotwierdzony: czerwona przerywana linia
+            cv.create_line(x0, yb, x1, yb, fill=RED, width=2, dash=(6, 3))
         hits.append({"rect": (x0, yt, x1, yz), "box": {"top": b["top"], "bottom": b["bottom"], "i0": b["i0"], "i1": b["i1"], "kind": "darvas",
-                                                       "outcome": b["outcome"], "start": weeks[b["i0"]] if b["i0"] < len(weeks) else ""}})
+                                                       "outcome": b["outcome"], "confirmed": b["confirmed"], "start": weeks[b["i0"]] if b["i0"] < len(weeks) else ""}})
     if pin:   # przypięty (monitorowany) box — kontur w kolorze statusu od początku do prawej krawędzi
         st = darvas.pin_status(pin, c[last_idx(c)] if last_idx(c) >= 0 else None)
         col = {"ABOVE": GREEN, "INSIDE": GOLD, "ZONE": RED, "EXIT": RED}.get(st["state"], GOLD)

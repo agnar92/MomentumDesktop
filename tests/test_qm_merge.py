@@ -129,3 +129,19 @@ def test_prune_to_keeps_only_given_tickers(tmp_path):
     wl = json.loads((tmp_path / "watchlist.json").read_text())
     assert [s["ticker"] for s in wl["stocks"]] == ["A", "C"] and wl["qm_universe"] == 3 and wl["n_stocks"] == 2
     assert set(json.loads((tmp_path / "charts.json").read_text())["stocks"]) == {"A", "C"}
+
+
+def test_sanitize_frames_and_safe_metrics():
+    import pandas as pd
+    idx = pd.bdate_range("2026-10-01", periods=4)
+    good = pd.DataFrame({"Open": 1.0, "High": 2.0, "Low": 1.0, "Close": 1.5, "Volume": 10}, index=idx)
+    bad = good.copy()
+    bad.loc[idx[1], "Low"] = 0.0   # Yahoo: Low = 0 -> dzielenie przez zero w silniku
+    logs = []
+    out = sync.sanitize_frames({"G": good, "B": bad}, logs.append)
+    assert len(out["G"]) == 4 and len(out["B"]) == 3 and (out["B"]["Low"] > 0).all() and logs
+    def boom(df):
+        raise ZeroDivisionError("float division by zero")
+    msgs = []
+    assert sync.safe_metrics(boom, msgs.append)(good) is None and "ZeroDivisionError" in msgs[0]
+    assert sync.safe_metrics(lambda df: {"ok": 1})(good) == {"ok": 1}

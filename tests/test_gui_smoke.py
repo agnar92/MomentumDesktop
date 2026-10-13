@@ -453,6 +453,9 @@ def test_watchlist_window_from_qm_scan_and_canslim_scan(app, monkeypatch):
     mv.table.tree.selection_set(t)
     app.root.update()
     assert mv.chart is not None and mv.chart.ticker == t
+    # lista Qullamaggie: kolumny cena/min Low i sortowanie po największej wartości
+    assert {"low_ratio_1m", "low_ratio_3m", "low_ratio_6m", "qm_max_ratio"} <= set(mv.columns())
+    assert mv.table.sort_col == "qm_max_ratio"
     # dodatkowa kolumna z danych skanów (do sortowania po kliknięciu nagłówka)
     mv.set_columns(mv.columns() + ["adr_pct"])
     assert "adr_pct" in mv.table.columns

@@ -271,7 +271,7 @@ class WatchlistView(ScannerView):
     """Watchlista: mała lista tickerów (z kilku skanów wg kryteriów) do odpalania Dar-Card i wykresu słupkowego. Bez filtrów i paska narzędzi skanera —
     kliknięcie tickera (albo ↑/↓) otwiera / przełącza wykres."""
 
-    DEFAULT_COLUMNS = ["ticker", "flag", "price", "qm_windows", "darvas", "merge_src"]
+    DEFAULT_COLUMNS = ["ticker", "flag", "price", "qm_max_ratio", "low_ratio_1m", "low_ratio_3m", "low_ratio_6m", "qm_windows", "darvas"]
 
     def __init__(self, master, app, scanner, root_window):
         tk.Frame.__init__(self, master, bg=PANEL)
@@ -295,6 +295,9 @@ class WatchlistView(ScannerView):
         self.status.pack(fill="x", side="bottom")
         self.table = StockTable(self, self.open_chart, self.open_chart_new, self.open_canslim, columns=self.columns(), flags=app.flags, on_flag=self.set_flag)
         self.table.pack(fill="both", expand=True)
+        if "qm_max_ratio" in self.table.columns:   # lista Qullamaggie: domyślnie od największego cena / min Low (klik w nagłówek zmienia sortowanie)
+            self.table.sort_col, self.table.sort_rev = "qm_max_ratio", True
+            self.table._fill()
         self.table.on_select = lambda t: self.open_chart(t)   # zaznaczenie (kliknięcie, ↑/↓) przełącza wykres
         self.table.tree.bind("<slash>", lambda e: self.open_symbol_dialog())
         self.set_title()
@@ -337,7 +340,8 @@ class WatchlistWindow(tk.Toplevel):
         apply_dark(self)
         self.view = WatchlistView(self, app, scanner, self)
         self.view.pack(fill="both", expand=True)
-        fit_window(self, 560, 620, min_w=360)
+        width = sum(columns_mod.DEFS[c][1] for c in self.view.columns() if c in columns_mod.DEFS) + 40   # szerokość = suma kolumn
+        fit_window(self, min(max(width, 430), 900), 620, min_w=360)
         self.protocol("WM_DELETE_WINDOW", lambda: app.window_closed(scanner["id"]))
 
 

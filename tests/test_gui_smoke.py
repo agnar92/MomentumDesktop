@@ -107,10 +107,11 @@ def test_scanner_builder_columns_and_windows(app, monkeypatch):
     assert app.view.table.tree.item("NVDA")["values"][2].endswith("B") or app.view.table.tree.item("NVDA")["values"][2].endswith("T")
     mg = ScannerManager(app)
     mg.update()
-    assert len(mg.tree.get_children()) == 2
+    leaves = lambda: [i for g in mg.tree.get_children() for i in mg.tree.get_children(g)]   # skanery są w grupach „Skany” / „Watchlisty”
+    assert len(leaves()) == 2
     mg.tree.selection_set(sc["id"])
     mg.duplicate()
-    assert len(mg.tree.get_children()) == 3
+    assert len(leaves()) == 3
     app.delete_scanner(sc["id"])
     assert sc["id"] not in [s["id"] for s in scanners.load(app.data_root)] and not w.winfo_exists()
 
@@ -191,14 +192,14 @@ def test_launcher_orders_by_recent_and_session_is_restored(app, tmp_path):
     app.open_launcher()
     lw = app.launcher
     lw.update()
-    assert lw.ids[:2] == [b["id"], a["id"]]                # ostatnio otwarty pierwszy
-    assert lw.box.get(0).startswith("●") and "Beta" in lw.box.get(0)
+    assert lw.ids[:3] == [None, b["id"], a["id"]]          # nagłówek grupy, potem ostatnio otwarty pierwszy
+    assert lw.box.get(1).startswith("●") and "Beta" in lw.box.get(1)
     app.window_closed(a["id"])                              # zamknięty skaner traci ●, ale zostaje na liście
     assert lw.box.get(lw.ids.index(a["id"])).startswith("○")
     lw.box.selection_clear(0, "end")
     lw.box.selection_set(lw.ids.index(a["id"]))
     lw.open()
-    assert app.view_for(a["id"]) is not None and lw.ids[0] == a["id"]
+    assert app.view_for(a["id"]) is not None and lw.ids[1] == a["id"]
     app.window_closed(a["id"])
     app.save_session()
     sess = session.load(app.data_root)
@@ -515,3 +516,31 @@ def test_tooltip_broken_box_and_chart_placement(app):
     v.open_chart("NVDA")
     v.chart.update()
     assert v.chart.winfo_x() + v.chart.winfo_width() <= app.root.winfo_x() + 2
+
+
+def test_pinned_window_and_grouped_launcher(app):
+    from desktop import scanners
+    v = app.view
+    app.root.update()
+    t = v.store.rows[0]["ticker"]
+    _, dates, _, _ = v.store.series(t, v.store.tf)
+    v.store.pin(t, {"top": 1e6, "bottom": 1e5, "start": dates[-10]})   # cena poniżej boxa → EXIT, na górze listy
+    scanners.upsert(app.data_root, {"name": "WL x", "kind": scanners.KIND_WATCHLIST, "sources": []})
+    app.open_launcher()
+    app.root.update()
+    items = list(app.launcher.box.get(0, "end"))
+    assert any("Skany" in x and x.startswith("──") for x in items) and any("Watchlisty" in x and x.startswith("──") for x in items)
+    assert app.launcher.ids[0] is None and app.launcher.current_id() is not None
+    app.open_pinned()
+    app.root.update()
+    pw = app.pinned_win
+    assert pw.rows and any(r["ticker"] == t for _, r in pw.rows.values())
+    pw.tree.selection_set(next(iter(pw.rows)))
+    pw.open_row()
+    app.root.update()
+    assert v.chart is not None and v.chart.focus_box
+    assert not _clipped_buttons(pw) and not _clipped_buttons(app.launcher)
+    app.open_manager()
+    app.root.update()
+    kids = app.manager.tree.get_children()
+    assert any(k.startswith("grp:") for k in kids)

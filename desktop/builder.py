@@ -251,7 +251,13 @@ class ScannerManager(tk.Toplevel):
 
     def refresh(self):
         self.tree.delete(*self.tree.get_children())
-        for sc in scanners.load(self.app.data_root):
+        all_sc = scanners.load(self.app.data_root)
+        for gid, title, kinds in (("grp:scans", "Skany (pobierają dane)", False), ("grp:wl", "Watchlisty (listy tickerów)", True)):
+            members = [x for x in all_sc if (x.get("kind") == scanners.KIND_WATCHLIST) == kinds]
+            if members:
+                self.tree.insert("", "end", iid=gid, text=f"{title} — {len(members)}", open=True)
+        for sc in all_sc:
+            parent = "grp:wl" if sc.get("kind") == scanners.KIND_WATCHLIST else "grp:scans"
             d = scanners.scanner_dir(self.app.data_root, sc["id"])
             cfg = scanners.load_config(d)
             st = sync.read_state(d)
@@ -269,12 +275,12 @@ class ScannerManager(tk.Toplevel):
                 desc = "watchlista ze skanów: " + ", ".join(names)
             else:
                 desc = ("Qullamaggie · " if sc.get("kind") == scanners.KIND_QM else "") + f"{len(finviz_codes.describe(cfg['filters']))} filtrów: " + cfg["filters"][:70]
-            self.tree.insert("", "end", iid=sc["id"], text=sc["name"], values=(n if n is not None else "—", desc,
+            self.tree.insert(parent, "end", iid=sc["id"], text=sc["name"], values=(n if n is not None else "—", desc,
                                                                           ago(st.get("prices")), ago(st.get("fundamentals"))))
 
     def current(self):
         sel = self.tree.selection()
-        return sel[0] if sel else None
+        return sel[0] if sel and not sel[0].startswith("grp:") else None
 
     def open(self):
         if self.current():

@@ -11,7 +11,7 @@ from . import flags as flags_mod
 from .builder import ScannerEditor, ScannerManager, WatchlistEditor
 from .chartwin import ChartWindow
 from .launcher import LauncherWindow
-from .dialogs import (BoxesWindow, CanslimWindow, ColumnsWindow, FilterWindow, FinvizCriteriaWindow, ListNamesWindow, SymbolDialog,
+from .dialogs import (BoxesWindow, CanslimWindow, ColumnsWindow, FilterWindow, FinvizCriteriaWindow, ListNamesWindow, PinnedWindow, SymbolDialog,
                       WhatsNewWindow)
 from .theme import BG, FG, PANEL, Flow, MenuBar, apply_dark, autowrap, fit_window, setup_style
 from .widgets import StockTable, SyncWindow
@@ -401,7 +401,7 @@ class App:
                       ("Sync fundamentów (EPS, estymaty — raz w tygodniu)\tShift+F5", lambda: v().start_sync(sync.FUNDAMENTALS)),
                       ("Ceny tylko z yfinance (bez Finviz)", lambda: v().start_sync(sync.PRICES, skip_finviz=True)),
                       ("Wczytaj dane z dysku", lambda: v().reload()), None, ("Zakończ", self.quit_app)]),
-            ("Skanery", [("Szybkie okno skanerów", self.open_launcher), ("Moje skanery…", self.open_manager), ("Nowy skaner Finviz…", self.new_scanner),
+            ("Skanery", [("Szybkie okno skanerów", self.open_launcher), ("📌 Przypięte boxy (wszystkie skanery)", self.open_pinned), ("Moje skanery…", self.open_manager), ("Nowy skaner Finviz…", self.new_scanner),
                          ("Nowy skan Qullamaggie (dane do watchlisty)…", lambda: self.new_scanner(scanners.KIND_QM)),
                          ("Nowa watchlista (lista tickerów z kilku skanów)…", lambda: self.new_scanner(scanners.KIND_WATCHLIST)),
                          ("Edytuj skaner domyślny…", lambda: self.edit_scanner(scanners.DEFAULT_ID))]),
@@ -438,6 +438,13 @@ class App:
             return self.view
         w = self.windows.get(sid)
         return w.view if w is not None and w.winfo_exists() else None
+
+    def open_pinned(self):
+        if getattr(self, "pinned_win", None) is None or not self.pinned_win.winfo_exists():
+            self.pinned_win = PinnedWindow(self)
+        else:
+            self.pinned_win.refresh()
+        self.pinned_win.lift()
 
     def open_manager(self):
         if self.manager is None or not self.manager.winfo_exists():

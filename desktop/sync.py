@@ -135,6 +135,35 @@ def build_daily_json(data_dir, log, only=None):
     log(f"💾 Zapisano charts_daily.json (wykresy dzienne {len(frames)} spółek).")
 
 
+def sanitize_frames(frames, log=print):
+    """Usuwa z notowań świece z zerową / ujemną / brakującą ceną (Yahoo zdarza się oddać Low = 0) — jedna taka świeca wywala silnik dzieleniem przez zero."""
+    cols = ["Open", "High", "Low", "Close"]
+    out, bad = {}, 0
+    for t, df in frames.items():
+        try:
+            ok = (df[cols] > 0).all(axis=1)
+            if not ok.all():
+                bad += 1
+                df = df[ok]
+        except Exception:
+            pass
+        out[t] = df
+    if bad:
+        log(f"ℹ️  Usunięto błędne świece (cena ≤ 0) w {bad} spółkach.")
+    return out
+
+
+def safe_metrics(compute, log=print):
+    """Opakowanie compute_metrics: błąd jednej spółki ją pomija, a nie przerywa całej synchronizacji."""
+    def wrapped(df, *a, **k):
+        try:
+            return compute(df, *a, **k)
+        except Exception as e:
+            log(f"⚠️  Pominięto spółkę (błąd obliczeń: {type(e).__name__}: {e}).")
+            return None
+    return wrapped
+
+
 def fetch_extra(finviz, filters, max_tickers, keys):
     """Dodatkowe kolumny Finviz (spoza tych, które bierze silnik): ten sam skaner, widok własny z zamówionymi kolumnami -> {ticker: {pole: wartość}}."""
     keys = [k for k in keys if k in finviz_catalog.EXTRA_COLUMNS]
@@ -180,6 +209,13 @@ def run_sync(data_dir, log=print, mode=FUNDAMENTALS, skip_finviz=False, max_tick
         watchlist.update_estimates = lambda tickers, path=None, **k: (store.read_json(path, {}) or {}).get("stocks", {})
     else:
         watchlist.update_eps_cache, watchlist.update_estimates = orig_eps, orig_est
+    orig_dl = getattr(watchlist, "_orig_download_prices", None) or getattr(watchlist, "download_prices", None)
+    orig_cm = getattr(watchlist, "_orig_compute_metrics", None) or getattr(watchlist, "compute_metrics", None)
+    watchlist._orig_download_prices, watchlist._orig_compute_metrics = orig_dl, orig_cm
+    if orig_dl is not None:
+        watchlist.download_prices = lambda *a, **k: sanitize_frames(orig_dl(*a, **k), log)
+    if orig_cm is not None:
+        watchlist.compute_metrics = safe_metrics(orig_cm, log)
     orig_fw = getattr(finviz, "_orig_fetch_watchlist", None) or getattr(finviz, "fetch_watchlist", None)
     finviz._orig_fetch_watchlist = orig_fw
     if qm_cfg and not skip_finviz:
@@ -224,6 +260,10 @@ def run_sync(data_dir, log=print, mode=FUNDAMENTALS, skip_finviz=False, max_tick
         return 1
     finally:
         watchlist.update_eps_cache, watchlist.update_estimates = orig_eps, orig_est
+        if orig_dl is not None:
+            watchlist.download_prices = orig_dl
+        if orig_cm is not None:
+            watchlist.compute_metrics = orig_cm
         if orig_fw is not None:
             finviz.fetch_watchlist = orig_fw
         if shared_root is not None:

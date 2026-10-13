@@ -57,12 +57,14 @@ class ChartWindow(tk.Toplevel):
         self.read.pack(fill="x", side="bottom")
         self.bar = tk.Frame(self, bg=PANEL)
         self.bar.pack(fill="x", side="bottom")
-        self.info_lbl = tk.Label(self.bar, text="", anchor="w", justify="left", bg=PANEL)
-        self.info_lbl.pack(side="left", padx=8, pady=3)
-        self.btn_close = tk.Button(self.bar, text="✕", command=self.deselect)
-        self.btn_pin = tk.Button(self.bar, text="📌 Przypnij", command=self.toggle_pin)
-        self.btn_zoom = tk.Button(self.bar, text="🔍 Przybliż", command=self.zoom_selected)
-        self.btn_full = tk.Button(self.bar, text="← pełny wykres", command=self.clear_focus)
+        self.info_lbl = tk.Label(self.bar, text="", anchor="w", justify="left", bg=PANEL, wraplength=640)
+        self.info_lbl.pack(fill="x", padx=8, pady=(3, 0))
+        self.bar.bind("<Configure>", lambda e: self.info_lbl.config(wraplength=max(200, e.width - 16)))
+        self.btns = tk.Frame(self.bar, bg=PANEL)   # przyciski w osobnym wierszu pod opisem — w wąskim oknie nie giną
+        self.btn_close = tk.Button(self.btns, text="✕", command=self.deselect)
+        self.btn_pin = tk.Button(self.btns, text="📌 Przypnij", command=self.toggle_pin)
+        self.btn_zoom = tk.Button(self.btns, text="🔍 Przybliż", command=self.zoom_selected)
+        self.btn_full = tk.Button(self.btns, text="← pełny wykres", command=self.clear_focus)
         self.cv_card.bind("<Button-1>", self.on_click)
         for cv in (self.cv_card, self.cv_bars):
             cv.bind("<Configure>", lambda e: self.after_idle(self.redraw))
@@ -256,6 +258,7 @@ class ChartWindow(tk.Toplevel):
     def update_bar(self):
         for b in (self.btn_close, self.btn_pin, self.btn_zoom, self.btn_full):
             b.pack_forget()
+        self.btns.pack_forget()
         box = self.focus_box or self.selected_box()
         if not box:
             self.info_lbl.config(text="Klik w box = poziomy · spacja = przełącz widok · suwak u góry = okno czasu · ↑/↓ = następna spółka · kółko = zoom")
@@ -266,13 +269,14 @@ class ChartWindow(tk.Toplevel):
         risk = (1 - info["stop"] / info["entry"]) * 100
         self.info_lbl.config(text=f"BOX {info['cancel']}–{info['entry']} (głęb. {info['depth_pct']} %)   wejście: zamknięcie {'dnia' if self.tf.get() == 'D' else 'tygodnia'} > {info['entry']}\n"
                                   f"strefa zagrożenia {info['cancel']} → {info['stop']} (exit)   ryzyko od wejścia do exitu: {risk:.1f} % na akcję")
-        self.btn_close.pack(side="right", padx=4)
-        self.btn_pin.config(text="🗑 Odepnij" if is_pin else "📌 Przypnij")
-        self.btn_pin.pack(side="right", padx=2)
+        self.btns.pack(fill="x", padx=8, pady=(2, 4))
         if self.focus_box:
-            self.btn_full.pack(side="right", padx=2)
+            self.btn_full.pack(side="left", padx=(0, 4))
         else:
-            self.btn_zoom.pack(side="right", padx=2)
+            self.btn_zoom.pack(side="left", padx=(0, 4))
+        self.btn_pin.config(text="🗑 Odepnij" if is_pin else "📌 Przypnij")
+        self.btn_pin.pack(side="left", padx=4)
+        self.btn_close.pack(side="left", padx=4)
 
     def toggle_mode(self):
         self.mode.set("bars" if self.mode.get() == "darcard" else "darcard")

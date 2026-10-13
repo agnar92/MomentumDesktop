@@ -453,3 +453,7 @@ def test_watchlist_window_from_qm_scan_and_canslim_scan(app, monkeypatch):
     mv.table.tree.selection_set(t)
     app.root.update()
     assert mv.chart is not None and mv.chart.ticker == t
+    # dodatkowa kolumna z danych skanów (do sortowania po kliknięciu nagłówka)
+    mv.set_columns(mv.columns() + ["adr_pct"])
+    assert "adr_pct" in mv.table.columns
+    assert "adr_pct" in mv.columns()

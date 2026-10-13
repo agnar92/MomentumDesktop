@@ -1,6 +1,7 @@
 """Rysowanie wykresów na tk.Canvas: słupkowy tygodniowy (HLC jak w książce O'Neila) i Dar-Card (boxy Darvasa na zamknięciach).
 Funkcje `draw_*` czyszczą canvas i zwracają słownik geometrii (do crosshaira i klikania w boxy)."""
 import math
+from tkinter import font as tkfont
 
 from . import darvas
 from .daily import sma as _sma
@@ -585,16 +586,28 @@ def tooltip_card(full, dates, i, tf):
     chg = _pct(c[i], c[i - 1] if i > 0 else None)
     if chg is not None:
         out.append((f"zmiana {chg:+.2f}% vs poprzedni", GREEN if chg >= 0 else RED))
-    bx = [b for b in darvas.boxes(c) if b["i0"] <= i]
-    if bx:
-        b = bx[-1]
+    boxes = [b for b in darvas.boxes(c) if b["i0"] <= i]
+    if boxes:
+        # box obowiązujący w tym tygodniu: zaczął się przed i, a nie skończył (otwarty) albo kończy się dopiero w i lub później
+        active = [b for b in boxes if b["outcome"] == "open" or b["i1"] >= i]
+        b = (active or boxes)[-1]
         stop = b["bottom"] * (1 - darvas.STOP_PCT / 100)
-        state = "w boxie" if b["bottom"] <= c[i] <= b["top"] else "nad boxem" if c[i] > b["top"] else "pod boxem"
         out.append(("─" * 22, DIM))
-        out.append((f"box {b['bottom']:.2f}–{b['top']:.2f} ({state})", WHITE))
-        out.append((f"do wybicia (góra): {_pct(b['top'], c[i]):+.1f}%", GREEN))
-        out.append((f"od dołu boxa: {_pct(c[i], b['bottom']):+.1f}%", TEXT))
-        out.append((f"do exitu ({stop:.2f}): {_pct(stop, c[i]):+.1f}%", RED))
+        head = f"box {b['bottom']:.2f}–{b['top']:.2f}"
+        if b["outcome"] == "down" and i >= b["i1"]:
+            out.append((f"{head} — złamany w dół (stop)", RED))
+            out.append((f"exit/stop ({stop:.2f}): {_pct(stop, c[i]):+.1f}% od zamknięcia", RED))
+            out.append((f"od dołu boxa: {_pct(c[i], b['bottom']):+.1f}%", TEXT))
+        elif b["outcome"] == "up" and i >= b["i1"]:
+            out.append((f"{head} — wybity w górę", GREEN))
+            out.append((f"nad górą boxa: {_pct(c[i], b['top']):+.1f}%", GREEN))
+            out.append((f"do exitu ({stop:.2f}): {_pct(stop, c[i]):+.1f}%", RED))
+        else:
+            state = "w boxie" if b["bottom"] <= c[i] <= b["top"] else "nad boxem" if c[i] > b["top"] else "pod boxem"
+            out.append((f"{head} ({state}, czeka na wybicie)" if b["outcome"] == "open" else f"{head} ({state})", WHITE))
+            out.append((f"do wybicia (góra): {_pct(b['top'], c[i]):+.1f}%", GREEN))
+            out.append((f"od dołu boxa: {_pct(c[i], b['bottom']):+.1f}%", TEXT))
+            out.append((f"do exitu ({stop:.2f}): {_pct(stop, c[i]):+.1f}%", RED))
     return out
 
 
@@ -604,7 +617,7 @@ def draw_tooltip(cv, x, y, lines, tag="cross"):
         return
     W, H = cv.winfo_width(), cv.winfo_height()
     items = [cv.create_text(0, 0, text=t, fill=col, font=FONT, anchor="nw") for t, col in lines]
-    lh = 15
+    lh = tkfont.Font(font=FONT).metrics("linespace") + 3   # wysokość wiersza z metryki czcionki (Windows / skalowanie DPI)
     wd = max(cv.bbox(i)[2] - cv.bbox(i)[0] for i in items) + 14
     ht = lh * len(lines) + 10
     bx = x + 18 if x + 18 + wd < W - 4 else x - 18 - wd

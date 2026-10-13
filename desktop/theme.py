@@ -75,6 +75,26 @@ def fit_window(win, w, h, min_w=520):
     win.minsize(min(rw, min_w, max_w), min(rh, max_h))
 
 
+def place_left_of(win, anchor):
+    """Ustawia okno tak, by jego prawa krawędź przylegała do lewej krawędzi okna `anchor` (skaner / watchlista), na tej samej wysokości.
+    Gdy po lewej brakuje miejsca na ekranie — próbuje po prawej stronie, w ostateczności przy lewej krawędzi ekranu."""
+    win.update_idletasks()
+    anchor.update_idletasks()
+    try:
+        sw, sh = win.winfo_screenwidth(), win.winfo_screenheight()
+        border = max(0, anchor.winfo_rootx() - anchor.winfo_x())   # szerokość ramki okna (Windows ~8 px)
+        w, h = win.winfo_width() if win.winfo_width() > 1 else win.winfo_reqwidth(), win.winfo_height() if win.winfo_height() > 1 else win.winfo_reqheight()
+        outer_w = w + 2 * border
+        x = anchor.winfo_x() - outer_w
+        if x < 0:
+            right = anchor.winfo_x() + anchor.winfo_width() + 2 * border
+            x = right if right + outer_w <= sw else 0
+        y = max(0, min(anchor.winfo_y(), sh - h - 70))
+        win.geometry(f"+{x}+{y}")
+    except tk.TclError:
+        pass
+
+
 def autowrap(label, pad=24):
     """Etykieta z zawijaniem tekstu do szerokości okna (zamiast ucinania długiego opisu)."""
     label.configure(justify="left", anchor="w")

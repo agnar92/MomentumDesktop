@@ -172,6 +172,74 @@ class BoxesWindow(tk.Toplevel):
             box["outcome"] = "open"
         self.app.open_chart(r["ticker"], focus=box)
 
+class PinnedWindow(tk.Toplevel):
+    """Szybki przegląd przypiętych (monitorowanych) boxów ze WSZYSTKICH skanerów i watchlist: najgorsze (strefa zagrożenia / exit) na górze.
+    Dwuklik otwiera skaner i wykres z tym boxem."""
+
+    def __init__(self, app):
+        super().__init__(app.root)
+        self.app = app
+        self.title("Przypięte boxy — wszystkie skanery")
+        self.configure(bg=BG)
+        apply_dark(self)
+        bar = Flow(self)
+        bar.pack(fill="x", side="bottom")
+        self.tree = ttk.Treeview(self, columns=("scanner", "price", "text"), show="tree headings")
+        for col, text, width, anchor in (("#0", "Spółka", 110, "w"), ("scanner", "Skaner / watchlista", 190, "w"), ("price", "Cena", 80, "e"), ("text", "Status", 520, "w")):
+            self.tree.heading(col, text=text)
+            self.tree.column(col, width=width, anchor=anchor)
+        self.tree.pack(fill="both", expand=True)
+        for st, col in STATE_COLORS.items():
+            self.tree.tag_configure(st, foreground=col)
+        self.tree.bind("<Double-1>", self.open_row)
+        self.tree.bind("<Return>", self.open_row)
+        bar.add(tk.Button(bar, text="⟳ Odśwież", command=self.refresh))
+        bar.add(tk.Button(bar, text="Zamknij", command=self.destroy))
+        self.info = tk.Label(bar, text="Dwuklik = otwórz skaner i wykres z boxem", bg=PANEL, fg="#8b95a3")
+        bar.add(self.info)
+        self.rows = {}
+        self.refresh()
+        fit_window(self, 960, 420)
+
+    def refresh(self):
+        from . import scanners
+        from . import store as store_mod
+        self.tree.delete(*self.tree.get_children())
+        self.rows = {}
+        found = []
+        for sc in scanners.load(self.app.data_root):
+            d = scanners.scanner_dir(self.app.data_root, sc["id"])
+            if not (store_mod.read_json(d / "pinned.json", {}) or {}):
+                continue
+            view = self.app.view_for(sc["id"])
+            st = view.store if view is not None else store_mod.Store(d, seed=False)
+            for r in st.overview().get("pinned", []):
+                found.append((r["rank"], r["ticker"], sc, r))
+        for n, (_rank, ticker, sc, r) in enumerate(sorted(found, key=lambda x: (x[0], x[1]))):
+            iid = f"{sc['id']}:{n}:{ticker}"
+            self.rows[iid] = (sc["id"], r)
+            self.tree.insert("", "end", iid=iid, text=ticker, values=(sc["name"], f"{r['price']:.2f}" if r.get("price") else "", r["text"]), tags=(r["state"],))
+        self.info.config(text=f"{len(found)} przypiętych boxów · dwuklik = otwórz skaner i wykres" if found else "Brak przypiętych boxów — przypnij box na wykresie (Dar-Card: klik w box → 📌 Przypnij)")
+
+    def open_row(self, _e=None):
+        sel = self.tree.selection()
+        item = self.rows.get(sel[0]) if sel else None
+        if not item:
+            return
+        sid, r = item
+        self.app.open_scanner_window(sid)
+        view = self.app.view_for(sid)
+        if view is None:
+            return
+        box = dict(r["box"])
+        _, dates, _, _ = view.store.series(r["ticker"], view.store.tf)
+        if box.get("i0", -1) < 0:   # przypięty: indeks z daty startu
+            box["i0"] = next((i for i, w in enumerate(dates) if w >= box.get("start", "")), max(0, len(dates) - 20))
+            box["i1"] = len(dates) - 1
+            box["outcome"] = "open"
+        view.open_chart(r["ticker"], focus=box)
+
+
 class FinvizCriteriaWindow(tk.Toplevel):
     """Co synchronizujemy: kryteria skanera Finviz (kody filtrów z data/finviz_screen.json) po ludzku."""
 

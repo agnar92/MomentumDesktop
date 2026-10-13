@@ -33,6 +33,7 @@ class LauncherWindow(tk.Toplevel):
         new["menu"] = menu
         bar.add(new)
         bar.add(tk.Button(bar, text="☰ Zarządzaj", command=app.open_manager, relief="flat"))
+        bar.add(tk.Button(bar, text="📌 Przypięte boxy", command=app.open_pinned, relief="flat"))
         self.bind("<Escape>", lambda e: self.destroy())
         self.refresh()
 
@@ -40,17 +41,28 @@ class LauncherWindow(tk.Toplevel):
         keep = self.current_id()
         root = self.app.data_root
         items = session.order(scanners.load(root), self.app.session)
-        self.ids = [s["id"] for s in items]
+        groups = (("Skany (pobierają dane)", [s for s in items if s.get("kind") != scanners.KIND_WATCHLIST]),
+                  ("Watchlisty (listy tickerów)", [s for s in items if s.get("kind") == scanners.KIND_WATCHLIST]))
+        self.ids = []   # równolegle do wierszy listy; None = nagłówek grupy
         self.box.delete(0, "end")
-        for sc in items:
-            sid = sc["id"]
-            opened = sid == scanners.DEFAULT_ID or self.app.view_for(sid) is not None
-            n = (store.read_json(scanners.scanner_dir(root, sid) / "watchlist.json", {}) or {}).get("n_stocks")
-            self.box.insert("end", f"{'●' if opened else '○'} {sc['name']}{' ⟳' if sid in self.app.syncing else ''}   {n if n is not None else '—'}")
-        if keep in self.ids:
+        for title, group in groups:
+            if not group:
+                continue
+            self.box.insert("end", f"── {title} ──")
+            self.box.itemconfig("end", fg="#8b95a3", selectforeground="#8b95a3", selectbackground="#0f1318")
+            self.ids.append(None)
+            for sc in group:
+                sid = sc["id"]
+                opened = sid == scanners.DEFAULT_ID or self.app.view_for(sid) is not None
+                n = (store.read_json(scanners.scanner_dir(root, sid) / "watchlist.json", {}) or {}).get("n_stocks")
+                self.box.insert("end", f"{'●' if opened else '○'} {sc['name']}{' ⟳' if sid in self.app.syncing else ''}   {n if n is not None else '—'}")
+                self.ids.append(sid)
+        if keep and keep in self.ids:
             self.box.selection_set(self.ids.index(keep))
-        elif self.ids:
-            self.box.selection_set(0)
+        else:
+            first = next((i for i, x in enumerate(self.ids) if x), None)
+            if first is not None:
+                self.box.selection_set(first)
 
     def current_id(self):
         sel = self.box.curselection() if hasattr(self, "box") else ()

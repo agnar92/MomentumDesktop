@@ -145,3 +145,11 @@ def test_sanitize_frames_and_safe_metrics():
     msgs = []
     assert sync.safe_metrics(boom, msgs.append)(good) is None and "ZeroDivisionError" in msgs[0]
     assert sync.safe_metrics(lambda df: {"ok": 1})(good) == {"ok": 1}
+
+
+def test_history_downloader_defaults_to_three_years_but_keeps_explicit_period():
+    seen = []
+    dl = sync.history_downloader(lambda tickers, period="10y", batch_size=50: seen.append((tickers, period)) or {})
+    dl(["A"])
+    dl(["PLN=X"], period="10d")
+    assert seen == [(["A"], "3y"), (["PLN=X"], "10d")]

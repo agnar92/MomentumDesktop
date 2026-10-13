@@ -66,6 +66,18 @@ def age_days(iso, now=None):
     return ((now or datetime.now(timezone.utc)) - t).total_seconds() / 86400
 
 
+HISTORY_PERIOD = "3y"   # silnik Momentum domyślnie pobiera 10 lat (wykres 6-letni w stylu książki); do naszej analizy (RS 12M, ADR, bazy, Darvas) wystarczą 3 lata
+
+
+def history_downloader(orig, period=HISTORY_PERIOD):
+    """Opakowanie download_prices: bez jawnego okresu pobiera `period` (3 lata) zamiast 10 lat; wywołania z własnym okresem (np. kurs USD/PLN) bez zmian."""
+    def wrapped(tickers, *a, **k):
+        if not a and "period" not in k:
+            k["period"] = period
+        return orig(tickers, *a, **k)
+    return wrapped
+
+
 FREE_LIMIT = 1000   # darmowy screener Finviz nie oddaje wierszy powyżej 1000 (r=1001 -> 403), więc większe zbiory dzielimy po sektorach
 SECTORS = ("technology", "healthcare", "financial", "industrials", "consumercyclical", "communicationservices", "consumerdefensive",
            "energy", "basicmaterials", "realestate", "utilities")
@@ -213,7 +225,8 @@ def run_sync(data_dir, log=print, mode=FUNDAMENTALS, skip_finviz=False, max_tick
     orig_cm = getattr(watchlist, "_orig_compute_metrics", None) or getattr(watchlist, "compute_metrics", None)
     watchlist._orig_download_prices, watchlist._orig_compute_metrics = orig_dl, orig_cm
     if orig_dl is not None:
-        watchlist.download_prices = lambda *a, **k: sanitize_frames(orig_dl(*a, **k), log)
+        dl3 = history_downloader(orig_dl)
+        watchlist.download_prices = lambda *a, **k: sanitize_frames(dl3(*a, **k), log)
     if orig_cm is not None:
         watchlist.compute_metrics = safe_metrics(orig_cm, log)
     orig_fw = getattr(finviz, "_orig_fetch_watchlist", None) or getattr(finviz, "fetch_watchlist", None)

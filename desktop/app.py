@@ -287,6 +287,7 @@ class WatchlistView(ScannerView):
         self.prices_btn = tk.Button(tb, text="⟳ Odśwież", command=lambda: self.start_sync(sync.PRICES), relief="flat")
         self.prices_btn.pack(side="left", padx=(6, 2), pady=4)
         tk.Button(tb, text="✎ Kryteria…", command=self.edit_scanner, relief="flat").pack(side="left", padx=2)
+        tk.Button(tb, text="▤ Kolumny…", command=self.choose_columns, relief="flat").pack(side="left", padx=2)   # dodatkowe dane ze skanów do sortowania (klik w nagłówek)
         for text, val in (("Tydz.", "W"), ("Dzień", "D")):
             tk.Radiobutton(tb, text=text, value=val, variable=self.tf, command=lambda: self.set_tf(self.tf.get()), bg=PANEL,
                            indicatoron=False, padx=7, relief="flat").pack(side="right", padx=1)

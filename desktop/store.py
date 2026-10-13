@@ -204,7 +204,7 @@ class Store:
 # ---------- skaner (filtry po danych już pobranych) ----------
 
 DEFAULT_FILTERS = {"rs_min": None, "eps_min": None, "comp_min": None, "max_to_pivot": None, "max_from_high": None,
-                   "states": [], "sector": "", "base_only": False, "min_adr": None, "pinned_only": False, "text": "", "cs_min": None, "cs_core": False, "flag": "", "qm": None}
+                   "states": [], "sector": "", "base_only": False, "min_adr": None, "pinned_only": False, "text": "", "cs_min": None, "cs_core": False, "flag": "", "qm": None, "qm_pool": None}
 
 
 def _num(v):
@@ -216,7 +216,7 @@ def scan(rows, f):
     f = {**DEFAULT_FILTERS, **(f or {})}
     out = []
     text = (f["text"] or "").strip().lower()
-    picks = qm.select(rows, f["qm"]) if f["qm"] else None   # skaner Qullamaggie: górne X % cena / min Low z płynnych spółek
+    picks = qm.select(rows, f["qm"], f["qm_pool"]) if f["qm"] else None   # skaner Qullamaggie: górne X % cena / min Low z płynnych spółek
     for r in rows:
         if picks is not None:
             if r["ticker"] not in picks:

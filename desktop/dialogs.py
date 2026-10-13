@@ -513,7 +513,7 @@ class QmWindow(tk.Toplevel):
     def update_count(self):
         c = self.cfg()
         rows = self.view.store.rows
-        pool, picks = len(qm.liquid(rows, c)), qm.select(rows, c)
+        pool, picks = len(qm.liquid(rows, c)), qm.select(rows, c, self.view.store.watchlist.get("qm_pool"))
         n = len(picks)
         lo, hi = self.TARGET
         hint = "" if lo <= n <= hi else f"  (cel {lo}–{hi}: {'zmniejsz górne % albo podnieś obrót / ADR' if n > hi else 'zwiększ górne % albo obniż obrót / ADR'})"

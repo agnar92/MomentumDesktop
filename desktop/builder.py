@@ -115,14 +115,19 @@ class ScannerEditor(tk.Toplevel):
             self.qw[w] = v
             tk.Checkbutton(wf, text={"1m": "1M (~22 sesji)", "3m": "3M (~66)", "6m": "6M (~132)"}[w], variable=v, bg=PANEL).pack(side="left", padx=4)
         tk.Button(wf, text="Dobierz filtry Finviz do progów pobierania", command=self.suggest_filters).pack(side="left", padx=12)
+        self.two_stage = tk.BooleanVar(value=q.get("two_stage", True))
+        tk.Checkbutton(box, text="Szybki Sync (dwa etapy): najpierw tylko Finviz, ceny z yfinance tylko dla kandydatów z czołówki zwrotów 1M / 3M / 6M "
+                                 "(ranking przybliżony; wyłącz, by pobrać ceny wszystkich spółek)", variable=self.two_stage, bg=PANEL, anchor="w",
+                       justify="left", wraplength=980).grid(row=4, column=0, columnspan=6, sticky="w", padx=10)
         self.qm_hint = tk.Label(box, text="Progi „na liście” zmieniasz potem w oknie skanera (Qullamaggie…) bez ponownego pobierania, byle nie niżej niż progi pobierania. "
-                                          "Finviz tnie wstępnie po średnim wolumenie, cenie i zmienności miesiąca (≈ ADR − 1 pkt); dokładny obrót i ADR liczy program.",
+                                          "Finviz tnie wstępnie po średnim wolumenie, cenie i zmienności miesiąca (≈ ADR; próg filtra o 1 pkt niżej dla zapasu); dokładny obrót i ADR liczy program.",
                                 bg=PANEL, fg="#8b95a3", wraplength=1000, justify="left")
         self.qm_hint.grid(row=3, column=0, columnspan=6, sticky="w", padx=10, pady=(0, 4))
 
     def qm_values(self):
         cfg = {k: v.get() for k, v in self.qv.items()}
         cfg["windows"] = [w for w, v in self.qw.items() if v.get()]
+        cfg["two_stage"] = self.two_stage.get()
         return qm.normalize(cfg)
 
     def suggest_filters(self):

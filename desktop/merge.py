@@ -29,7 +29,7 @@ def _pick_stocks(root, sc):
     picks = None
     if sc.get("kind") == scanners.KIND_QM:
         cfg = scanners.load_config(d).get("qm")
-        picks = qm.select(stocks, cfg)
+        picks = qm.select(stocks, cfg, wl.get("qm_pool"))
         stocks = [s for s in stocks if s["ticker"] in picks]
     return [(s, picks.get(s["ticker"]) if picks else None) for s in stocks], wl, store.read_json(d / "charts.json", {}) or {}, store.read_json(d / "charts_daily.json", {}) or {}
 

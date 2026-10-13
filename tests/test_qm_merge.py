@@ -145,3 +145,46 @@ def test_sanitize_frames_and_safe_metrics():
     msgs = []
     assert sync.safe_metrics(boom, msgs.append)(good) is None and "ZeroDivisionError" in msgs[0]
     assert sync.safe_metrics(lambda df: {"ok": 1})(good) == {"ok": 1}
+
+
+def test_history_downloader_defaults_to_three_years_but_keeps_explicit_period():
+    seen = []
+    dl = sync.history_downloader(lambda tickers, period="10y", batch_size=50: seen.append((tickers, period)) or {})
+    dl(["A"])
+    dl(["PLN=X"], period="10d")
+    assert seen == [(["A"], "3y"), (["PLN=X"], "10d")]
+
+
+def _u(t, price=20.0, avgvol=3e6, vol_m=3.0, p1=1.0, p3=1.0, p6=1.0):
+    return {"ticker": t, "price": price, "avgvol": avgvol, "vol_m": vol_m, "p1m": p1, "p3m": p3, "p6m": p6}
+
+
+def test_stage1_candidates_pool_and_select_uses_universe_size():
+    uni = [_u(f"U{i}", p1=i, p3=-i, p6=i % 7) for i in range(400)]
+    uni += [_u("ILLIQ", price=1.0, avgvol=1e5, p1=9999), _u("CALM", vol_m=0.3, p1=9999)]   # nie płynne -> nie kandydaci
+    cfg = {"min_dollar_mln": 50, "min_adr": 3, "top_pct": 10, "keep_dollar_mln": 25, "keep_adr": 2}
+    cand = {u["ticker"] for u in qm.candidates(uni, cfg)}
+    assert "ILLIQ" not in cand and "CALM" not in cand
+    assert "U399" in cand and "U0" in cand               # czołówka okna 1M i okna 3M (zwroty ujemne)
+    assert len(cand) < len(uni) and len(cand) >= qm.CAND_MIN
+    pairs = qm.pool_pairs(uni)
+    assert len(pairs) == len(uni) and qm.pool_size(pairs, cfg) == 400   # obrót 60 mln >= 50*0.6, zmienność 3 >= 3-0.75; ILLIQ i CALM odpadają
+    rows = [stock(f"S{i}", r1=1 + i / 100) for i in range(30)]   # zapisani kandydaci: 30
+    base = {"min_dollar_mln": 50, "min_adr": 3, "top_pct": 10, "windows": ["1m"]}
+    assert len(qm.select(rows, base)) == 3                       # 10 % z 30 zapisanych
+    assert len(qm.select(rows, base, pairs)) == 30               # 10 % z 400 płynnych w całym zbiorze = 40, ale zapisanych jest tylko 30
+    assert qm.normalize({"two_stage": False})["two_stage"] is False and qm.normalize(None)["two_stage"] is True
+
+
+def test_fetch_universe_uses_custom_view_and_restores_settings():
+    seen = {}
+
+    def fetch_view(view, filters, max_t, **k):
+        seen["cols"] = dict(fv.VIEW_COLUMNS[view])
+        seen["params"] = dict(fv.VIEW_PARAMS[view])
+        return [{"ticker": "A"}], 1
+
+    fv = types.SimpleNamespace(fetch_view=fetch_view, VIEW_COLUMNS={"152": {"Recom": "recom"}}, VIEW_PARAMS={"152": {"c": "0,1"}}, TEXT_KEYS={"company"})
+    rows, total = sync.fetch_universe(fv, "cap_smallover", 3000, lambda s: None)
+    assert rows == [{"ticker": "A"}] and seen["cols"]["Perf Month"] == "p1m" and seen["params"]["c"] == qm.UNIVERSE_IDS
+    assert fv.VIEW_COLUMNS["152"] == {"Recom": "recom"} and fv.VIEW_PARAMS["152"] == {"c": "0,1"} and fv.TEXT_KEYS == {"company"}

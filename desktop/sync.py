@@ -66,24 +66,36 @@ def age_days(iso, now=None):
     return ((now or datetime.now(timezone.utc)) - t).total_seconds() / 86400
 
 
+HISTORY_PERIOD = "3y"   # silnik Momentum domyślnie pobiera 10 lat (wykres 6-letni w stylu książki); do naszej analizy (RS 12M, ADR, bazy, Darvas) wystarczą 3 lata
+
+
+def history_downloader(orig, period=HISTORY_PERIOD):
+    """Opakowanie download_prices: bez jawnego okresu pobiera `period` (3 lata) zamiast 10 lat; wywołania z własnym okresem (np. kurs USD/PLN) bez zmian."""
+    def wrapped(tickers, *a, **k):
+        if not a and "period" not in k:
+            k["period"] = period
+        return orig(tickers, *a, **k)
+    return wrapped
+
+
 FREE_LIMIT = 1000   # darmowy screener Finviz nie oddaje wierszy powyżej 1000 (r=1001 -> 403), więc większe zbiory dzielimy po sektorach
 SECTORS = ("technology", "healthcare", "financial", "industrials", "consumercyclical", "communicationservices", "consumerdefensive",
            "energy", "basicmaterials", "realestate", "utilities")
 
 
-def fetch_sliced(finviz, filters, max_tickers, log=print):
-    """Lista z widoku Overview (111) bez limitu 1000 wierszy: gdy wyników jest więcej, pobiera osobno każdy sektor i skleja bez duplikatów.
+def fetch_sliced(finviz, filters, max_tickers, log=print, view="111"):
+    """Lista z widoku Finviz bez limitu 1000 wierszy: gdy wyników jest więcej, pobiera osobno każdy sektor i skleja bez duplikatów.
     -> (wiersze, razem)."""
-    _, total = finviz.fetch_view("111", filters, PAGE_PROBE)
+    _, total = finviz.fetch_view(view, filters, PAGE_PROBE)
     if total is None or total <= FREE_LIMIT or "sec_" in filters:
-        rows, total2 = finviz.fetch_view("111", filters, min(max_tickers, FREE_LIMIT))
+        rows, total2 = finviz.fetch_view(view, filters, min(max_tickers, FREE_LIMIT))
         if total2 and total2 > FREE_LIMIT:
             log(f"⚠️  Finviz ma {total2} wyników, a darmowy screener oddaje tylko {FREE_LIMIT} — zawęź filtry.")
         return rows, total2
     log(f"Finviz: {total} wyników (limit darmowego screenera to {FREE_LIMIT}) — pobieram sektor po sektorze…")
     out, seen = [], set()
     for sec in SECTORS:
-        part, tot = finviz.fetch_view("111", f"{filters},sec_{sec}", FREE_LIMIT)
+        part, tot = finviz.fetch_view(view, f"{filters},sec_{sec}", FREE_LIMIT)
         if tot and tot > FREE_LIMIT:
             log(f"⚠️  Sektor {sec}: {tot} wyników > {FREE_LIMIT} — pobieram tylko pierwsze {FREE_LIMIT}; zawęź filtry.")
         for r in part:
@@ -97,13 +109,28 @@ def fetch_sliced(finviz, filters, max_tickers, log=print):
 PAGE_PROBE = 20
 
 
-def prune_to(data_dir, tickers, log=print):
+def fetch_universe(finviz, filters, max_tickers, log=print):
+    """Etap 1 szybkiego Syncu: cały zbiór z Finviz jednym widokiem własnym (cena, wolumen, zmienność, zwroty 1M / 3M / 6M, sektor…), sektor po sektorze."""
+    saved = (finviz.VIEW_COLUMNS.get("152"), finviz.VIEW_PARAMS.get("152"), set(finviz.TEXT_KEYS))
+    finviz.VIEW_COLUMNS["152"], finviz.VIEW_PARAMS["152"] = dict(qm.UNIVERSE_COLUMNS), {"c": qm.UNIVERSE_IDS}
+    finviz.TEXT_KEYS.update({"company", "sector", "industry"})
+    try:
+        return fetch_sliced(finviz, filters, max_tickers, log, view="152")
+    finally:
+        finviz.VIEW_COLUMNS["152"], finviz.VIEW_PARAMS["152"] = saved[0], saved[1]
+        finviz.TEXT_KEYS.clear()
+        finviz.TEXT_KEYS.update(saved[2])
+
+
+def prune_to(data_dir, tickers, log=print, pool=None, universe_n=None):
     """Zostawia w watchlist.json / charts.json tylko podane tickery (zbiór pobrany z Finviz bywa wielokrotnie większy niż to, co zapisujemy)."""
     keep = set(tickers)
     wl = store.read_json(data_dir / "watchlist.json", {}) or {}
     before = len(wl.get("stocks", []))
     wl["stocks"] = [s for s in wl.get("stocks", []) if s["ticker"] in keep]
     wl["qm_universe"], wl["n_stocks"] = before, len(wl["stocks"])
+    if pool is not None:
+        wl["qm_pool"], wl["qm_universe"] = pool, universe_n
     store.write_json(data_dir / "watchlist.json", wl)
     ch = store.read_json(data_dir / "charts.json", {}) or {}
     ch["stocks"] = {t: v for t, v in (ch.get("stocks") or {}).items() if t in keep}
@@ -213,12 +240,22 @@ def run_sync(data_dir, log=print, mode=FUNDAMENTALS, skip_finviz=False, max_tick
     orig_cm = getattr(watchlist, "_orig_compute_metrics", None) or getattr(watchlist, "compute_metrics", None)
     watchlist._orig_download_prices, watchlist._orig_compute_metrics = orig_dl, orig_cm
     if orig_dl is not None:
-        watchlist.download_prices = lambda *a, **k: sanitize_frames(orig_dl(*a, **k), log)
+        dl3 = history_downloader(orig_dl)
+        watchlist.download_prices = lambda *a, **k: sanitize_frames(dl3(*a, **k), log)
     if orig_cm is not None:
         watchlist.compute_metrics = safe_metrics(orig_cm, log)
     orig_fw = getattr(finviz, "_orig_fetch_watchlist", None) or getattr(finviz, "fetch_watchlist", None)
     finviz._orig_fetch_watchlist = orig_fw
-    if qm_cfg and not skip_finviz:
+    stage1 = {}
+    if qm_cfg and not skip_finviz and qm_cfg.get("two_stage"):
+        def fetch_two_stage(filters, max_t=300, *a, **k):
+            universe, total = fetch_universe(finviz, filters, max_t, log)
+            cands = qm.candidates(universe, qm_cfg)
+            stage1.update(pool=qm.pool_pairs(universe), n=len(universe))
+            log(f"Etap 1 (tylko Finviz): {len(universe)} spółek w zbiorze → {len(cands)} kandydatów do pobrania cen (czołówka zwrotów 1M / 3M / 6M wśród płynnych).")
+            return cands, total
+        finviz.fetch_watchlist = fetch_two_stage
+    elif qm_cfg and not skip_finviz:
         finviz.fetch_watchlist = lambda filters, max_t=300, *a, **k: fetch_sliced(finviz, filters, max_t, log)
     elif extra_keys and not skip_finviz and orig_fw is not None:
         def fetch_with_extra(filters, max_t=300, *a, **k):
@@ -243,7 +280,7 @@ def run_sync(data_dir, log=print, mode=FUNDAMENTALS, skip_finviz=False, max_tick
                 if qm_cfg:
                     wl = store.read_json(data_dir / "watchlist.json", {}) or {}
                     kept = {r["ticker"] for r in qm.keep(wl.get("stocks", []), qm_cfg)}
-                    prune_to(data_dir, kept, log)
+                    prune_to(data_dir, kept, log, stage1.get("pool"), stage1.get("n"))
                     build_daily_json(data_dir, log, only=kept)
                     shutil.rmtree(data_dir / "raw", ignore_errors=True)   # migawka całego zbioru jest duża, a desktop jej nie potrzebuje
                 else:

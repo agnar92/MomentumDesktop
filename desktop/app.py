@@ -129,6 +129,7 @@ class ScannerView(tk.Frame):
         f = {**self.main_filter, "text": self.search.get(), "flag": self._flag_code()}
         if self.kind == scanners.KIND_QM:   # progi Qullamaggiego z pliku skanera (zmieniane w „Qullamaggie…”)
             f["qm"] = scanners.load_config(self.store.dir).get("qm") or qm.normalize(None)
+            f["qm_pool"] = self.store.watchlist.get("qm_pool")   # szybki Sync: wielkość całego płynnego zbioru z Finviz
         return store.scan(self.store.rows, f)
 
     def open_qm(self):
@@ -532,8 +533,10 @@ class App:
             if view.scanner.get("extra"):
                 win.log(f"  + dodatkowe kolumny z Finviz: {', '.join(view.scanner['extra'])}")
         if kind == scanners.KIND_QM:
-            win.log("Skaner Qullamaggie: tylko ceny (bez EPS i estymat). Lista z Finviz dzielona po sektorach (darmowy screener oddaje max 1000 wierszy), "
-                    "potem yfinance dla całego zbioru — to potrwa kilka–kilkanaście minut. Zostają spółki powyżej progów pobierania.")
+            two = (scanners.load_config(view.store.dir).get("qm") or {}).get("two_stage")
+            win.log("Skaner Qullamaggie: tylko ceny (bez EPS i estymat). Lista z Finviz dzielona po sektorach (darmowy screener oddaje max 1000 wierszy). "
+                    + ("Szybki Sync: etap 1 = tylko Finviz (cały zbiór), etap 2 = ceny z yfinance tylko dla kandydatów — kilka minut."
+                       if two else "Pełny Sync: ceny z yfinance dla całego zbioru — to potrwa kilka–kilkanaście minut.") + " Zostają spółki powyżej progów pobierania.")
         win.log("Start: Finviz → yfinance → EPS i estymaty analityków → obliczenia (kilka–kilkanaście minut)…" if fund
                 else "Start: " + ("yfinance" if skip_finviz else "Finviz → yfinance") + " → obliczenia na zapisanych fundamentach (ok. minuty)…")
         data_dir, extra = view.store.dir, list(view.scanner.get("extra") or [])

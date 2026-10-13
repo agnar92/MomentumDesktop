@@ -23,7 +23,12 @@ Prosta, „retro” aplikacja okienkowa (Python + Tkinter, styl TC2000) oparta n
   zmieniasz na bieżąco przyciskiem **Qullamaggie…** w oknie skanera — licznik pokazuje, ile spółek zostanie (cel 30–50), **bez ponownego pobierania**.
   Sync pobiera tylko ceny (bez EPS) i zapisuje spółki powyżej *progów pobierania* (domyślnie obrót 25 mln, ADR 2 — obniż je w edytorze, jeśli chcesz
   schodzić niżej na liście). **Co robi Finviz:** kreator dobiera filtr wstępny (`cap_smallover`, `ind_stocksonly`, średni wolumen, cena > 10 $, a przy ADR ≥ 3
-  zmienność miesiąca — Finviz liczy ją o ok. 0,5–1 pkt niżej niż ADR, więc próg jest o 1 pkt niższy); dokładny obrót i ADR liczy program. Darmowy screener
+  zmienność miesiąca — Finviz liczy ją niemal tak samo jak ADR, próg filtra jest o 1 pkt niższy dla zapasu); dokładny obrót i ADR liczy program.
+  **Szybki Sync (dwa etapy, domyślny):** etap 1 pobiera z Finviz cały zbiór jednym widokiem (cena, średni wolumen, zmienność, zwroty 1M / 3M / 6M, odległość od
+  minimum 50 dni i 52 tygodni) i wybiera kandydatów — czołówkę pięciu rankingów przybliżających cena / min Low (2× więcej, niż wynika z górnych X %);
+  etap 2 pobiera ceny z yfinance tylko dla nich i liczy dokładny obrót, ADR i cena / min Low. Na sektorze Technology (380 spółek) kandydatów było
+  155–220 zamiast 380, a wszystkie 43 spółki z pełnego Syncu trafiły do wyniku. Górne X % liczone jest od wielkości całego płynnego zbioru z Finviz
+  (nie od kandydatów). Ranking z Finviz jest przybliżony — odznaczenie „Szybki Sync” w edytorze skanera pobiera ceny wszystkich spółek. Darmowy screener
   Finviz oddaje maksymalnie 1000 wierszy — większy zbiór program pobiera sektor po sektorze i skleja.
 - **Scalanie skanerów** (*Skanery → Scal skanery w jedną listę…*): jedna lista = suma spółek z wybranych skanerów (bez duplikatów, kolumna *Źródła*), z ich
   wykresami i danymi; źródło Qullamaggie wnosi tylko spółki wybrane jego progami. Nic nie jest pobierane — lista odświeża się sama po Sync źródła

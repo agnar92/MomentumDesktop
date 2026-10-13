@@ -79,7 +79,7 @@ FILTERS = [
     _grp("Techniczne", "Szczyt 50 dni", [("Nowy szczyt", "ta_highlow50d_nh"), ("0–5 % pod szczytem", "ta_highlow50d_b0to5h")]),
     _grp("Techniczne", "RSI (14)", [("Wykupiony (> 70)", "ta_rsi_ob70"), ("> 60", "ta_rsi_ob60"), ("Wyprzedany (< 30)", "ta_rsi_os30"), ("< 40", "ta_rsi_os40")]),
     _grp("Techniczne", "Beta", [("< 1", "ta_beta_u1"), ("> 1", "ta_beta_o1"), ("> 1.5", "ta_beta_o1.5")]),
-    _grp("Techniczne", "Zmienność miesiąca (≈ ADR − 0,5…1 pkt)", _levels("ta_volatility_mo", "> {} %", (2, 3, 4, 5))),
+    _grp("Techniczne", "Zmienność miesiąca (≈ ADR)", _levels("ta_volatility_mo", "> {} %", (2, 3, 4, 5))),
     _grp("Techniczne", "Zmienność tygodnia", _levels("ta_volatility_wo", "> {} %", (2, 3, 4, 5))),
     _grp("Techniczne", "ATR", _levels("ta_averagetruerange_o", "> {}", (1, 2, 3))),
     _grp("Techniczne", "Zmiana dnia", [("Wzrost", "ta_change_u"), ("Wzrost > 3 %", "ta_change_u3"), ("Wzrost > 5 %", "ta_change_u5"), ("Spadek", "ta_change_d"), ("Spadek > 3 %", "ta_change_d3")]),

@@ -13,7 +13,7 @@ from .chartwin import ChartWindow
 from .launcher import LauncherWindow
 from .dialogs import (BoxesWindow, CanslimWindow, ColumnsWindow, FilterWindow, FinvizCriteriaWindow, ListNamesWindow, SymbolDialog,
                       WhatsNewWindow)
-from .theme import BG, FG, PANEL, MenuBar, apply_dark, setup_style
+from .theme import BG, FG, PANEL, Flow, MenuBar, apply_dark, autowrap, fit_window, setup_style
 from .widgets import StockTable, SyncWindow
 
 
@@ -28,19 +28,19 @@ class ScannerView(tk.Frame):
         self.chart = self.filter_win = self.boxes = None
         self.main_filter = {}
         self.kind = scanner.get("kind") or scanners.KIND_FINVIZ
-        tb = tk.Frame(self, bg=PANEL)
+        tb = Flow(self)   # pasek zawija się do kolejnych wierszy zamiast ucinać przyciski
         tb.pack(fill="x")
         self.prices_btn = tk.Button(tb, text="⟳ Ceny (F5)" if default else "⟳ Ceny", command=lambda: self.start_sync(sync.PRICES), width=12, relief="flat")
-        self.prices_btn.pack(side="left", padx=(6, 2), pady=5)
+        tb.add(self.prices_btn)
         self.fund_btn = tk.Button(tb, text="⟳ Fundamenty", command=lambda: self.start_sync(sync.FUNDAMENTALS), width=13, relief="flat")
         if self.kind == scanners.KIND_FINVIZ:
-            self.fund_btn.pack(side="left", padx=2)
+            tb.add(self.fund_btn)
         else:
             self.prices_btn.config(text="⟳ Ceny", width=12)
-        tk.Button(tb, text="Filtr…", command=self.open_filter, relief="flat").pack(side="left", padx=(12, 2))
-        tk.Button(tb, text="Boxy…", command=self.open_boxes, relief="flat").pack(side="left", padx=2)
+        tb.add(tk.Button(tb, text="Filtr…", command=self.open_filter, relief="flat"))
+        tb.add(tk.Button(tb, text="Boxy…", command=self.open_boxes, relief="flat"))
         self.news_btn = tk.Button(tb, text="Co nowego", command=self.open_changes, relief="flat")
-        self.news_btn.pack(side="left", padx=2)
+        tb.add(self.news_btn)
         mb = tk.Menubutton(tb, text="Narzędzia ▾", relief="flat", bg=PANEL, fg=FG, activebackground="#2d3744", padx=8)
         tools = tk.Menu(mb, tearoff=0)
         for item in (("Szukaj dowolnego symbolu…  (Ctrl+K lub /)", self.open_symbol_dialog), None,
@@ -53,27 +53,27 @@ class ScannerView(tk.Frame):
             else:
                 tools.add_command(label=item[0], command=item[1])
         mb.config(menu=tools)
-        mb.pack(side="left", padx=2)
+        tb.add(mb)
         self.tf = tk.StringVar(value=self.store.tf)
-        tk.Label(tb, text="Skala:", bg=PANEL).pack(side="left", padx=(12, 2))
+        tb.add(tk.Label(tb, text="Skala:", bg=PANEL))
         for text, val in (("Tydzień", "W"), ("Dzień", "D")):
-            tk.Radiobutton(tb, text=text, value=val, variable=self.tf, command=lambda: self.set_tf(self.tf.get()), bg=PANEL,
-                           indicatoron=False, padx=9, relief="flat").pack(side="left", padx=1)
-        tk.Label(tb, text="Lista:", bg=PANEL).pack(side="left", padx=(12, 2))
+            tb.add(tk.Radiobutton(tb, text=text, value=val, variable=self.tf, command=lambda: self.set_tf(self.tf.get()), bg=PANEL,
+                                  indicatoron=False, padx=9, relief="flat"))
+        tb.add(tk.Label(tb, text="Lista:", bg=PANEL))
         self.flag_filter = tk.StringVar(value="Wszystkie")
         self.flag_box = ttk.Combobox(tb, textvariable=self.flag_filter, state="readonly", width=15)
-        self.flag_box.pack(side="left")
+        tb.add(self.flag_box)
         self.flag_box.bind("<<ComboboxSelected>>", lambda e: self.refresh_lists())
-        tk.Label(tb, text="Szukaj:", bg=PANEL).pack(side="left", padx=(12, 2))
+        tb.add(tk.Label(tb, text="Szukaj:", bg=PANEL))
         self.search = tk.StringVar()
         self.search.trace_add("write", lambda *_: self.refresh_lists())
-        tk.Entry(tb, textvariable=self.search, width=12, relief="flat").pack(side="left")
+        tb.add(tk.Entry(tb, textvariable=self.search, width=12, relief="flat"))
         self.filter_lbl = tk.Label(tb, text="", bg=PANEL, fg="#ffd166")
-        self.filter_lbl.pack(side="left", padx=8)
+        tb.add(self.filter_lbl)
         self.age_lbl = tk.Label(tb, text="", bg=PANEL, anchor="e")
-        self.age_lbl.pack(side="right", padx=8)
+        tb.add(self.age_lbl)
         self.table = StockTable(self, self.open_chart, self.open_chart_new, self.open_canslim, columns=self.columns(), flags=app.flags, on_flag=self.set_flag)
-        self.status = tk.Label(self, text="", anchor="w", bg=PANEL)
+        self.status = autowrap(tk.Label(self, text="", bg=PANEL), pad=8)
         self.status.pack(fill="x", side="bottom")
         self.table.pack(fill="both", expand=True)
         self.table.tree.bind("<Up>", lambda e: self.root.after_idle(self._link))
@@ -282,16 +282,16 @@ class WatchlistView(ScannerView):
         self.kind = scanners.KIND_WATCHLIST
         self.tf = tk.StringVar(value=self.store.tf)
         self.search, self.flag_filter = tk.StringVar(), tk.StringVar(value="Wszystkie")
-        tb = tk.Frame(self, bg=PANEL)
+        tb = Flow(self)
         tb.pack(fill="x")
         self.prices_btn = tk.Button(tb, text="⟳ Odśwież", command=lambda: self.start_sync(sync.PRICES), relief="flat")
-        self.prices_btn.pack(side="left", padx=(6, 2), pady=4)
-        tk.Button(tb, text="✎ Kryteria…", command=self.edit_scanner, relief="flat").pack(side="left", padx=2)
-        tk.Button(tb, text="▤ Kolumny…", command=self.choose_columns, relief="flat").pack(side="left", padx=2)   # dodatkowe dane ze skanów do sortowania (klik w nagłówek)
+        tb.add(self.prices_btn)
+        tb.add(tk.Button(tb, text="✎ Kryteria…", command=self.edit_scanner, relief="flat"))
+        tb.add(tk.Button(tb, text="▤ Kolumny…", command=self.choose_columns, relief="flat"))   # dodatkowe dane ze skanów do sortowania (klik w nagłówek)
         for text, val in (("Tydz.", "W"), ("Dzień", "D")):
-            tk.Radiobutton(tb, text=text, value=val, variable=self.tf, command=lambda: self.set_tf(self.tf.get()), bg=PANEL,
-                           indicatoron=False, padx=7, relief="flat").pack(side="right", padx=1)
-        self.status = tk.Label(self, text="", anchor="w", bg=PANEL, fg="#8b95a3")
+            tb.add(tk.Radiobutton(tb, text=text, value=val, variable=self.tf, command=lambda: self.set_tf(self.tf.get()), bg=PANEL,
+                                  indicatoron=False, padx=7, relief="flat"))
+        self.status = autowrap(tk.Label(self, text="", bg=PANEL, fg="#8b95a3"), pad=8)
         self.status.pack(fill="x", side="bottom")
         self.table = StockTable(self, self.open_chart, self.open_chart_new, self.open_canslim, columns=self.columns(), flags=app.flags, on_flag=self.set_flag)
         self.table.pack(fill="both", expand=True)
@@ -333,11 +333,11 @@ class WatchlistWindow(tk.Toplevel):
 
     def __init__(self, app, scanner):
         super().__init__(app.root)
-        self.geometry("430x620")
         self.configure(bg=BG)
         apply_dark(self)
         self.view = WatchlistView(self, app, scanner, self)
         self.view.pack(fill="both", expand=True)
+        fit_window(self, 560, 620, min_w=360)
         self.protocol("WM_DELETE_WINDOW", lambda: app.window_closed(scanner["id"]))
 
 
@@ -346,11 +346,11 @@ class ScannerListWindow(tk.Toplevel):
 
     def __init__(self, app, scanner):
         super().__init__(app.root)
-        self.geometry("1360x720")
         self.configure(bg=BG)
         apply_dark(self)
         self.view = ScannerView(self, app, scanner, self)
         self.view.pack(fill="both", expand=True)
+        fit_window(self, 1360, 720)
         self.bind("<F5>", lambda e: self.view.start_sync(sync.PRICES))
         self.bind("<Shift-F5>", lambda e: self.view.start_sync(sync.FUNDAMENTALS))
         self.protocol("WM_DELETE_WINDOW", lambda: app.window_closed(scanner["id"]))

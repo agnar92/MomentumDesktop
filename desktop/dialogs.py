@@ -6,7 +6,7 @@ from tkinter import ttk
 
 from . import adhoc, canslim, changes, finviz_codes, store
 from . import columns as columns_mod
-from .theme import BG, FG, MONO, PANEL, SEL, apply_dark
+from .theme import BG, FG, MONO, PANEL, SEL, Flow, apply_dark, autowrap, fit_window
 from .widgets import STATE_COLORS, StockTable
 
 SECTIONS = [("pinned", "📌 Monitorowane (przypięte)"), ("fresh", "🆕 Nowe boxy"), ("buy", "🟢 KUP — wybicie na wolumenie"),
@@ -23,7 +23,6 @@ class FilterWindow(tk.Toplevel):
         super().__init__(app.root)
         self.app = app
         self.title(f"Filtr listy — {app.scanner['name']}")
-        self.geometry("1100x760")
         self.configure(bg=BG)
         apply_dark(self)
         form = tk.Frame(self, bg=PANEL)
@@ -35,40 +34,42 @@ class FilterWindow(tk.Toplevel):
             e.grid(row=n // 3, column=(n % 3) * 2 + 1, sticky="w")
             e.bind("<Return>", lambda ev: self.run())
         self.state_vars = {}
-        sf = tk.Frame(form, bg=PANEL)
-        sf.grid(row=3, column=0, columnspan=6, sticky="w", padx=8, pady=2)
-        tk.Label(sf, text="Darvas:", bg=PANEL).pack(side="left")
+        form.columnconfigure(0, weight=1)
+        sf = Flow(form)   # wiersze zawijają się w wąskim oknie
+        sf.grid(row=3, column=0, columnspan=6, sticky="we", padx=4)
+        sf.add(tk.Label(sf, text="Darvas:", bg=PANEL))
         for st in ("BUY", "NOVOL", "LATE", "HOLD", "WAIT", "SELL", "OUT"):
             v = tk.BooleanVar()
             self.state_vars[st] = v
-            tk.Checkbutton(sf, text=store.STATE_LABELS[st], variable=v, bg=PANEL, command=self.run).pack(side="left", padx=3)
+            sf.add(tk.Checkbutton(sf, text=store.STATE_LABELS[st], variable=v, bg=PANEL, command=self.run))
         self.sector = tk.StringVar()
-        row3 = tk.Frame(form, bg=PANEL)
-        row3.grid(row=4, column=0, columnspan=6, sticky="w", padx=8, pady=2)
-        tk.Label(row3, text="Sektor:", bg=PANEL).pack(side="left")
+        row3 = Flow(form)
+        row3.grid(row=4, column=0, columnspan=6, sticky="we", padx=4)
+        row3.add(tk.Label(row3, text="Sektor:", bg=PANEL))
         self.sector_box = ttk.Combobox(row3, textvariable=self.sector, state="readonly", width=24)
-        self.sector_box.pack(side="left", padx=4)
+        row3.add(self.sector_box)
         self.sector_box.bind("<<ComboboxSelected>>", lambda e: self.run())
         self.base_only, self.pinned_only, self.cs_core = tk.BooleanVar(), tk.BooleanVar(), tk.BooleanVar()
-        tk.Checkbutton(row3, text="CANSLIM: C i A obowiązkowe", variable=self.cs_core, bg=PANEL, command=self.run).pack(side="left", padx=6)
-        tk.Checkbutton(row3, text="tylko z bazą do kupienia", variable=self.base_only, bg=PANEL, command=self.run).pack(side="left", padx=6)
-        tk.Checkbutton(row3, text="tylko przypięte boxy", variable=self.pinned_only, bg=PANEL, command=self.run).pack(side="left", padx=6)
-        row4 = tk.Frame(form, bg=PANEL)
-        row4.grid(row=5, column=0, columnspan=6, sticky="we", padx=8, pady=4)
-        tk.Label(row4, text="Gotowe skany:", bg=PANEL).pack(side="left")
+        row3.add(tk.Checkbutton(row3, text="CANSLIM: C i A obowiązkowe", variable=self.cs_core, bg=PANEL, command=self.run))
+        row3.add(tk.Checkbutton(row3, text="tylko z bazą do kupienia", variable=self.base_only, bg=PANEL, command=self.run))
+        row3.add(tk.Checkbutton(row3, text="tylko przypięte boxy", variable=self.pinned_only, bg=PANEL, command=self.run))
+        row4 = Flow(form)
+        row4.grid(row=5, column=0, columnspan=6, sticky="we", padx=4, pady=2)
+        row4.add(tk.Label(row4, text="Gotowe skany:", bg=PANEL))
         self.preset = ttk.Combobox(row4, values=list(store.PRESETS), state="readonly", width=38)
-        self.preset.pack(side="left", padx=4)
+        row4.add(self.preset)
         self.preset.bind("<<ComboboxSelected>>", lambda e: self.load_preset())
-        tk.Button(row4, text="Skanuj", command=self.run).pack(side="left", padx=4)
-        tk.Button(row4, text="Reset", command=self.reset).pack(side="left")
-        tk.Button(row4, text="Zastosuj na liście", command=lambda: app.apply_main_filter(self.collect())).pack(side="left", padx=8)
-        tk.Button(row4, text="✎ Edytuj skaner Finviz…", command=app.edit_scanner).pack(side="left", padx=4)
+        row4.add(tk.Button(row4, text="Skanuj", command=self.run))
+        row4.add(tk.Button(row4, text="Reset", command=self.reset))
+        row4.add(tk.Button(row4, text="Zastosuj na liście", command=lambda: app.apply_main_filter(self.collect())))
+        row4.add(tk.Button(row4, text="✎ Edytuj skaner Finviz…", command=app.edit_scanner))
         self.count = tk.Label(row4, text="", bg=PANEL)
-        self.count.pack(side="right")
+        row4.add(self.count)
         self.table = StockTable(self, app.open_chart, app.open_chart_new, app.open_canslim, columns=app.columns())
         self.table.pack(fill="both", expand=True)
         self.table.set_tf_label(app.store.tf)
         self.refresh()
+        fit_window(self, 1100, 760)
 
     def refresh(self):
         sectors = sorted({r.get("sector") for r in self.app.store.rows if r.get("sector")})
@@ -129,7 +130,6 @@ class BoxesWindow(tk.Toplevel):
         super().__init__(app.root)
         self.app = app
         self.title("Boxy Darvasa")
-        self.geometry("900x620")
         self.configure(bg=BG)
         apply_dark(self)
         self.tree = ttk.Treeview(self, columns=("price", "text"), show="tree headings")
@@ -145,6 +145,7 @@ class BoxesWindow(tk.Toplevel):
         self.tree.bind("<Double-1>", self.open_row)
         self.rows = {}
         self.refresh()
+        fit_window(self, 900, 620)
 
     def refresh(self):
         self.tree.delete(*self.tree.get_children())
@@ -178,7 +179,6 @@ class FinvizCriteriaWindow(tk.Toplevel):
         super().__init__(app.root)
         cfg = app.store.finviz_config()
         self.title("Kryteria Finviz — co synchronizujemy")
-        self.geometry("760x470")
         self.configure(bg=BG)
         apply_dark(self)
         t = tk.Text(self, wrap="word", bg="#0f1318", fg=FG, padx=12, pady=10, relief="flat", font=MONO)
@@ -198,6 +198,7 @@ class FinvizCriteriaWindow(tk.Toplevel):
                         "instytucje, zadłużenie, rekomendacja analityków i cena docelowa. Resztę (ceny, RS, EPS Rating, bazy, CANSLIM) liczy aplikacja.\n", "dim")
         t.config(state="disabled")
         t.bind("<Escape>", lambda ev: self.destroy())
+        fit_window(self, 760, 470)
 
 class CanslimWindow(tk.Toplevel):
     """CANSLIM litera po literze: werdykt, liczby, które mamy, i reguła (te same dane, na których liczy się n/7)."""
@@ -207,7 +208,6 @@ class CanslimWindow(tk.Toplevel):
         row = app.store.row(ticker) or {}
         e = canslim.explain(row, app.store.mkt)
         self.title(f"{ticker} — CANSLIM {e['score']}/7")
-        self.geometry("820x640")
         self.configure(bg=BG)
         apply_dark(self)
         t = tk.Text(self, wrap="word", bg="#0f1318", fg=FG, padx=12, pady=10, relief="flat", font=MONO)
@@ -229,6 +229,7 @@ class CanslimWindow(tk.Toplevel):
             t.insert("end", rule + "\n")
         t.config(state="disabled")
         t.bind("<Escape>", lambda ev: self.destroy())
+        fit_window(self, 820, 640)
 
 class ColumnsWindow(tk.Toplevel):
     """Wybór kolumn listy z dostępnych danych (lewa lista = co mamy, prawa = co pokazujemy, ▲▼ zmienia kolejność)."""
@@ -237,11 +238,12 @@ class ColumnsWindow(tk.Toplevel):
         super().__init__(view.root)
         self.view = view
         self.title(f"Kolumny — {view.scanner['name']}")
-        self.geometry("720x520")
         self.configure(bg=BG)
         apply_dark(self)
+        bar = Flow(self)   # przyciski na dole pakujemy przed listami — zawsze widoczne
+        bar.pack(fill="x", side="bottom")
         self.avail = columns_mod.available(view.store.rows, view.scanner.get("extra") or [])
-        tk.Label(self, text="Dostępne dane (dwuklik = dodaj)                        Widoczne kolumny", bg=PANEL, anchor="w").pack(fill="x")
+        tk.Label(self, text="Dostępne dane (dwuklik = dodaj)                        Widoczne kolumny", bg=PANEL, anchor="w").pack(fill="x", side="top")
         body = tk.Frame(self, bg=BG)
         body.pack(fill="both", expand=True)
         self.left = tk.Listbox(body, selectmode="browse", bg="#0f1318", fg=FG, selectbackground=SEL, exportselection=False, activestyle="none")
@@ -255,14 +257,12 @@ class ColumnsWindow(tk.Toplevel):
             tk.Button(mid, text=text, command=cmd, width=9).pack(padx=6, pady=4)
         self.left.bind("<Double-1>", lambda e: self.add())
         self.right.bind("<Double-1>", lambda e: self.remove())
-        bar = tk.Frame(self, bg=PANEL)
-        bar.pack(fill="x")
-        tk.Button(bar, text="Zastosuj", command=self.apply).pack(side="right", padx=6, pady=5)
-        tk.Button(bar, text="Anuluj", command=self.destroy).pack(side="right")
-        tk.Label(bar, text="Pola z Finviz: zamów w edytorze skanera (Kolumny z Finviz) i zrób Sync.",
-                 bg=PANEL, fg="#6b7684").pack(side="left", padx=8)
+        bar.add(tk.Button(bar, text="Zastosuj", command=self.apply))
+        bar.add(tk.Button(bar, text="Anuluj", command=self.destroy))
+        bar.add(tk.Label(bar, text="Pola z Finviz: zamów w edytorze skanera (Kolumny z Finviz) i zrób Sync.", bg=PANEL, fg="#6b7684"))
         self.cols = [c for c in view.columns() if c in self.avail or c in columns_mod.DEFS]
         self.fill()
+        fit_window(self, 720, 520)
 
     def fill(self):
         self.left.delete(0, "end")
@@ -318,10 +318,11 @@ class WhatsNewWindow(tk.Toplevel):
         self.view = view
         ch = view.store.changes
         self.title(f"Co nowego — {view.scanner['name']}")
-        self.geometry("760x520")
         self.configure(bg=BG)
         apply_dark(self)
-        self.head = tk.Label(self, text="", bg=PANEL, anchor="w", justify="left")
+        bar = Flow(self)   # przyciski na dole pakujemy przed listą
+        bar.pack(fill="x", side="bottom")
+        self.head = autowrap(tk.Label(self, text="", bg=PANEL))
         self.head.pack(fill="x")
         self.tree = ttk.Treeview(self, columns=("price", "text"), show="tree headings")
         self.tree.heading("#0", text="Spółka")
@@ -334,11 +335,10 @@ class WhatsNewWindow(tk.Toplevel):
         self.tree.bind("<Double-1>", self.open_row)
         for st, col in STATE_COLORS.items():
             self.tree.tag_configure(st, foreground=col)
-        bar = tk.Frame(self, bg=PANEL)
-        bar.pack(fill="x")
-        tk.Button(bar, text="Oznacz jako przeczytane (wyczyść)", command=self.clear).pack(side="left", padx=6, pady=5)
-        tk.Button(bar, text="Zamknij", command=self.destroy).pack(side="right", padx=6)
+        bar.add(tk.Button(bar, text="Oznacz jako przeczytane (wyczyść)", command=self.clear))
+        bar.add(tk.Button(bar, text="Zamknij", command=self.destroy))
         self.fill(ch)
+        fit_window(self, 760, 520)
 
     def fill(self, ch):
         self.tree.delete(*self.tree.get_children())
@@ -389,6 +389,7 @@ class ListNamesWindow(tk.Toplevel):
             tk.Entry(self, textvariable=v, width=28).grid(row=n, column=1, padx=8, pady=4)
         tk.Label(self, text="Klawisze 1–4 na liście nadają flagę zaznaczonej spółce, 0 ją zdejmuje.", bg=PANEL, fg="#8b95a3").grid(row=0, column=0, columnspan=2, padx=8, pady=6)
         tk.Button(self, text="Zapisz", command=self.save).grid(row=6, column=1, sticky="e", padx=8, pady=8)
+        fit_window(self, 300, 200, min_w=300)
 
     def save(self):
         for lid, v in self.vars.items():
@@ -418,6 +419,7 @@ class SymbolDialog(tk.Toplevel):
         self.busy = False
         self.box.bind("<Return>", lambda e: self.go())
         self.bind("<Escape>", lambda e: self.destroy())
+        self.update_idletasks()
         self.after(150, self.poll)
 
     def go(self):

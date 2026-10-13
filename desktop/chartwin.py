@@ -2,7 +2,7 @@
 import tkinter as tk
 
 from . import charts, darvas, store
-from .theme import BG, FG, PANEL, apply_dark
+from .theme import BG, FG, PANEL, Flow, apply_dark, autowrap, fit_window
 from .widgets import STATE_COLORS
 
 
@@ -14,7 +14,6 @@ class ChartWindow(tk.Toplevel):
         self.app, self.ticker = view, ticker   # „app” = widok skanera, z którego otwarto wykres (jego dane, lista, CANSLIM)
         self.title("Wykres")
         h = min(940, max(600, self.winfo_screenheight() - 90))   # okno pionowe (prostokąt w pionie) — wykres wygląda lepiej niż w poziomie
-        self.geometry(f"{min(720, int(h * 0.78))}x{h}")
         self.configure(bg=BG)
         apply_dark(self)
         self.mode = tk.StringVar(value="darcard")
@@ -22,23 +21,22 @@ class ChartWindow(tk.Toplevel):
         self.n_show, self.end = self.default_n(), None
         self.focus_box, self.selected, self.cands, self.hit_geom = None, None, [], None
         self.geoms = {}
-        head = tk.Frame(self, bg=PANEL)
+        head = Flow(self)   # nagłówek zawija się w wąskim oknie — żaden przycisk nie ginie
         head.pack(fill="x")
         self.title_lbl = tk.Label(head, text="", font=("Consolas", 12, "bold"), bg=PANEL, fg="#ffffff", anchor="w")
-        self.title_lbl.pack(side="left", padx=8, pady=4)
-        self.status_lbl = tk.Label(self, text="", bg=PANEL, anchor="w")
-        self.status_lbl.pack(fill="x", padx=8)
-        for text, val in (("Słupkowy", "bars"), ("Dar-Card", "darcard")):
-            tk.Radiobutton(head, text=text, value=val, variable=self.mode, command=self.redraw, bg=PANEL, indicatoron=False, padx=8).pack(side="right", padx=1, pady=3)
-        tk.Label(head, text=" ", bg=PANEL).pack(side="right")
-        for text, val in (("Dzień", "D"), ("Tydz.", "W")):
-            tk.Radiobutton(head, text=text, value=val, variable=self.tf, command=self.change_tf, bg=PANEL, indicatoron=False, padx=8).pack(side="right", padx=1, pady=3)
+        head.add(self.title_lbl)
+        self.cs_btn = tk.Button(head, text="CANSLIM", command=lambda: view.open_canslim(self.ticker), relief="flat", padx=8)
+        head.add(self.cs_btn)
         self.log = tk.BooleanVar(value=True)    # skala logarytmiczna ceny (domyślnie); L przełącza
         self.macd_on = tk.BooleanVar(value=True)
-        tk.Checkbutton(head, text="MACD", variable=self.macd_on, command=self.redraw, bg=PANEL).pack(side="right", padx=4)
-        tk.Checkbutton(head, text="log", variable=self.log, command=self.redraw, bg=PANEL).pack(side="right", padx=4)
-        self.cs_btn = tk.Button(head, text="CANSLIM", command=lambda: view.open_canslim(self.ticker), relief="flat", padx=8)
-        self.cs_btn.pack(side="right", padx=8)
+        head.add(tk.Checkbutton(head, text="log", variable=self.log, command=self.redraw, bg=PANEL))
+        head.add(tk.Checkbutton(head, text="MACD", variable=self.macd_on, command=self.redraw, bg=PANEL))
+        for text, val in (("Tydz.", "W"), ("Dzień", "D")):
+            head.add(tk.Radiobutton(head, text=text, value=val, variable=self.tf, command=self.change_tf, bg=PANEL, indicatoron=False, padx=8))
+        for text, val in (("Dar-Card", "darcard"), ("Słupkowy", "bars")):
+            head.add(tk.Radiobutton(head, text=text, value=val, variable=self.mode, command=self.redraw, bg=PANEL, indicatoron=False, padx=8))
+        self.status_lbl = autowrap(tk.Label(self, text="", bg=PANEL), pad=16)
+        self.status_lbl.pack(fill="x", padx=8)
         self.slider = tk.Canvas(self, height=46, bg=BG, highlightthickness=0, cursor="sb_h_double_arrow")
         self.slider.pack(fill="x", padx=2, pady=(2, 0))
         self.drag = None
@@ -65,6 +63,8 @@ class ChartWindow(tk.Toplevel):
         self.btn_pin = tk.Button(self.btns, text="📌 Przypnij", command=self.toggle_pin)
         self.btn_zoom = tk.Button(self.btns, text="🔍 Przybliż", command=self.zoom_selected)
         self.btn_full = tk.Button(self.btns, text="← pełny wykres", command=self.clear_focus)
+        self.body.pack_forget()   # dolne paski (opis boxa, przyciski) mają pierwszeństwo przed wykresem
+        self.body.pack(fill="both", expand=True)
         self.cv_card.bind("<Button-1>", self.on_click)
         for cv in (self.cv_card, self.cv_bars):
             cv.bind("<Configure>", lambda e: self.after_idle(self.redraw))
@@ -81,6 +81,7 @@ class ChartWindow(tk.Toplevel):
                         ("<Escape>", lambda e: self.deselect() if self.selected is not None else self.focus_box and self.clear_focus() or self.destroy())):
             self.bind(key, fn)
         self.set_ticker(ticker)
+        fit_window(self, min(720, int(h * 0.78)), h, min_w=420)
 
     # --- dane
     def default_n(self):

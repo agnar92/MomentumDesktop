@@ -5,7 +5,7 @@ from tkinter import ttk
 from . import columns as columns_mod
 from . import flags as flags_mod
 from . import store
-from .theme import BG, FG, apply_dark
+from .theme import BG, FG, apply_dark, fit_window
 
 STATE_COLORS = {"BUY": "#3ddc84", "SELL": "#ff5c5c", "OUT": "#ff9f43", "NOVOL": "#ffd166", "LATE": "#ffd166", "HOLD": FG, "WAIT": "#6ea8ff"}
 
@@ -150,16 +150,16 @@ class SyncWindow(tk.Toplevel):
     def __init__(self, app, title="Synchronizacja danych"):
         super().__init__(app.root)
         self.title(title)
-        self.geometry("760x420")
         self.configure(bg=BG)
         apply_dark(self)
+        self.btn = tk.Button(self, text="Zamknij", state="disabled", command=self.destroy)
+        self.btn.pack(pady=4, side="bottom")   # przycisk i pasek postępu pakowane przed logiem — zawsze widoczne
+        self.bar = ttk.Progressbar(self, mode="indeterminate")
+        self.bar.pack(fill="x", side="bottom")
+        self.bar.start(12)
         self.text = tk.Text(self, bg="#0f1318", fg=FG, wrap="word", state="disabled")
         self.text.pack(fill="both", expand=True)
-        self.bar = ttk.Progressbar(self, mode="indeterminate")
-        self.bar.pack(fill="x")
-        self.bar.start(12)
-        self.btn = tk.Button(self, text="Zamknij", state="disabled", command=self.destroy)
-        self.btn.pack(pady=4)
+        fit_window(self, 760, 420)
 
     def log(self, line):
         self.text.config(state="normal")

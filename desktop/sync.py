@@ -222,7 +222,7 @@ def run_sync(data_dir, log=print, mode=FUNDAMENTALS, skip_finviz=False, max_tick
         scanners.merge_cache(shared_root, data_dir)
     glb_cfg = scanners.load_config(data_dir).get("glb")   # skan Wish: po Sync dopisujemy Green Line Breakout z danych miesięcznych
     qm_cfg = scanners.load_config(data_dir).get("qm")   # skaner Qullamaggie: tylko ceny (bez fundamentów), lista z Overview dzielona po sektorach
-    if qm_cfg:
+    if qm_cfg or glb_cfg:   # skan Qullamaggie / Wish: tylko ceny, bez fundamentów
         mode = PRICES
     prev_state = read_state(data_dir)   # przed uruchomieniem: bez pliku stanu daty biorą się z generated_at, które silnik zaraz nadpisze
     cfg_path = data_dir / "finviz_screen.json"

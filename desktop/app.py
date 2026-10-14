@@ -33,7 +33,7 @@ class ScannerView(tk.Frame):
         self.prices_btn = tk.Button(tb, text="⟳ Ceny (F5)" if default else "⟳ Ceny", command=lambda: self.start_sync(sync.PRICES), width=12, relief="flat")
         tb.add(self.prices_btn)
         self.fund_btn = tk.Button(tb, text="⟳ Fundamenty", command=lambda: self.start_sync(sync.FUNDAMENTALS), width=13, relief="flat")
-        if self.kind == scanners.KIND_FINVIZ:
+        if self.kind == scanners.KIND_FINVIZ and "glb" not in scanners.load_config(self.store.dir):   # skan Wish nie pobiera fundamentów
             tb.add(self.fund_btn)
         else:
             self.prices_btn.config(text="⟳ Ceny", width=12)
@@ -687,14 +687,14 @@ class App:
         if sid in self.syncing:
             messagebox.showinfo("Synchronizacja", "Ten skaner już się synchronizuje — poczekaj, aż skończy (inne skanery możesz synchronizować równolegle).", parent=view.root)
             return
-        no_cache = not any((d / "eps_cache.json").exists() for d in (view.store.dir, self.data_root))
         kind = view.scanner.get("kind") or scanners.KIND_FINVIZ
         if kind == scanners.KIND_WATCHLIST:
             self.start_merge(view)
             return
-        upgraded = kind == scanners.KIND_FINVIZ and mode == sync.PRICES and not (view.store.dir / "sync_state.json").exists() and no_cache
-        if upgraded:   # nigdzie nie ma jeszcze EPS ani estymat (ani w skanerze, ani we wspólnym cache) — pierwszy Sync pobiera fundamenty
-            mode = sync.FUNDAMENTALS
+        is_glb = "glb" in scanners.load_config(view.store.dir)   # skan Wish potrzebuje samych cen (+ danych miesięcznych), nie fundamentów
+        if is_glb:
+            mode = sync.PRICES
+        # Przyciski robią dokładnie to, co mówią: „ceny” = tylko ceny (zamknięcia, High, Low), „fundamenty” = ceny + EPS i estymaty. Żadnego dociągania fundamentów po cichu.
         view.set_sync_enabled(False)
         fund = mode == sync.FUNDAMENTALS
         name = view.scanner["name"]
@@ -702,15 +702,15 @@ class App:
         self.syncing[sid] = win
         win.log(f"Skaner: {name}")
         if mode == sync.PRICES and sid != scanners.DEFAULT_ID and not (view.store.dir / "sync_state.json").exists():
-            win.log("Nowy skaner: ceny pobieram szybko, EPS bierzemy ze wspólnego cache; spółki bez EPS dostaną dane po „Fundamenty”.")
-        if upgraded:
-            win.log("To pierwsza synchronizacja tego skanera — pobieram też fundamenty (EPS, estymaty), żeby CANSLIM i oceny miały dane.")
+            win.log("Tylko ceny (zamknięcia, High, Low); EPS i estymaty bierzemy ze wspólnego cache — spółki bez nich dostaną dane po „Fundamenty”.")
         if not skip_finviz:   # co dokładnie pobieramy z Finviz
             cfg = view.store.finviz_config()
             for line in finviz_codes.summary_lines(cfg.get("filters"), cfg.get("max_tickers")):
                 win.log(line)
             if view.scanner.get("extra"):
                 win.log(f"  + dodatkowe kolumny z Finviz: {', '.join(view.scanner['extra'])}")
+        if is_glb:
+            win.log("Skan Wish: tylko ceny z yfinance (bez EPS i estymat) + miesięczne zamknięcia do Green Line Breakout (zakończone miesiące z pamięci podręcznej).")
         if kind == scanners.KIND_QM:
             two = (scanners.load_config(view.store.dir).get("qm") or {}).get("two_stage")
             win.log("Skaner Qullamaggie: tylko ceny (bez EPS i estymat). Lista z Finviz dzielona po sektorach (darmowy screener oddaje max 1000 wierszy). "

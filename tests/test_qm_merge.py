@@ -258,3 +258,41 @@ def test_glb_apply_writes_fields_and_rule_selects(tmp_path):
     keys = sorted(rows, key=lambda r: columns.sort_value(r, "glb_state"))
     assert [r["ticker"] for r in keys][:2] == ["AAA", "BBB"] and keys[-1]["ticker"] == "DDD"
     assert columns.format_cell(out["AAA"], "glb_state") == "WYBICIE" and scanners.norm_source({"id": "x", "rule": {"type": "glb"}})["rule"]["type"] == "glb"
+
+
+def test_glb_monthly_cache_fetches_only_missing_and_uses_live_price(tmp_path):
+    import json
+    from datetime import datetime
+
+    from desktop import glb
+    d = tmp_path
+    base = [10, 12, 14, 16, 18, 20, 18, 17, 18, 19]
+    dates = [f"2026-{m:02d}-01" for m in range(1, 10)] + ["2026-10-01"]
+    (d / "watchlist.json").write_text(json.dumps({"stocks": [{"ticker": "AAA", "price": 21.0}, {"ticker": "BBB", "price": 9.0}]}))
+    calls = []
+
+    def fetch(tickers, log):
+        calls.append(list(tickers))
+        return {t: {"d": dates, "c": base} for t in tickers}   # ostatni punkt = trwający miesiąc (2026-10) — odrzucamy go, cena idzie z Sync
+    log = []
+    glb.apply(d, {}, log.append, fetch=fetch, today=datetime(2026, 10, 15))
+    out = {s["ticker"]: s for s in json.loads((d / "watchlist.json").read_text())["stocks"]}
+    assert calls == [["AAA", "BBB"]]
+    # AAA: zakończone miesiące do września + cena 21 jako bieżący miesiąc → wybicie nad linią 20; BBB: cena 9 → czeka
+    assert out["AAA"]["glb_state"] == "BREAK" and out["AAA"]["glb_level"] == 20 and out["BBB"]["glb_state"] == "WAIT"
+    # drugi Sync w tym samym miesiącu: wszystko z pamięci podręcznej, bez pobierania; zmiana ceny zmienia stan
+    wl = json.loads((d / "watchlist.json").read_text())
+    wl["stocks"][0]["price"] = 19.0
+    (d / "watchlist.json").write_text(json.dumps(wl))
+    glb.apply(d, {}, log.append, fetch=lambda t, lg: (_ for _ in ()).throw(AssertionError("nie powinno pobierać")), today=datetime(2026, 10, 20))
+    assert json.loads((d / "watchlist.json").read_text())["stocks"][0]["glb_state"] == "WAIT" and any("pamięci podręcznej" in x for x in log)
+    # nowy miesiąc: brakuje wrześniowego / październikowego zakończonego miesiąca → pobieramy ponownie
+    glb.apply(d, {}, log.append, fetch=fetch, today=datetime(2026, 11, 3))
+    assert len(calls) == 2
+
+
+def test_wish_scan_sync_is_prices_only(tmp_path):
+    from desktop import scanners
+    scanners.save_config(tmp_path, "ta_alltime_nh", 500, glb_cfg={"confirm_months": 3})
+    cfg = scanners.load_config(tmp_path)
+    assert cfg["glb"]["confirm_months"] == 3 and "qm" not in cfg

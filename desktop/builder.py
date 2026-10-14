@@ -11,8 +11,8 @@ from .theme import BG, FG, PANEL, Flow, apply_dark, autowrap, fit_window
 NONE = "—"
 
 
-# skan Wish: Finviz zawęża do spółek na nowych szczytach wszech czasów (jak wkleiłeś: sh_price_o1 + ta_alltime_nh); resztę liczy aplikacja
-WISH_FILTERS = "ind_stocksonly,sh_avgvol_o300,sh_price_o1,ta_alltime_nh"
+# skan Wish: Finviz tylko odsiewa śmieci (akcje, płynność, cena); szczyty wszech czasów i Green Line liczy aplikacja sama z danych miesięcznych — bez filtra ATH z Finviz
+WISH_FILTERS = "ind_stocksonly,sh_avgvol_o300,sh_price_o1"
 WISH_COLUMNS = ["ticker", "flag", "company", "price", "glb_state", "glb_dist_pct", "glb_level", "glb_months", "dollar_volume_avg", "darvas", "pbox", "change", "sector"]
 
 
@@ -153,7 +153,7 @@ class ScannerEditor(tk.Toplevel):
             tk.Entry(box, textvariable=self.gv[key], width=6).grid(row=0, column=n * 2 + 1, sticky="w")
         autowrap(tk.Label(box, text="Po Sync pobieram miesięczne zamknięcia z całej historii i liczę zieloną linię (najwyższe zamknięcie miesięczne, którego przez kilka miesięcy nikt nie pobił — "
                                     "jak top Darvasa, tylko na wykresie miesięcznym). Kolumna GLB: WYBICIE (w tym miesiącu), po wybiciu, czeka (cena pod linią), za późno. "
-                                    "Linia jest też rysowana na wykresie. Filtry Finviz poniżej możesz zmienić (np. cena < 20 % pod szczytem zamiast tylko nowych szczytów).",
+                                    "Linia jest też rysowana na wykresie. Filtry Finviz poniżej są tylko wstępnym sitem (akcje, płynność, cena) — ATH i linię liczy aplikacja, więc nie trzeba filtra szczytu z Finviz.",
                           bg=PANEL, fg="#8b95a3")).grid(row=1, column=0, columnspan=4, sticky="we", padx=10, pady=(0, 4))
         box.columnconfigure(3, weight=1)
 

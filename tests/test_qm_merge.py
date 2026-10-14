@@ -293,6 +293,11 @@ def test_glb_monthly_cache_fetches_only_missing_and_uses_live_price(tmp_path):
 
 def test_wish_scan_sync_is_prices_only(tmp_path):
     from desktop import scanners
-    scanners.save_config(tmp_path, "ta_alltime_nh", 500, glb_cfg={"confirm_months": 3})
+    scanners.save_config(tmp_path, "sh_price_o1", 500, glb_cfg={"confirm_months": 3})
     cfg = scanners.load_config(tmp_path)
     assert cfg["glb"]["confirm_months"] == 3 and "qm" not in cfg
+
+
+def test_wish_preset_has_no_finviz_ath_filter():
+    from desktop import builder
+    assert "ta_alltime" not in builder.WISH_FILTERS and "sh_price_o1" in builder.WISH_FILTERS

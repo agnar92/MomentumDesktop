@@ -7,6 +7,7 @@
 
 Silnik (engine/watchlist.py) jest niezmieniony; tryb „ceny” podmienia tylko dwa kroki sieciowe na odczyt zapisanych plików."""
 import contextlib
+import inspect
 import shutil
 import sys
 import traceback
@@ -209,6 +210,27 @@ def fetch_extra(finviz, filters, max_tickers, keys):
     return {r["ticker"]: {k: v for k, v in r.items() if k != "ticker"} for r in rows}
 
 
+def light_finviz(finviz, orig_fw, data_dir, log=print):
+    """`fetch_watchlist` tylko z widokiem Overview (jedno przejście po liście zamiast czterech — Valuation, Financial i własny to fundamenty).
+    Kolumny fundamentalne Finviz (EPS ten rok, ROE, sprzedaż q/q, instytucje…) spółek znanych z poprzedniego Synca są przenoszone ze starego watchlist.json."""
+    prev = {s["ticker"]: s for s in (store.read_json(data_dir / "watchlist.json", {}) or {}).get("stocks", []) if isinstance(s, dict) and s.get("ticker")}
+    keys = {k for v in ("121", "161", "152") for k in finviz.VIEW_COLUMNS.get(v, {}).values()}
+
+    def fetch(filters, max_t=300, *a, **k):
+        log(f"Finviz: pobieram listę (20 spółek na stronę, do {max_t} spółek — około {max(1, round(max_t / 20 * 0.9))} s w najgorszym razie; to pierwszy etap, potem ceny z yfinance)…")
+        rows, total = orig_fw(filters, max_t, *a, views=(), **k)
+        carried = 0
+        for r in rows:
+            old = prev.get(r["ticker"])
+            if old:
+                missing = [key for key in keys if key not in r and old.get(key) is not None]
+                r.update({key: old[key] for key in missing})
+                carried += bool(missing)
+        log(f"Finviz: tylko widok Overview (lista + ceny); kolumny fundamentalne Finviz z poprzedniego Synca przeniesione dla {carried} spółek.")
+        return rows, total
+    return fetch
+
+
 def run_sync(data_dir, log=print, mode=FUNDAMENTALS, skip_finviz=False, max_tickers=None, extra_keys=(), shared_root=None):
     """Zwraca 0 przy sukcesie. Pliki trafiają do data_dir; migawka surowych danych do data_dir/raw."""
     _engine_path()
@@ -248,6 +270,9 @@ def run_sync(data_dir, log=print, mode=FUNDAMENTALS, skip_finviz=False, max_tick
     orig_fw = getattr(finviz, "_orig_fetch_watchlist", None) or getattr(finviz, "fetch_watchlist", None)
     finviz._orig_fetch_watchlist = orig_fw
     stage1 = {}
+    base_fw = orig_fw
+    if mode == PRICES and orig_fw is not None and "views" in inspect.signature(orig_fw).parameters:
+        base_fw = light_finviz(finviz, orig_fw, data_dir, log)   # Sync cen: z Finviz tylko widok Overview (lista spółek + cena), bez widoków fundamentalnych
     if qm_cfg and not skip_finviz and qm_cfg.get("two_stage"):
         def fetch_two_stage(filters, max_t=300, *a, **k):
             universe, total = fetch_universe(finviz, filters, max_t, log)
@@ -260,7 +285,7 @@ def run_sync(data_dir, log=print, mode=FUNDAMENTALS, skip_finviz=False, max_tick
         finviz.fetch_watchlist = lambda filters, max_t=300, *a, **k: fetch_sliced(finviz, filters, max_t, log)
     elif extra_keys and not skip_finviz and orig_fw is not None:
         def fetch_with_extra(filters, max_t=300, *a, **k):
-            rows, total = orig_fw(filters, max_t, *a, **k)
+            rows, total = base_fw(filters, max_t, *a, **k)
             try:
                 extra = fetch_extra(finviz, filters, max_t, extra_keys)
                 store.write_json(data_dir / "finviz_extra.json", extra)
@@ -270,7 +295,7 @@ def run_sync(data_dir, log=print, mode=FUNDAMENTALS, skip_finviz=False, max_tick
             return rows, total
         finviz.fetch_watchlist = fetch_with_extra
     elif orig_fw is not None:
-        finviz.fetch_watchlist = orig_fw
+        finviz.fetch_watchlist = base_fw
     out = _LogWriter(log)
     try:
         with contextlib.redirect_stdout(out), contextlib.redirect_stderr(out):

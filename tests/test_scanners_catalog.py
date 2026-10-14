@@ -127,7 +127,6 @@ def test_empty_scanner_store_has_no_rows(tmp_path):
 
 def test_prices_sync_uses_only_overview_view_and_carries_fundamentals(tmp_path):
     import json
-    import sys
     import types
 
     from desktop import sync
@@ -143,4 +142,4 @@ def test_prices_sync_uses_only_overview_view_and_carries_fundamentals(tmp_path):
     rows, total = sync.light_finviz(fin, orig, tmp_path, logs.append)("geo_usa", 10)
     assert seen["views"] == () and total == 2                       # tylko Overview — bez widoków fundamentalnych
     assert rows[0] == {"ticker": "AAA", "company": "Nowa", "eps_this_y": 33.0, "roe": 21.0} and rows[1] == {"ticker": "BBB"}   # AAA dostaje stare fundamenty, nie nadpisujemy nowych pól
-    assert "1 spółek" in logs[0] or "dla 1" in logs[0]
+    assert any("dla 1 spółek" in x for x in logs)

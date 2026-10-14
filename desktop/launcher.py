@@ -29,6 +29,7 @@ class LauncherWindow(tk.Toplevel):
         menu = tk.Menu(new, tearoff=0)
         menu.add_command(label="Skan Finviz…", command=app.new_scanner)
         menu.add_command(label="Skan Qullamaggie (dane do watchlisty)…", command=lambda: app.new_scanner(scanners.KIND_QM))
+        menu.add_command(label="Skan Wish (Green Line Breakout)…", command=lambda: app.new_scanner(preset="wish"))
         menu.add_command(label="Watchlista (lista tickerów z kilku skanów)…", command=lambda: app.new_scanner(scanners.KIND_WATCHLIST))
         new["menu"] = menu
         bar.add(new)

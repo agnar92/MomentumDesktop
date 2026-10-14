@@ -20,7 +20,12 @@ Prosta, „retro” aplikacja okienkowa (Python + Tkinter, styl TC2000) oparta n
 - **Skany i watchlisty — dwie różne rzeczy.** **Skan** (Finviz / Qullamaggie) pobiera i zapisuje dane: pełne okno z kolumnami, filtrami (*Filtr…*), boxami i Sync.
   **Watchlista** to tylko małe, wąskie okno z listą tickerów z kilku skanów wg kryteriów — kliknięcie tickera (albo ↑ / ↓) otwiera lub przełącza Dar-Card
   i wykres słupkowy. Bez filtrów i paska skanera; nic nie pobiera, tylko składa listę z już pobranych skanów (*Skanery → Nowa watchlista…*, przycisk
-  *⟳ Odśwież*, odświeża się też sama po Sync skanu). Dla każdego skanu wybierasz kryterium: **wszystkie spółki**, **Qullamaggie** albo **CANSLIM ≥ n/7**.
+  *⟳ Odśwież*, odświeża się też sama po Sync skanu). Dla każdego skanu wybierasz kryterium: **wszystkie spółki**, **Qullamaggie**, **CANSLIM ≥ n/7** albo **Wish: Green Line Breakout**.
+- **Skan Wish — Green Line Breakout** (*Skanery → Nowy skan Wish (Green Line Breakout)…*): zwykły skan Finviz (domyślnie `ind_stocksonly,sh_avgvol_o300,sh_price_o1,ta_alltime_nh` — spółki na nowych szczytach
+  wszech czasów), a po Sync aplikacja pobiera **miesięczne zamknięcia z całej historii** (yfinance, ok. 120 liczb na 10 lat) i liczy **zieloną linię**: najwyższe zamknięcie miesięczne (ATH), którego
+  przez ≥ 3 miesiące nikt nie pobił — to „top Darvasa” z wykresu miesięcznego, na zamknięciach. Kolumna **GLB**: *WYBICIE* (miesiąc zamknął się nad linią, liczony też bieżący), *po wybiciu*,
+  *czeka* (cena pod potwierdzoną linią; kolumna „Do linii %”), *za późno* (> 10 % nad linią). Linia jest rysowana na Dar-Card i na wykresie słupkowym. Progi (3 miesiące, 10 %) są w edytorze skanu —
+  to moje przybliżenie reguł Wisha, nie sprawdzona wersja. Watchlista może wybrać spółki wg GLB (stany + maks. odległość pod linią).
 - **Skan Qullamaggie** (*Skanery → Nowy skan Qullamaggie…*) pobiera dane pod strategię: **obrót dzienny** (cena × wolumen), **ADR** i **cena / min Low**
   z okien 1M (~22 sesji), 3M (~66), 6M (~132). Zapisuje spółki powyżej *progów pobierania* (domyślnie obrót 25 mln $, ADR 2 %), a kryteria wyboru ustawiasz
   w watchliście: obrót, ADR i **górne X % z KAŻDEGO okna osobno** (top 10 % z 1M, potem top 10 % z 3M, potem z 6M), wynik to suma bez duplikatów

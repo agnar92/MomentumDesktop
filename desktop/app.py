@@ -510,6 +510,7 @@ class App:
                       ("Wczytaj dane z dysku", lambda: v().reload()), None, ("Zakończ", self.quit_app)]),
             ("Skanery", [("Szybkie okno skanerów", self.open_launcher), ("📌 Przypięte boxy (wszystkie skanery)", self.open_pinned), ("Moje skanery…", self.open_manager), ("Nowy skaner Finviz…", self.new_scanner),
                          ("Nowy skan Qullamaggie (dane do watchlisty)…", lambda: self.new_scanner(scanners.KIND_QM)),
+                         ("Nowy skan Wish (Green Line Breakout)…", lambda: self.new_scanner(preset="wish")),
                          ("Nowa watchlista (lista tickerów z kilku skanów)…", lambda: self.new_scanner(scanners.KIND_WATCHLIST)),
                          ("Edytuj skaner domyślny…", lambda: self.edit_scanner(scanners.DEFAULT_ID))]),
             ("Widok", [("Filtr listy…", lambda: v().open_filter()), ("Boxy Darvasa…", lambda: v().open_boxes()), ("Kolumny…", lambda: v().choose_columns()),
@@ -559,8 +560,8 @@ class App:
         self.manager.refresh()
         self.manager.lift()
 
-    def new_scanner(self, kind=scanners.KIND_FINVIZ):
-        (WatchlistEditor(self) if kind == scanners.KIND_WATCHLIST else ScannerEditor(self, kind=kind))
+    def new_scanner(self, kind=scanners.KIND_FINVIZ, preset=None):
+        (WatchlistEditor(self) if kind == scanners.KIND_WATCHLIST else ScannerEditor(self, kind=kind, preset=preset))
 
     def edit_scanner(self, sid):
         sc = scanners.get(self.data_root, sid)

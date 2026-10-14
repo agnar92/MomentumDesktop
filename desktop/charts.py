@@ -175,6 +175,14 @@ def _tag(cv, x, y, text, fill, fg="#000"):
 
 # ---------- wykres słupkowy ----------
 
+def _glb_line(cv, y, level, x0, x1, W, right):
+    """Zielona linia Wisha (Green Line): poziom z wykresu miesięcznego, przerywana zielona linia z ceną na osi."""
+    yy = y(level)
+    cv.create_line(x0, yy, x1, yy, fill=GREEN, width=2, dash=(8, 4))
+    cv.create_text(x0 + 4, yy - 2, text=f"Green Line {fmt_price(level)}", fill=GREEN, font=FONT, anchor="sw")
+    _tag(cv, W - right + 2, yy, fmt_price(level), GREEN)
+
+
 def draw_bars(cv, full, weeks, spx, win, opts=None):
     opts = opts or {}
     cv.delete("all")
@@ -200,7 +208,7 @@ def draw_bars(cv, full, weeks, spx, win, opts=None):
     hs, ls = _finite(seg(h)), _finite(seg(lows))
     if not hs:
         return {}
-    extra = [v for v in (opts.get("levels") or []) if v]
+    extra = [v for v in (opts.get("levels") or []) if v] + ([opts["glb"]] if opts.get("glb") else [])
     lo, hi = min(ls + extra), max(hs + extra)
     smas = opts.get("smas") or [(full.get("sma10") or [], 10), (full.get("sma40") or [], 40)]
     band = 0.2 if opts.get("spx") and spx else 0.0   # S&P 500 jak w książce: cienka linia w górnym pasie wykresu, własna skala
@@ -285,6 +293,8 @@ def draw_bars(cv, full, weeks, spx, win, opts=None):
         yy = y(price)
         cv.create_line(LEFT, yy, W - RIGHT, yy, fill=col, dash=(4, 3))
         _tag(cv, W - RIGHT + 2, yy, fmt_price(price), col)
+    if opts.get("glb"):
+        _glb_line(cv, y, opts["glb"], LEFT, W - RIGHT, W, RIGHT)
     if opts.get("pivot"):
         yy = y(opts["pivot"])
         cv.create_line(LEFT, yy, W - RIGHT, yy, fill=WHITE, dash=(6, 4))
@@ -363,8 +373,9 @@ def draw_darcard(cv, full, weeks, win, opts=None):
     if not cs:
         return {}
     pin = opts.get("pinned")
-    lo = min(cs + [b["bottom"] * (1 - darvas.STOP_PCT / 100) for _, b in vis] + ([pin["bottom"] * 0.95] if pin else []))
-    hi = max(cs + [b["top"] for _, b in vis] + ([pin["top"]] if pin else []))
+    glb_level = opts.get("glb")
+    lo = min(cs + [b["bottom"] * (1 - darvas.STOP_PCT / 100) for _, b in vis] + ([pin["bottom"] * 0.95] if pin else []) + ([glb_level] if glb_level else []))
+    hi = max(cs + [b["top"] for _, b in vis] + ([pin["top"]] if pin else []) + ([glb_level] if glb_level else []))
     log = opts.get("log", True)
     if log and lo > 0:
         pad = math.log(hi / lo) * 0.06 + 0.002
@@ -410,6 +421,8 @@ def draw_darcard(cv, full, weeks, win, opts=None):
         cv.create_text(x0 + 4, y(pin["top"]) + 3, text=f"📌 {st['text']}", fill=col, font=FONT, anchor="nw")
         hits.append({"rect": (x0, y(pin["top"]), x1, y(pin["bottom"] * 0.95)), "box": {"top": pin["top"], "bottom": pin["bottom"], "i0": start,
                                                                                     "i1": last_idx(c), "kind": "pinned", "outcome": "open", "start": pin.get("start", "")}})
+    if glb_level:
+        _glb_line(cv, y, glb_level, LEFT, W - RIGHT, W, RIGHT)
     # ostatnia cena
     li = last_idx(c)
     if i0 <= li < i1:

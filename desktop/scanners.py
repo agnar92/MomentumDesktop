@@ -8,14 +8,14 @@ import shutil
 import time
 from pathlib import Path
 
-from . import finviz_catalog, qm, store
+from . import finviz_catalog, glb, qm, store
 
 DEFAULT_ID = "default"
 DEFAULT_NAME = "CANSLIM (domyślny)"
 KIND_FINVIZ, KIND_QM, KIND_WATCHLIST = "finviz", "qm", "watchlist"
 # skan Finviz / skan Qullamaggie (cena × ADR × cena/min Low: tylko pobiera dane, pełne okno z filtrami) / watchlista (małe okno z tickerami
 # złożonymi z kilku skanów wg kryteriów; nic nie pobiera)
-RULE_ALL, RULE_QM, RULE_CANSLIM = "all", "qm", "canslim"
+RULE_ALL, RULE_QM, RULE_CANSLIM, RULE_GLB = "all", "qm", "canslim", "glb"
 
 
 def norm_source(s):
@@ -23,7 +23,7 @@ def norm_source(s):
     if isinstance(s, str):
         return {"id": s, "rule": {"type": RULE_ALL}}
     rule = dict((s or {}).get("rule") or {})
-    rule["type"] = rule.get("type") if rule.get("type") in (RULE_ALL, RULE_QM, RULE_CANSLIM) else RULE_ALL
+    rule["type"] = rule.get("type") if rule.get("type") in (RULE_ALL, RULE_QM, RULE_CANSLIM, RULE_GLB) else RULE_ALL
     return {"id": (s or {}).get("id"), "rule": rule}
 
 
@@ -35,25 +35,29 @@ def scanner_dir(root, sid):
 def load_config(directory):
     cfg = store.read_json(Path(directory) / "finviz_screen.json", {}) or {}
     out = {"filters": finviz_catalog.normalize_codes(str(cfg.get("filters") or "")), "max_tickers": int(cfg.get("max_tickers") or 300)}
+    if isinstance(cfg.get("glb"), dict):   # skan Wish: parametry Green Line Breakout (liczone po Sync na danych miesięcznych)
+        out["glb"] = glb.normalize(cfg["glb"])
     if isinstance(cfg.get("qm"), dict):   # skaner Qullamaggie: progi w tym samym pliku (czyta je też proces synchronizacji)
         out["qm"] = qm.normalize(cfg["qm"])
     return out
 
 
-def save_config(directory, filters, max_tickers, qm_cfg=None):
+def save_config(directory, filters, max_tickers, qm_cfg=None, glb_cfg=None):
     directory = Path(directory)
     directory.mkdir(parents=True, exist_ok=True)
     cfg = store.read_json(directory / "finviz_screen.json", {}) or {}
     cfg["filters"], cfg["max_tickers"] = finviz_catalog.normalize_codes(filters), int(max_tickers)
     if qm_cfg is not None:
         cfg["qm"] = qm.normalize(qm_cfg)
+    if glb_cfg is not None:
+        cfg["glb"] = glb.normalize(glb_cfg)
     store.write_json(directory / "finviz_screen.json", cfg)
 
 
 def save_qm(directory, qm_cfg):
     """Zapisuje same progi Qullamaggie (bez ruszania filtrów Finviz)."""
     cfg = load_config(directory)
-    save_config(directory, cfg["filters"], cfg["max_tickers"], qm_cfg)
+    save_config(directory, cfg["filters"], cfg["max_tickers"], qm_cfg, cfg.get("glb"))
 
 
 def load(root):
@@ -85,7 +89,7 @@ def get(root, sid):
     return next((s for s in load(root) if s["id"] == sid), None)
 
 
-def upsert(root, scanner, filters=None, max_tickers=None, qm_cfg=None):
+def upsert(root, scanner, filters=None, max_tickers=None, qm_cfg=None, glb_cfg=None):
     """Zapisuje skaner (nowy dostaje id z nazwy) i jego filtry; zwraca zapisany słownik."""
     items = load(root)
     scanner = dict(scanner)
@@ -97,7 +101,7 @@ def upsert(root, scanner, filters=None, max_tickers=None, qm_cfg=None):
     items.sort(key=lambda s: s["id"] != DEFAULT_ID)
     save(root, items)
     if filters is not None:
-        save_config(scanner_dir(root, scanner["id"]), filters, max_tickers or 300, qm_cfg)
+        save_config(scanner_dir(root, scanner["id"]), filters, max_tickers or 300, qm_cfg, glb_cfg)
     return scanner
 
 
@@ -105,7 +109,7 @@ def duplicate(root, sid, new_name):
     src = get(root, sid)
     cfg = load_config(scanner_dir(root, sid))
     new = upsert(root, {"name": new_name, "columns": src.get("columns"), "extra": src.get("extra"), "kind": src.get("kind"), "sources": src.get("sources")},
-                 cfg["filters"], cfg["max_tickers"], cfg.get("qm"))
+                 cfg["filters"], cfg["max_tickers"], cfg.get("qm"), cfg.get("glb"))
     return new
 
 

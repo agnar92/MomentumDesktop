@@ -3,12 +3,12 @@ Zielona linia = najwyższe zamknięcie miesięczne w całej historii (ATH), któ
 Wybicie = zamknięcie miesiąca (liczone też bieżący, jeszcze trwający miesiąc) powyżej tej linii, czyli nowy szczyt wszech czasów po konsolidacji.
 Progi (3 miesiące, „za późno” +10 %) to moje przybliżenie reguł Wisha, trzymane w jednym miejscu (DEFAULTS) i zmieniane w edytorze skanu."""
 import time
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from datetime import datetime, timezone
 
 from . import store
 
-DEFAULTS = {"confirm_months": 3, "late_pct": 10.0, "recent_months": 6}
+DEFAULTS = {"confirm_months": 3, "late_pct": 10.0, "recent_months": 6, "max_from_high_pct": 35.0}
 STATE_LABELS = {"BREAK": "WYBICIE", "AFTER": "po wybiciu", "LATE": "za późno", "WAIT": "czeka", "NONE": ""}
 STATE_RANK = {"BREAK": 0, "AFTER": 1, "WAIT": 2, "LATE": 3, "NONE": 9}
 
@@ -16,7 +16,7 @@ STATE_RANK = {"BREAK": 0, "AFTER": 1, "WAIT": 2, "LATE": 3, "NONE": 9}
 def normalize(cfg):
     cfg = cfg if isinstance(cfg, dict) else {}
     out = dict(DEFAULTS)
-    for k, kind in (("confirm_months", int), ("late_pct", float), ("recent_months", int)):
+    for k, kind in (("confirm_months", int), ("late_pct", float), ("recent_months", int), ("max_from_high_pct", float)):
         try:
             v = kind(cfg.get(k, DEFAULTS[k]))
         except (TypeError, ValueError):
@@ -91,14 +91,21 @@ def _fetch_one(session, ticker):
     return None
 
 
-def fetch_monthly(tickers, log=print, workers=WORKERS):
+BUDGET_S = 120        # twardy limit czasu pobierania danych miesięcznych — po nim liczymy z tego, co jest (Sync nigdy nie wisi)
+FALLBACK_MAX = 100    # zapasowy, wolny yfinance tylko dla niewielu spółek; przy masowych błędach (limit zapytań) pomijamy go
+
+
+def fetch_monthly(tickers, log=print, workers=WORKERS, budget=BUDGET_S):
     """Miesięczne zamknięcia z całej historii: {ticker: {"d": [daty], "c": [zamknięcia]}}. Równolegle (jedno lekkie zapytanie na spółkę, ~0,3 s,
-    16 wątków ⇒ ok. 20 s na 1000 spółek); spółki, których nie udało się pobrać, dopobiera yfinance partiami. Błędy pojedynczych spółek nie przerywają."""
+    16 wątków), z twardym limitem czasu `budget`: spółki, które nie zdążą się pobrać, zostają bez linii (kolejny Sync je dociągnie z pamięci podręcznej).
+    Niewielką liczbę spółek, których API nie zwróciło, dopobiera yfinance; przy masowych błędach (np. limit zapytań Yahoo) tego nie robimy."""
     import requests
     tickers = sorted(set(tickers))
-    out, failed, done = {}, [], [0]
+    out, failed = {}, []
     session = requests.Session()
     session.headers["User-Agent"] = "Mozilla/5.0"
+    adapter = requests.adapters.HTTPAdapter(pool_connections=workers, pool_maxsize=workers)
+    session.mount("https://", adapter)
 
     def work(t):
         try:
@@ -106,17 +113,28 @@ def fetch_monthly(tickers, log=print, workers=WORKERS):
         except Exception:   # noqa: BLE001
             return t, None
     t0 = time.time()
-    with ThreadPoolExecutor(max_workers=workers) as pool:
-        for t, res in pool.map(work, tickers):
-            done[0] += 1
+    pool = ThreadPoolExecutor(max_workers=workers)
+    futures = [pool.submit(work, t) for t in tickers]
+    pending, done_n = set(futures), 0
+    while pending and time.time() - t0 < budget:
+        done, pending = wait(pending, timeout=max(0.1, min(5, budget - (time.time() - t0))), return_when=FIRST_COMPLETED)
+        for f in done:
+            t, res = f.result()
+            done_n += 1
             if res:
                 out[t] = {"d": res[0], "c": res[1]}
             else:
                 failed.append(t)
-            if done[0] % 250 == 0:
-                log(f"  dane miesięczne: {done[0]}/{len(tickers)} ({time.time() - t0:.0f} s)")
-    if failed:
+        if done_n and done_n % 250 < len(done) or (done and not pending):
+            log(f"  dane miesięczne: {done_n}/{len(tickers)} ({time.time() - t0:.0f} s)")
+    timed_out = len(pending)
+    pool.shutdown(wait=False, cancel_futures=True)   # nie czekamy na wiszące zapytania
+    if timed_out:
+        log(f"⚠️  Dane miesięczne: limit czasu {budget} s — {timed_out} spółek bez danych (zostaną dociągnięte przy kolejnym Syncu).")
+    if failed and len(failed) <= FALLBACK_MAX and time.time() - t0 < budget:
         out.update(_fetch_yfinance(failed, log))
+    elif failed:
+        log(f"⚠️  Dane miesięczne: {len(failed)} spółek bez odpowiedzi API (np. limit zapytań Yahoo) — pomijam wolną ścieżkę zapasową.")
     log(f"  dane miesięczne: {len(out)}/{len(tickers)} spółek w {time.time() - t0:.0f} s")
     return out
 
@@ -157,9 +175,16 @@ def apply(data_dir, cfg, log=print, fetch=fetch_monthly, today=None):
     cur = (today or datetime.now()).strftime("%Y-%m")
     prev = _prev_month(cur)
     cache = store.read_json(data_dir / "monthly.json", {}) or {}
-    need = [s["ticker"] for s in stocks if s["ticker"] not in cache or (cache[s["ticker"]].get("through") or "") < prev]
+    cfgn = normalize(cfg)
+
+    def near_high(s):   # szczyt wszech czasów ≥ szczyt 52 tyg., więc spółka głęboko pod nim nie może być przy linii — nie pobieramy dla niej historii
+        d = s.get("pct_from_high_52w")
+        return not isinstance(d, (int, float)) or d >= -cfgn["max_from_high_pct"]
+    cand = [s for s in stocks if near_high(s)]
+    log(f"Green Line Breakout: {len(cand)} z {len(stocks)} spółek jest nie dalej niż {cfgn['max_from_high_pct']:g} % pod szczytem 52 tygodni — tylko one są analizowane.")
+    need = [s["ticker"] for s in cand if s["ticker"] not in cache or (cache[s["ticker"]].get("through") or "") < prev]
     if need:
-        log(f"Green Line Breakout: pobieram miesięczne zamknięcia z całej historii dla {len(need)} spółek (z {len(stocks)}; reszta z pamięci podręcznej)…")
+        log(f"Green Line Breakout: pobieram miesięczne zamknięcia z całej historii dla {len(need)} spółek (reszta z pamięci podręcznej; limit czasu {BUDGET_S} s)…")
         for t, m in fetch(need, log).items():
             d, c = m.get("d") or [], m.get("c") or []
             keep = [i for i, x in enumerate(d) if x[:7] < cur] if d else list(range(len(c)))   # bez trwającego miesiąca — jego cenę dajemy z Sync
@@ -168,7 +193,7 @@ def apply(data_dir, cfg, log=print, fetch=fetch_monthly, today=None):
         log("Green Line Breakout: dane miesięczne w pamięci podręcznej są aktualne — liczę bez pobierania.")
     n, counts = 0, {}
     for s in stocks:
-        m = cache.get(s["ticker"])
+        m = cache.get(s["ticker"]) if near_high(s) else None
         price = s.get("price")
         closes = (m["c"] + ([price] if isinstance(price, (int, float)) and price > 0 else [])) if m else []
         res = analyze(closes, cfg) if closes else {"glb_state": "NONE", "glb_level": None, "glb_dist_pct": None, "glb_months": None, "glb_rank": 9}

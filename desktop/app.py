@@ -33,7 +33,7 @@ class ScannerView(tk.Frame):
         self.prices_btn = tk.Button(tb, text="⟳ Ceny (F5)" if default else "⟳ Ceny", command=lambda: self.start_sync(sync.PRICES), width=12, relief="flat")
         tb.add(self.prices_btn)
         self.fund_btn = tk.Button(tb, text="⟳ Fundamenty", command=lambda: self.start_sync(sync.FUNDAMENTALS), width=13, relief="flat")
-        if self.kind == scanners.KIND_FINVIZ:
+        if self.kind == scanners.KIND_FINVIZ and "glb" not in scanners.load_config(self.store.dir):   # skan Wish nie pobiera fundamentów
             tb.add(self.fund_btn)
         else:
             self.prices_btn.config(text="⟳ Ceny", width=12)
@@ -692,7 +692,10 @@ class App:
         if kind == scanners.KIND_WATCHLIST:
             self.start_merge(view)
             return
-        upgraded = kind == scanners.KIND_FINVIZ and mode == sync.PRICES and not (view.store.dir / "sync_state.json").exists() and no_cache
+        is_glb = "glb" in scanners.load_config(view.store.dir)   # skan Wish potrzebuje samych cen (+ danych miesięcznych), nie fundamentów
+        if is_glb:
+            mode = sync.PRICES
+        upgraded = kind == scanners.KIND_FINVIZ and not is_glb and mode == sync.PRICES and not (view.store.dir / "sync_state.json").exists() and no_cache
         if upgraded:   # nigdzie nie ma jeszcze EPS ani estymat (ani w skanerze, ani we wspólnym cache) — pierwszy Sync pobiera fundamenty
             mode = sync.FUNDAMENTALS
         view.set_sync_enabled(False)
@@ -711,6 +714,8 @@ class App:
                 win.log(line)
             if view.scanner.get("extra"):
                 win.log(f"  + dodatkowe kolumny z Finviz: {', '.join(view.scanner['extra'])}")
+        if is_glb:
+            win.log("Skan Wish: tylko ceny z yfinance (bez EPS i estymat) + miesięczne zamknięcia do Green Line Breakout (zakończone miesiące z pamięci podręcznej).")
         if kind == scanners.KIND_QM:
             two = (scanners.load_config(view.store.dir).get("qm") or {}).get("two_stage")
             win.log("Skaner Qullamaggie: tylko ceny (bez EPS i estymat). Lista z Finviz dzielona po sektorach (darmowy screener oddaje max 1000 wierszy). "

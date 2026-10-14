@@ -717,7 +717,7 @@ class App:
                     + ("Szybki Sync: etap 1 = tylko Finviz (cały zbiór), etap 2 = ceny z yfinance tylko dla kandydatów — kilka minut."
                        if two else "Pełny Sync: ceny z yfinance dla całego zbioru — to potrwa kilka–kilkanaście minut.") + " Zostają spółki powyżej progów pobierania.")
         win.log("Start: Finviz → yfinance → EPS i estymaty analityków → obliczenia (kilka–kilkanaście minut)…" if fund
-                else "Start: " + ("yfinance" if skip_finviz else "Finviz → yfinance") + " → obliczenia na zapisanych fundamentach (ok. minuty)…")
+                else "Start: " + ("yfinance (ceny)" if skip_finviz else "Finviz (tylko lista i ceny, bez fundamentów) → yfinance (ceny)") + " → obliczenia na zapisanych fundamentach…")
         data_dir, extra = view.store.dir, list(view.scanner.get("extra") or [])
         shared = None if sid == scanners.DEFAULT_ID else self.data_root
 

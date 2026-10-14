@@ -267,6 +267,43 @@ class ScannerView(tk.Frame):
         self.app.start_sync(self, mode, skip_finviz)
 
 
+class ChartHost:
+    """Lekki „widok” dla wykresu otwieranego spoza okna skanera (np. z okna przypiętych boxów): ma dane skanera z dysku, ale NIE otwiera okna
+    skanera ani watchlisty. Zapewnia to, czego oczekuje ChartWindow (store, root, open_canslim, step_chart…)."""
+
+    def __init__(self, app, scanner, parent):
+        self.app, self.scanner, self.root = app, scanner, parent
+        self.store = store.Store(scanners.scanner_dir(app.data_root, scanner["id"]), seed=scanner["id"] == scanners.DEFAULT_ID)
+        self.chart = None
+
+    def open_chart(self, ticker, focus=None):
+        if not ticker:
+            return
+        if self.chart is None or not self.chart.winfo_exists():
+            self.chart = ChartWindow(self, ticker)
+            if focus:
+                self.chart.set_focus(focus)
+                self.chart.redraw()
+        else:
+            self.chart.set_ticker(ticker, focus, self.store.tf if focus else None)
+            self.chart.lift()
+
+    def open_canslim(self, ticker):
+        if ticker and self.store.row(ticker):
+            CanslimWindow(self, ticker)
+
+    def step_chart(self, delta):
+        pass
+
+    def open_symbol_dialog(self):
+        pass
+
+    def refresh_lists(self):
+        win = getattr(self.app, "pinned_win", None)
+        if win is not None and win.winfo_exists():
+            win.refresh()
+
+
 class WatchlistView(ScannerView):
     """Watchlista: mała lista tickerów (z kilku skanów wg kryteriów) do odpalania Dar-Card i wykresu słupkowego. Bez filtrów i paska narzędzi skanera —
     kliknięcie tickera (albo ↑/↓) otwiera / przełącza wykres."""
@@ -438,6 +475,14 @@ class App:
             return self.view
         w = self.windows.get(sid)
         return w.view if w is not None and w.winfo_exists() else None
+
+    def chart_host(self, sid, parent):
+        """Widok do otwarcia wykresu skanera `sid` bez otwierania jego okna (świeże dane z dysku; ten sam host, dopóki jego wykres jest otwarty)."""
+        hosts = self.__dict__.setdefault("hosts", {})
+        host = hosts.get(sid)
+        if host is None or host.chart is None or not host.chart.winfo_exists():
+            host = hosts[sid] = ChartHost(self, scanners.get(self.data_root, sid), parent)
+        return host
 
     def open_pinned(self):
         if getattr(self, "pinned_win", None) is None or not self.pinned_win.winfo_exists():

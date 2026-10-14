@@ -1,4 +1,5 @@
 """Okno wykresu: Dar-Card i wykres słupkowy (tygodniowe i dzienne) wybranej spółki, z suwakiem czasu i boxami."""
+import bisect
 import tkinter as tk
 
 from . import charts, darvas, store
@@ -16,8 +17,11 @@ class ChartWindow(tk.Toplevel):
         h = min(940, max(600, self.winfo_screenheight() - 90))   # okno pionowe (prostokąt w pionie) — wykres wygląda lepiej niż w poziomie
         self.configure(bg=BG)
         apply_dark(self)
-        self.mode = tk.StringVar(value="darcard")
-        self.tf = tk.StringVar(value=view.store.tf)   # „W” tygodniowy / „D” dzienny — własny przełącznik okna, startuje z przełącznika listy
+        # ustawienia okna są pamiętane globalnie (nie per spółka / box / skaner): skala czasu, widok, log, MACD, długość okna czasu, rozmiar okna
+        pr = self.prefs()
+        self.free_mode = pr.get("mode") if pr.get("mode") in ("darcard", "bars") else "darcard"
+        self.mode = tk.StringVar(value=self.free_mode)
+        self.tf = tk.StringVar(value=pr.get("tf") if pr.get("tf") in ("W", "D") else view.store.tf)   # „W” tygodniowy / „D” dzienny
         self.n_show, self.end = self.default_n(), None
         self.focus_box, self.selected, self.cands, self.hit_geom = None, None, [], None
         self.geoms = {}
@@ -27,14 +31,14 @@ class ChartWindow(tk.Toplevel):
         head.add(self.title_lbl)
         self.cs_btn = tk.Button(head, text="CANSLIM", command=lambda: view.open_canslim(self.ticker), relief="flat", padx=8)
         head.add(self.cs_btn)
-        self.log = tk.BooleanVar(value=True)    # skala logarytmiczna ceny (domyślnie); L przełącza
-        self.macd_on = tk.BooleanVar(value=True)
-        head.add(tk.Checkbutton(head, text="log", variable=self.log, command=self.redraw, bg=PANEL))
-        head.add(tk.Checkbutton(head, text="MACD", variable=self.macd_on, command=self.redraw, bg=PANEL))
+        self.log = tk.BooleanVar(value=pr.get("log", True))    # skala logarytmiczna ceny (domyślnie); L przełącza
+        self.macd_on = tk.BooleanVar(value=pr.get("macd", True))
+        head.add(tk.Checkbutton(head, text="log", variable=self.log, command=self.on_toggle, bg=PANEL))
+        head.add(tk.Checkbutton(head, text="MACD", variable=self.macd_on, command=self.on_toggle, bg=PANEL))
         for text, val in (("Tydz.", "W"), ("Dzień", "D")):
             head.add(tk.Radiobutton(head, text=text, value=val, variable=self.tf, command=self.change_tf, bg=PANEL, indicatoron=False, padx=8))
         for text, val in (("Dar-Card", "darcard"), ("Słupkowy", "bars")):
-            head.add(tk.Radiobutton(head, text=text, value=val, variable=self.mode, command=self.redraw, bg=PANEL, indicatoron=False, padx=8))
+            head.add(tk.Radiobutton(head, text=text, value=val, variable=self.mode, command=self.on_mode, bg=PANEL, indicatoron=False, padx=8))
         self.status_lbl = autowrap(tk.Label(self, text="", bg=PANEL), pad=16)
         self.status_lbl.pack(fill="x", padx=8)
         self.slider = tk.Canvas(self, height=46, bg=BG, highlightthickness=0, cursor="sb_h_double_arrow")
@@ -42,7 +46,7 @@ class ChartWindow(tk.Toplevel):
         self.drag = None
         self.slider.bind("<Button-1>", self.slider_press)
         self.slider.bind("<B1-Motion>", self.slider_move)
-        self.slider.bind("<ButtonRelease-1>", lambda e: setattr(self, "drag", None))
+        self.slider.bind("<ButtonRelease-1>", self.slider_release)
         self.slider.bind("<Configure>", lambda e: self.after_idle(self.draw_slider))
         self.slider.bind("<MouseWheel>", self.on_wheel)
         self.slider.bind("<Button-4>", lambda e: self.zoom(0.85))
@@ -75,17 +79,57 @@ class ChartWindow(tk.Toplevel):
             cv.bind("<Leave>", lambda e: self.cv_bars.delete("cross") or self.cv_card.delete("cross"))
         for key, fn in (("<Up>", lambda e: view.step_chart(-1)), ("<Down>", lambda e: view.step_chart(1)),
                         ("<Left>", lambda e: self.scroll(-4)), ("<Right>", lambda e: self.scroll(4)),
-                        ("<space>", lambda e: self.toggle_mode()), ("<l>", lambda e: (self.log.set(not self.log.get()), self.redraw())),
-                        ("<m>", lambda e: (self.macd_on.set(not self.macd_on.get()), self.redraw())),
+                        ("<space>", lambda e: self.toggle_mode()), ("<l>", lambda e: (self.log.set(not self.log.get()), self.on_toggle())),
+                        ("<m>", lambda e: (self.macd_on.set(not self.macd_on.get()), self.on_toggle())),
                         ("<slash>", lambda e: view.open_symbol_dialog()), ("<Control-k>", lambda e: view.open_symbol_dialog()), ("<plus>", lambda e: self.zoom(0.85)), ("<minus>", lambda e: self.zoom(1.18)),
                         ("<Escape>", lambda e: self.deselect() if self.selected is not None else self.focus_box and self.clear_focus() or self.destroy())):
             self.bind(key, fn)
         self.set_ticker(ticker)
-        fit_window(self, min(720, int(h * 0.78)), h, min_w=420)
+        size = pr.get("size")
+        w0, h0 = (size if isinstance(size, list) and len(size) == 2 and all(isinstance(x, int) for x in size) else (min(720, int(h * 0.78)), h))
+        fit_window(self, w0, h0, min_w=420)
         place_left_of(self, view.root)   # prawa krawędź wykresu przylega do lewej krawędzi skanera / watchlisty, z której go otwarto
+        self._size_job = None
+        self.bind("<Configure>", self._on_resize, add="+")
+
+    # --- pamięć ustawień okna
+    def prefs(self):
+        return self.app.app.session.setdefault("chart", {})
+
+    def remember(self):
+        pr = self.prefs()
+        pr.update(tf=self.tf.get(), mode=self.free_mode, log=bool(self.log.get()), macd=bool(self.macd_on.get()))
+        if not self.focus_box:   # długość okna czasu (osobno dla tygodni i sesji); przybliżenie na box jej nie zmienia
+            pr.setdefault("n", {})[self.tf.get()] = int(self.n_show)
+        self.app.app.save_session()
+
+    def on_toggle(self):
+        self.remember()
+        self.redraw()
+
+    def on_mode(self):
+        self.free_mode = self.mode.get()
+        self.remember()
+        self.redraw()
+
+    def _on_resize(self, e):
+        if e.widget is not self:
+            return
+        if self._size_job:
+            self.after_cancel(self._size_job)
+        self._size_job = self.after(500, self._save_size)
+
+    def _save_size(self):
+        self._size_job = None
+        if self.winfo_exists() and self.state() == "normal":
+            self.prefs()["size"] = [self.winfo_width(), self.winfo_height()]
+            self.app.app.save_session()
 
     # --- dane
     def default_n(self):
+        n = (self.prefs().get("n") or {}).get(self.tf.get())   # zapamiętana długość okna czasu
+        if isinstance(n, int) and n >= 12:
+            return n
         return 126 if self.tf.get() == "D" else 104   # ~pół roku sesji / 2 lata tygodni
 
     def series(self):
@@ -109,7 +153,9 @@ class ChartWindow(tk.Toplevel):
 
     def change_tf(self):
         self.focus_box, self.selected, self.end = None, None, None
+        self.mode.set(self.free_mode)
         self.n_show = self.default_n()
+        self.remember()
         self.set_status()
         self.update_bar()
         self.redraw()
@@ -123,10 +169,11 @@ class ChartWindow(tk.Toplevel):
         cs = row.get("cs")
         self.cs_btn.config(text=f"CANSLIM {cs}/7" if cs is not None else "CANSLIM ?")
 
-    def set_ticker(self, ticker, focus=None, tf=None):
+    def set_ticker(self, ticker, focus=None):
+        """Przełącza spółkę (i opcjonalnie box). Skala czasu, widok, log, MACD i długość okna zostają takie, jak ustawił użytkownik."""
+        if self.focus_box and not focus:
+            self.mode.set(self.free_mode)   # po przybliżeniu na box wracamy do wybranego widoku
         self.ticker, self.focus_box, self.selected, self.end = ticker, None, None, None
-        if tf:
-            self.tf.set(tf)
         self.n_show = self.default_n()
         row = self.app.store.row(ticker) or {}
         self.title(f"{ticker} — {row.get('company', '')}")
@@ -139,6 +186,13 @@ class ChartWindow(tk.Toplevel):
 
     def set_focus(self, box):
         """Widok po „Przybliż”: wykres słupkowy zawężony do boxa + poziomy wejścia / dołu / exitu na osi ceny."""
+        src = box.get("dates")   # box policzony w innej skali czasu niż okno wykresu: przenosimy indeksy po datach
+        if src and (len(src) != len(self.dates) or src[-1] != self.dates[-1]):
+            dst = self.dates
+            i0 = min(bisect.bisect_left(dst, src[min(max(box["i0"], 0), len(src) - 1)]), max(len(dst) - 1, 0))
+            i1 = box["i1"] if box["i1"] < 0 else max(i0, bisect.bisect_right(dst, src[min(box["i1"], len(src) - 1)]) - 1)
+            box = {**box, "i0": i0, "i1": i1}
+        box = {k: v for k, v in box.items() if k != "dates"}
         if "confirmed" not in box:   # box z listy Boxy nie niesie flagi — bierzemy ją z boxów Darvasa tej spółki
             full = self.series()[0]
             m = next((b for b in darvas.boxes(full["c"]) if b["i0"] == box.get("i0")), None) if full else None
@@ -153,7 +207,7 @@ class ChartWindow(tk.Toplevel):
 
     def clear_focus(self):
         self.focus_box, self.n_show, self.end = None, self.default_n(), None
-        self.mode.set("darcard")
+        self.mode.set(self.free_mode)
         self.update_bar()
         self.redraw()
 
@@ -282,7 +336,7 @@ class ChartWindow(tk.Toplevel):
 
     def toggle_mode(self):
         self.mode.set("bars" if self.mode.get() == "darcard" else "darcard")
-        self.redraw()
+        self.on_mode()
 
     def zoom_selected(self):
         box = self.selected_box()
@@ -329,6 +383,12 @@ class ChartWindow(tk.Toplevel):
             return
         self.drag = (mode, e.x, (n_show, end))
 
+    def slider_release(self, _e):
+        self.drag = None
+        if getattr(self, "_slider_dirty", False):
+            self._slider_dirty = False
+            self.remember()
+
     def slider_move(self, e):
         if not self.drag or not self.full:
             return
@@ -337,11 +397,13 @@ class ChartWindow(tk.Toplevel):
         self.n_show, end = charts.slider_drag(mode, start, e.x - x_start, n, self.slider.winfo_width())
         self.end = None if end >= n else end
         self.redraw()
+        self._slider_dirty = True
 
     # --- okno czasowe
     def zoom(self, factor):
         n = len(self.full["c"]) if self.full else 0
         self.n_show = int(max(12, min(n, self.n_show * factor)))
+        self.remember()
         self.redraw()
 
     def scroll(self, d):

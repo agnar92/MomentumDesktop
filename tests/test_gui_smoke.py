@@ -600,3 +600,40 @@ def test_restored_scanner_windows_load_in_background(app):
     app.root.update()
     assert _wait(app, lambda: w.view is not None)
     assert w.loader is None and app.view_for(sc["id"]) is w.view
+
+
+def test_chart_window_remembers_settings_across_tickers_and_windows(app):
+    from desktop import session
+    v = app.view
+    app.root.update()
+    t1, t2 = [r["ticker"] for r in v.store.rows[:2]]
+    v.open_chart(t1)
+    ch = v.chart
+    ch.update()
+    ch.tf.set("D")
+    ch.change_tf()                      # przełączenie na dzienny
+    ch.mode.set("bars")
+    ch.on_mode()                        # widok słupkowy
+    ch.log.set(False)
+    ch.on_toggle()
+    ch.zoom(0.7)                        # krótsze okno czasu
+    n = ch.n_show
+    # inna spółka (także z boxem) — ustawienia zostają, nie wracają do tygodniowego
+    _, wd, _, _ = v.store.series(t2, "W")
+    box = {"top": 100.0, "bottom": 80.0, "start": wd[-12], "i0": len(wd) - 12, "i1": -1, "outcome": "open", "dates": wd}
+    v.open_chart(t2, focus=box)
+    ch.update()
+    assert ch.tf.get() == "D" and ch.ticker == t2 and ch.focus_box            # box policzony w tygodniach, wykres zostaje dzienny
+    assert ch.focus_box["i0"] > 0 and "dates" not in ch.focus_box
+    ch.clear_focus()
+    assert ch.mode.get() == "bars" and ch.log.get() is False and ch.n_show == n
+    v.open_chart(t1)                                                           # zwykłe przełączenie bez boxa
+    assert ch.tf.get() == "D" and ch.mode.get() == "bars"
+    # nowe okno wykresu (po zamknięciu) startuje z tych samych ustawień — zapisanych w sesji na dysku
+    ch.destroy()
+    v.chart = None
+    sess = session.load(app.data_root)["chart"]
+    assert sess["tf"] == "D" and sess["mode"] == "bars" and sess["log"] is False and sess["n"]["D"] == n
+    v.open_chart(t2)
+    c2 = v.chart
+    assert c2.tf.get() == "D" and c2.mode.get() == "bars" and c2.log.get() is False and c2.n_show == n

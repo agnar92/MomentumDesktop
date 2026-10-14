@@ -10,7 +10,8 @@ def load(root):
     d = store.read_json(Path(root) / "session.json", {}) or {}
     return {"recent": [s for s in d.get("recent", []) if isinstance(s, str)], "open": [s for s in d.get("open", []) if isinstance(s, str)],
             "launcher": bool(d.get("launcher", False)), "main_hidden": bool(d.get("main_hidden", False)),
-            "symbols": [s for s in d.get("symbols", []) if isinstance(s, str)]}
+            "symbols": [s for s in d.get("symbols", []) if isinstance(s, str)],
+            "chart": d.get("chart") if isinstance(d.get("chart"), dict) else {}}   # ustawienia okna wykresu (wspólne dla wszystkich spółek / skanerów)
 
 
 def save(root, sess):

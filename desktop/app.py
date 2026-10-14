@@ -186,7 +186,7 @@ class ScannerView(tk.Frame):
                 self.chart.set_focus(focus)
                 self.chart.redraw()
         else:
-            self.chart.set_ticker(ticker, focus, self.store.tf if focus else None)
+            self.chart.set_ticker(ticker, focus)
             self.chart.lift()
 
     def open_chart_new(self, ticker):
@@ -292,7 +292,7 @@ class ChartHost:
                 self.chart.set_focus(focus)
                 self.chart.redraw()
         else:
-            self.chart.set_ticker(ticker, focus, self.store.tf if focus else None)
+            self.chart.set_ticker(ticker, focus)
             self.chart.lift()
 
     def open_canslim(self, ticker):

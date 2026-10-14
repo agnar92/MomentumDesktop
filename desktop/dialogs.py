@@ -170,6 +170,7 @@ class BoxesWindow(tk.Toplevel):
             box["i0"] = next((i for i, w in enumerate(dates) if w >= box.get("start", "")), max(0, len(dates) - 20))
             box["i1"] = len(dates) - 1
             box["outcome"] = "open"
+        box["dates"] = dates   # skala, w której policzono indeksy — wykres przeniesie je po datach, jeśli ma inną skalę czasu
         self.app.open_chart(r["ticker"], focus=box)
 
 class PinnedWindow(tk.Toplevel):
@@ -269,6 +270,7 @@ class PinnedWindow(tk.Toplevel):
             box["i0"] = next((i for i, w in enumerate(dates) if w >= box.get("start", "")), max(0, len(dates) - 20))
             box["i1"] = len(dates) - 1
             box["outcome"] = "open"
+        box["dates"] = dates   # skala, w której policzono indeksy — wykres przeniesie je po datach, jeśli ma inną skalę czasu
         self.host.open_chart(r["ticker"], focus=box)
 
 

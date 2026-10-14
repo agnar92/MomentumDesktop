@@ -174,17 +174,20 @@ class BoxesWindow(tk.Toplevel):
 
 class PinnedWindow(tk.Toplevel):
     """Szybki przegląd przypiętych (monitorowanych) boxów ze WSZYSTKICH skanerów i watchlist: najgorsze (strefa zagrożenia / exit) na górze.
-    Dwuklik otwiera skaner i wykres z tym boxem."""
+    Pierwsze otwarcie wykresu: dwuklik lub Enter. Gdy wykres jest już otwarty, zmiana zaznaczenia (strzałki ↑/↓ na liście albo w oknie
+    wykresu) przełącza wykres na zaznaczony box — jak na liście skanera."""
 
     def __init__(self, app):
         super().__init__(app.root)
+        from .app import ChartHost
         self.app = app
+        self.host = ChartHost(app, self)
         self.title("Przypięte boxy — wszystkie skanery")
         self.configure(bg=BG)
         apply_dark(self)
         bar = Flow(self)
         bar.pack(fill="x", side="bottom")
-        self.tree = ttk.Treeview(self, columns=("scanner", "price", "text"), show="tree headings")
+        self.tree = ttk.Treeview(self, columns=("scanner", "price", "text"), show="tree headings", selectmode="browse")
         for col, text, width, anchor in (("#0", "Spółka", 110, "w"), ("scanner", "Skaner / watchlista", 190, "w"), ("price", "Cena", 80, "e"), ("text", "Status", 520, "w")):
             self.tree.heading(col, text=text)
             self.tree.column(col, width=width, anchor=anchor)
@@ -193,17 +196,19 @@ class PinnedWindow(tk.Toplevel):
             self.tree.tag_configure(st, foreground=col)
         self.tree.bind("<Double-1>", self.open_row)
         self.tree.bind("<Return>", self.open_row)
+        self.tree.bind("<<TreeviewSelect>>", self.on_select)
         bar.add(tk.Button(bar, text="⟳ Odśwież", command=self.refresh))
         bar.add(tk.Button(bar, text="Zamknij", command=self.destroy))
-        self.info = tk.Label(bar, text="Dwuklik = otwórz skaner i wykres z boxem", bg=PANEL, fg="#8b95a3")
+        self.info = tk.Label(bar, text="", bg=PANEL, fg="#8b95a3")
         bar.add(self.info)
         self.rows = {}
         self.refresh()
         fit_window(self, 960, 420)
 
-    def refresh(self):
+    def refresh(self, keep=False):
         from . import scanners
         from . import store as store_mod
+        cur = self.current() if keep else None
         self.tree.delete(*self.tree.get_children())
         self.rows = {}
         found = []
@@ -219,22 +224,52 @@ class PinnedWindow(tk.Toplevel):
             iid = f"{sc['id']}:{n}:{ticker}"
             self.rows[iid] = (sc["id"], r)
             self.tree.insert("", "end", iid=iid, text=ticker, values=(sc["name"], f"{r['price']:.2f}" if r.get("price") else "", r["text"]), tags=(r["state"],))
-        self.info.config(text=f"{len(found)} przypiętych boxów · dwuklik = otwórz skaner i wykres" if found else "Brak przypiętych boxów — przypnij box na wykresie (Dar-Card: klik w box → 📌 Przypnij)")
+        ids = list(self.rows)
+        if cur:   # po odświeżeniu zostajemy na tej samej spółce / tym samym skanerze (indeks w iid się zmienia)
+            same = next((i for i in ids if i.split(":", 1)[0] == cur.split(":", 1)[0] and i.rsplit(":", 1)[1] == cur.rsplit(":", 1)[1]), None)
+            if same:
+                self.tree.selection_set(same)
+        self.info.config(text=f"{len(found)} przypiętych boxów · dwuklik / Enter = otwórz wykres, potem ↑/↓ przełącza box" if found
+                         else "Brak przypiętych boxów — przypnij box na wykresie (Dar-Card: klik w box → 📌 Przypnij)")
+
+    def current(self):
+        sel = self.tree.selection()
+        return sel[0] if sel else None
+
+    def step(self, delta):
+        """Zaznacza następny / poprzedni box (z okna wykresu strzałkami); zaznaczenie przełącza wykres."""
+        ids = list(self.tree.get_children())
+        if not ids:
+            return
+        cur = self.current()
+        i = max(0, min(len(ids) - 1, (ids.index(cur) + delta) if cur in ids else 0))
+        self.tree.selection_set(ids[i])
+        self.tree.see(ids[i])
+
+    def on_select(self, _e=None):
+        chart, item = self.host.chart, self.rows.get(self.current() or "")
+        if chart is None or not chart.winfo_exists() or not item:
+            return
+        sid, r = item
+        if r["ticker"] == chart.ticker and self.host.scanner and self.host.scanner["id"] == sid:
+            return   # to samo, co już pokazuje wykres (np. odświeżenie listy) — nie resetujemy przybliżenia
+        self.open_row()   # wykres już otwarty — podąża za zaznaczeniem
 
     def open_row(self, _e=None):
         sel = self.tree.selection()
         item = self.rows.get(sel[0]) if sel else None
         if not item:
             return
+        from . import scanners
         sid, r = item
-        view = self.app.view_for(sid) or self.app.chart_host(sid, self)   # nie otwieramy okna skanera / watchlisty — tylko wykres
+        self.host.use(scanners.get(self.app.data_root, sid))   # nie otwieramy okna skanera / watchlisty — tylko wykres
         box = dict(r["box"])
-        _, dates, _, _ = view.store.series(r["ticker"], view.store.tf)
+        _, dates, _, _ = self.host.store.series(r["ticker"], self.host.store.tf)
         if box.get("i0", -1) < 0:   # przypięty: indeks z daty startu
             box["i0"] = next((i for i, w in enumerate(dates) if w >= box.get("start", "")), max(0, len(dates) - 20))
             box["i1"] = len(dates) - 1
             box["outcome"] = "open"
-        view.open_chart(r["ticker"], focus=box)
+        self.host.open_chart(r["ticker"], focus=box)
 
 
 class FinvizCriteriaWindow(tk.Toplevel):

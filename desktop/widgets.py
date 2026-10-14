@@ -144,6 +144,36 @@ class StockTable(tk.Frame):
             self.on_select(self.current())
 
 
+class Spinner(tk.Canvas):
+    """Kręcące się kółko (łuk) — pokazuje, że coś się wczytuje; zatrzymuje się samo po zniszczeniu widżetu."""
+
+    def __init__(self, master, size=44, color="#4aa3ff", bg=BG):
+        super().__init__(master, width=size, height=size, bg=bg, highlightthickness=0)
+        self.size, self.color, self.angle = size, color, 0
+        pad = size * 0.14
+        self.create_oval(pad, pad, size - pad, size - pad, outline="#27303a", width=4)
+        self.arc = self.create_arc(pad, pad, size - pad, size - pad, start=0, extent=100, style="arc", outline=color, width=4)
+        self._tick()
+
+    def _tick(self):
+        if not self.winfo_exists():
+            return
+        self.angle = (self.angle - 18) % 360
+        self.itemconfigure(self.arc, start=self.angle)
+        self.after(40, self._tick)
+
+
+class LoadingFrame(tk.Frame):
+    """Plansza „wczytuję…” z kręcącym się kółkiem (okno skanera pokazuje się od razu, dane dochodzą po chwili)."""
+
+    def __init__(self, master, text):
+        super().__init__(master, bg=BG)
+        inner = tk.Frame(self, bg=BG)
+        inner.place(relx=0.5, rely=0.45, anchor="center")
+        Spinner(inner).pack()
+        tk.Label(inner, text=text, bg=BG, fg="#8b95a3").pack(pady=(10, 0))
+
+
 class SyncWindow(tk.Toplevel):
     """Dziennik synchronizacji (Finviz + yfinance) z paskiem postępu."""
 

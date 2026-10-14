@@ -208,3 +208,53 @@ def test_watchlist_takes_top_percent_of_each_window_separately_and_canslim_rule(
     # CANSLIM: tylko spółki z cs >= n
     cs = merge.select_source(root, scanners.get(root, q["id"]), {"type": "canslim", "cs_min": 8})[0]
     assert cs == []   # dane testowe nie mają CANSLIM >= 8/7
+
+
+# ---------- Wish: Green Line Breakout (miesięczne zamknięcia) ----------
+def test_glb_analyze_states():
+    from desktop import glb
+    base = [10, 12, 14, 16, 18, 20]   # rosnące szczyty do 20
+    # szczyt 20, potem 4 miesiące bez pobicia, ostatni miesiąc nad linią → WYBICIE
+    r = glb.analyze(base + [18, 17, 18, 19, 21])
+    assert r["glb_state"] == "BREAK" and r["glb_level"] == 20 and r["glb_dist_pct"] < 0 and r["glb_months"] == 0
+    # ten sam układ, cena nadal pod linią → CZEKA (potwierdzona linia, odległość do niej)
+    r = glb.analyze(base + [18, 17, 18, 19, 19])
+    assert r["glb_state"] == "WAIT" and r["glb_level"] == 20 and abs(r["glb_dist_pct"] - 5.26) < 0.01 and r["glb_months"] == 5
+    # wybicie dwa miesiące temu, cena +5 % nad linią → po wybiciu; +30 % → za późno
+    assert glb.analyze(base + [18, 17, 18, 19, 21, 21, 21])["glb_state"] == "AFTER"
+    assert glb.analyze(base + [18, 17, 18, 19, 21, 26, 26])["glb_state"] == "LATE"
+    # po wybiciu cena wróciła pod linię → czeka na ponowne przebicie
+    assert glb.analyze(base + [18, 17, 18, 19, 21, 19, 19])["glb_state"] == "WAIT"
+    # ciągłe nowe szczyty (brak 3-miesięcznej przerwy) i za mało danych → brak linii
+    assert glb.analyze([10, 11, 12, 13, 14, 15, 16, 17])["glb_state"] == "NONE"
+    assert glb.analyze([10, 11])["glb_state"] == "NONE"
+    # za krótka przerwa (2 miesiące) nie tworzy linii: 20, 18, 19, 21
+    assert glb.analyze(base + [18, 19, 21])["glb_state"] != "BREAK"
+    # parametry z konfiguracji: 2 miesiące wystarczą
+    assert glb.analyze(base + [18, 19, 21], {"confirm_months": 2})["glb_state"] == "BREAK"
+    assert glb.normalize({"confirm_months": "abc", "late_pct": -1}) == glb.DEFAULTS
+
+
+def test_glb_apply_writes_fields_and_rule_selects(tmp_path):
+    import json
+
+    from desktop import glb, scanners
+    d = tmp_path
+    wl = {"stocks": [{"ticker": "AAA"}, {"ticker": "BBB"}, {"ticker": "CCC"}, {"ticker": "DDD"}]}
+    (d / "watchlist.json").write_text(json.dumps(wl))
+    base = [10, 12, 14, 16, 18, 20]
+    monthly = {"AAA": {"d": [], "c": base + [18, 17, 18, 19, 21]}, "BBB": {"d": [], "c": base + [18, 17, 18, 19, 19]},
+               "CCC": {"d": [], "c": base + [18, 17, 18, 19, 15]}, "DDD": {"d": [], "c": [10, 11, 12, 13, 14, 15, 16, 17]}}
+    n = glb.apply(d, {}, lambda *_: None, fetch=lambda tickers, log: monthly)
+    out = {s["ticker"]: s for s in json.loads((d / "watchlist.json").read_text())["stocks"]}
+    assert n == 1 and out["AAA"]["glb_state"] == "BREAK" and out["BBB"]["glb_state"] == "WAIT" and out["DDD"]["glb_state"] == "NONE"
+    assert (d / "monthly.json").exists()
+    rows = list(out.values())
+    assert [r["ticker"] for r in glb.select(rows, {"states": ["BREAK"]})] == ["AAA"]
+    assert {r["ticker"] for r in glb.select(rows, {})} == {"AAA", "BBB"}      # CCC czeka, ale jest > 10 % pod linią
+    assert {r["ticker"] for r in glb.select(rows, {"max_dist_pct": 40})} == {"AAA", "BBB", "CCC"}
+    # kolumna GLB sortuje wybicia przed czekającymi, na końcu brak linii
+    from desktop import columns
+    keys = sorted(rows, key=lambda r: columns.sort_value(r, "glb_state"))
+    assert [r["ticker"] for r in keys][:2] == ["AAA", "BBB"] and keys[-1]["ticker"] == "DDD"
+    assert columns.format_cell(out["AAA"], "glb_state") == "WYBICIE" and scanners.norm_source({"id": "x", "rule": {"type": "glb"}})["rule"]["type"] == "glb"

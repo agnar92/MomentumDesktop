@@ -111,7 +111,7 @@ class StockTable(tk.Frame):
             self.tree.heading("darvas", text="Darvas (dzień)" if tf == "D" else "Darvas (tydz.)")
 
     def sort_by(self, col):
-        text_cols = {"ticker", "company", "sector", "industry", "base", "cs_letters", "accdis", "earnings", "pct_to_pivot"}
+        text_cols = {"ticker", "company", "sector", "industry", "base", "cs_letters", "accdis", "earnings", "pct_to_pivot", "glb_state"}
         self.sort_rev = (not self.sort_rev) if self.sort_col == col else col not in text_cols
         self.sort_col = col
         self._fill(self.current())

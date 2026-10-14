@@ -3,7 +3,7 @@ Nic nie jest pobierane z sieci — scalony skaner składa swoje pliki z danych �
 Źródło typu Qullamaggie wnosi tylko spółki wybrane jego progami (to, co widać na jego liście), a nie cały zapisany zbiór."""
 from pathlib import Path
 
-from . import qm, scanners, store, sync
+from . import glb, qm, scanners, store, sync
 
 
 def _remap(val, src_axis, ref_axis):
@@ -32,6 +32,9 @@ def select_source(root, sc, rule):
     if kind == scanners.RULE_QM:
         picks = qm.select(stocks, qm.normalize(rule), wl.get("qm_pool"))
         stocks = [s for s in stocks if s["ticker"] in picks]
+    elif kind == scanners.RULE_GLB:
+        ok = {r["ticker"] for r in glb.select(stocks, rule)}
+        stocks = [s for s in stocks if s["ticker"] in ok]
     elif kind == scanners.RULE_CANSLIM:
         rows = store.Store(d, seed=False).rows
         ok = {r["ticker"] for r in store.scan(rows, {"cs_min": int(rule.get("cs_min") or 5), "cs_core": bool(rule.get("cs_core"))})}

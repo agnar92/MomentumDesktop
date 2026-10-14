@@ -228,12 +228,13 @@ class ChartWindow(tk.Toplevel):
         win = charts.window(n, self.n_show, self.end)
         st = self.app.store
         pinned = st.pinned.get(self.ticker)
+        glb_level = (st.row(self.ticker) or {}).get("glb_level")   # zielona linia Wisha (skan Wish) — rysowana na obu wykresach
         if self.mode.get() == "darcard":
             self.update_idletasks()
-            self.geoms["card"] = charts.draw_darcard(self.cv_card, full, dates, win, {"pinned": pinned, "selected": self.selected, "log": self.log.get()})
+            self.geoms["card"] = charts.draw_darcard(self.cv_card, full, dates, win, {"pinned": pinned, "selected": self.selected, "log": self.log.get(), "glb": glb_level})
             self.hit_geom = self.geoms["card"]
         if self.mode.get() == "bars":
-            opts = {"macd": self.macd_on.get(), "spx": True, "smas": smas, "tf": self.tf.get(), "log": self.log.get()}
+            opts = {"macd": self.macd_on.get(), "spx": True, "smas": smas, "tf": self.tf.get(), "log": self.log.get(), "glb": glb_level}
             fb = self.focus_box or (self.selected_box())
             if fb:
                 opts["tags"] = [(fb["top"], charts.GREEN), (fb["bottom"], charts.WHITE), (round(fb["bottom"] * 0.95, 2), charts.RED)]

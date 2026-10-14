@@ -2,6 +2,7 @@
 Dostępne kolumny = pola, które faktycznie występują w pobranych danych (+ policzone lokalnie: CANSLIM, Darvas, baza)."""
 from . import finviz_catalog as fc
 from . import flags as flags_mod
+from . import glb as glb_mod
 
 # klucz: (etykieta, szerokość, wyrównanie, format) — format: text / int / n1 / n2 / price / pct / mcap / bool / state / base / cs
 DEFS = {
@@ -28,6 +29,8 @@ DEFS = {
     "base_status": ("Status bazy", 110, "w", "text"), "climax_top": ("Climax", 64, "w", "bool"), "dist_top": ("Dystrybucja", 92, "w", "bool"),
     "low_ratio_1m": ("Cena/min 1M", 96, "e", "n2"), "low_ratio_3m": ("Cena/min 3M", 96, "e", "n2"), "low_ratio_6m": ("Cena/min 6M", 96, "e", "n2"),
     "qm_windows": ("Okna QM", 84, "w", "text"), "qm_max_ratio": ("Max cena/min", 104, "e", "n2"), "merge_src": ("Źródła", 170, "w", "text"),
+    "glb_state": ("GLB", 96, "w", "glb"), "glb_dist_pct": ("Do linii %", 90, "e", "n1"), "glb_level": ("Zielona linia", 104, "e", "price"),
+    "glb_months": ("Mies. linii", 86, "e", "int"),
     "rs_line_state": ("Linia RS", 90, "w", "text"), "vol_surge_5d": ("Skok wol. 5d ×", 100, "e", "n2"),
 }
 DEFAULT_COLUMNS = ["ticker", "flag", "company", "price", "rs_rating", "eps_rating", "composite_rating", "cs", "cs_letters", "pct_from_high_52w", "base",
@@ -35,7 +38,7 @@ DEFAULT_COLUMNS = ["ticker", "flag", "company", "price", "rs_rating", "eps_ratin
 # pola policzone lokalnie — są zawsze (nawet przed pierwszym Sync)
 COMPUTED = {"cs", "cs_letters", "base", "darvas", "pbox", "flag", "change"}
 _SKIP = {"canslim", "spark", "darvas_w", "darvas_d", "darvas_text", "darvas_text_w", "darvas_text_d", "pbox_text", "pbox_rank", "as_of",
-         "pivot_break_date", "rs_score", "accdis_score", "eps_score"}
+         "pivot_break_date", "rs_score", "accdis_score", "eps_score", "glb_rank"}
 PBOX_LABELS = {"NONE": "", "ABOVE": "wybity", "INSIDE": "w boxie", "ZONE": "STREFA!", "EXIT": "EXIT!"}
 
 
@@ -83,6 +86,8 @@ def format_cell(row, key, state_labels=None):
         return (state_labels or {}).get(v, "")
     if fmt == "pbox":
         return PBOX_LABELS.get(v, "")
+    if fmt == "glb":
+        return glb_mod.STATE_LABELS.get(v, "")
     if fmt == "cs":
         return "–" if v is None else f"{v}/7"
     if fmt == "bool":
@@ -104,6 +109,9 @@ def sort_value(row, key):
     fmt = definition(key)[3]
     if fmt == "pbox":
         return (False, row.get("pbox_rank", 9))
+    if fmt == "glb":   # najpierw wybicia, potem czekające (najbliżej linii pierwsze), na końcu „za późno” i brak linii
+        d = row.get("glb_dist_pct")
+        return (row.get("glb_state") in (None, "", "NONE"), row.get("glb_rank", 9) * 1000 + abs(d if isinstance(d, (int, float)) else 0))
     if fmt == "flag":
         return (False, flags_mod.IDS.index(row["flag"]) if row.get("flag") in flags_mod.IDS else 99)
     if fmt == "base":

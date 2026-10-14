@@ -13,7 +13,7 @@ import traceback
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import daily, finviz_catalog, qm, scanners, store
+from . import daily, finviz_catalog, glb, qm, scanners, store
 
 PRICES, FUNDAMENTALS = "prices", "fundamentals"
 FUNDAMENTALS_STALE_DAYS = 7
@@ -220,6 +220,7 @@ def run_sync(data_dir, log=print, mode=FUNDAMENTALS, skip_finviz=False, max_tick
         return 1
     if shared_root is not None:   # wspólny cache EPS / estymat: nie pobieramy drugi raz tego, co zna inny skaner
         scanners.merge_cache(shared_root, data_dir)
+    glb_cfg = scanners.load_config(data_dir).get("glb")   # skan Wish: po Sync dopisujemy Green Line Breakout z danych miesięcznych
     qm_cfg = scanners.load_config(data_dir).get("qm")   # skaner Qullamaggie: tylko ceny (bez fundamentów), lista z Overview dzielona po sektorach
     if qm_cfg:
         mode = PRICES
@@ -285,6 +286,8 @@ def run_sync(data_dir, log=print, mode=FUNDAMENTALS, skip_finviz=False, max_tick
                     shutil.rmtree(data_dir / "raw", ignore_errors=True)   # migawka całego zbioru jest duża, a desktop jej nie potrzebuje
                 else:
                     build_daily_json(data_dir, log)
+                if glb_cfg:
+                    glb.apply(data_dir, glb_cfg, log)
         if not code:
             st = prev_state
             st["prices"] = now_iso()

@@ -574,8 +574,10 @@ def test_pinned_box_chart_does_not_open_scanner_window(app):
     ch = pw.host.chart
     assert ch is not None and ch.winfo_exists() and ch.focus_box
     first = (pw.rows[iid][0], ch.ticker)
-    # strzałki w oknie wykresu zmieniają zaznaczenie na liście i wykres
-    ch.event_generate("<Down>")
+    # strzałki w oknie wykresu zmieniają zaznaczenie na liście i wykres (event_generate klawisza wymaga fokusu okna — na Windowsie CI go nie ma,
+    # więc sprawdzamy, że skrót jest podpięty, i wołamy to, co wywołuje)
+    assert ch.bind("<Down>") and ch.bind("<Up>")
+    pw.host.step_chart(1)
     app.root.update()
     ids = list(pw.tree.get_children())
     cur = pw.current()

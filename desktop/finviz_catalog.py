@@ -125,7 +125,7 @@ def code_index():
 def selection_from_filters(filters):
     """Rozbija ciąg kodów na wybór per grupa katalogu i resztę (kody spoza katalogu zostają nietknięte): ({grupa: kod}, [reszta])."""
     idx, sel, rest = code_index(), {}, []
-    for code in (c.strip() for c in (filters or "").split(",")):
+    for code in normalize_codes(filters).split(","):
         if not code:
             continue
         if code in idx and idx[code][0] not in sel:
@@ -141,6 +141,18 @@ def filters_from_selection(sel, rest=()):
     return ",".join(ordered + [c for c in rest if c and c not in ordered])
 
 
+def normalize_codes(text):
+    """Lista kodów filtrów z dowolnego zapisu: rozdzielniki przecinek / spacja / średnik / nowa linia, a zapis z dwukropkiem (`sh_price:o1`, `ta_alltime:nh`)
+    zamieniamy na kod z podkreślnikiem, który rozumie Finviz (`sh_price_o1`). Kolejność zostaje, duplikaty znikają. Nie sprawdzamy, czy kod jest znany —
+    Finviz dostaje to, co wkleiłeś."""
+    out = []
+    for c in re.split(r"[,;\s]+", (text or "").strip()):
+        c = c.strip().strip("&").replace(":", "_").lower()
+        if c and c not in out:
+            out.append(c)
+    return ",".join(out)
+
+
 def parse_finviz_input(text):
     """Z wklejonego adresu skanera Finviz (…screener.ashx?v=111&f=a,b,c&ft=4) albo samej listy kodów -> ciąg kodów filtrów."""
     text = (text or "").strip()
@@ -149,7 +161,7 @@ def parse_finviz_input(text):
     if "f=" in text and ("?" in text or "&" in text or text.startswith("f=")):
         q = parse_qs(urlparse(text if "?" in text else "?" + text.lstrip("?")).query)
         text = (q.get("f") or [""])[0]
-    return ",".join(c for c in re.split(r"[,\s]+", text) if c)
+    return normalize_codes(text)
 
 
 def extra_ids(keys):

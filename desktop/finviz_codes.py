@@ -18,6 +18,7 @@ KNOWN = {
     "exch_nasd": "Giełda: Nasdaq", "exch_nyse": "Giełda: NYSE", "sh_avgvol_o300": "Średni wolumen > 300 tys. akcji", "sh_price_o1": "Cena > 1 USD",
     "ta_sma200_pa": "Cena powyżej SMA 200", "ta_sma50_pa": "Cena powyżej SMA 50", "ta_sma20_pa": "Cena powyżej SMA 20",
     "ta_sma200_pb": "Cena poniżej SMA 200", "ta_sma50_pb": "Cena poniżej SMA 50", "ta_sma20_pb": "Cena poniżej SMA 20",
+    "ta_alltime_nh": "Nowy szczyt wszech czasów (ATH)", "ta_alltime_nl": "Nowy dołek wszech czasów",
     "ta_highlow52w_nh": "Nowy szczyt 52 tygodni", "ta_highlow52w_b0to10h": "0–10 % poniżej szczytu 52 tygodni",
 }
 _UNITS = {"o": ">", "u": "<"}
@@ -57,12 +58,14 @@ def describe_code(code):
     hit = finviz_catalog.code_index().get(code)   # każdy kod z katalogu kreatora (zweryfikowany na żywo)
     if hit:
         return f"{hit[0]}: {hit[1]}", True
-    return f"{code} — nieznany kod (Finviz może go po cichu zignorować)", False
+    if re.fullmatch(r"[a-z0-9]+_[a-z0-9_.\-]+", code):   # poprawnie zbudowany kod Finviz, którego nie opisujemy — przekazujemy go bez zmian
+        return f"{code} — kod Finviz przekazany bez zmian (bez opisu)", True
+    return f"{code} — to nie wygląda na kod Finviz (np. sh_price_o1); Finviz go zignoruje", False
 
 
 def describe(filters):
     """[(kod, opis, znany)] dla ciągu filtrów rozdzielonych przecinkami."""
-    return [(c.strip(), *describe_code(c)) for c in (filters or "").split(",") if c.strip()]
+    return [(c, *describe_code(c)) for c in finviz_catalog.normalize_codes(filters).split(",") if c]
 
 
 def summary_lines(filters, max_tickers=None):

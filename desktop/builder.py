@@ -45,7 +45,9 @@ class ScannerEditor(tk.Toplevel):
         imp.pack(fill="x")
         tk.Label(imp, text="Wklej adres skanera z finviz.com (lub same kody):", bg=PANEL).pack(side="left", padx=8, pady=4)
         self.url = tk.StringVar()
-        tk.Entry(imp, textvariable=self.url).pack(side="left", fill="x", expand=True)
+        url_entry = tk.Entry(imp, textvariable=self.url)
+        url_entry.pack(side="left", fill="x", expand=True)
+        url_entry.bind("<Return>", lambda e: self.import_url())
         tk.Button(imp, text="Importuj", command=self.import_url).pack(side="left", padx=6)
         # dolne paski pakujemy PRZED notatnikiem (side=bottom), żeby przy małym oknie to zakładki się kurczyły, a nie przyciski
         bar = Flow(self)
@@ -81,7 +83,9 @@ class ScannerEditor(tk.Toplevel):
             tk.Checkbutton(ex, text=spec[1], variable=v, bg=PANEL, anchor="w").grid(row=1 + n // 3, column=n % 3, sticky="w", padx=10)
         tk.Label(raw, text="Kody filtrów (f=):", bg=PANEL).pack(side="left", padx=8, pady=4)
         self.raw = tk.StringVar(value=cfg["filters"])
-        tk.Entry(raw, textvariable=self.raw).pack(side="left", fill="x", expand=True, padx=(0, 8))
+        raw_entry = tk.Entry(raw, textvariable=self.raw)
+        raw_entry.pack(side="left", fill="x", expand=True, padx=(0, 8))
+        raw_entry.bind("<FocusOut>", lambda e: self.raw.set(fc.normalize_codes(self.raw.get())))   # wklejone kody (spacje, sh_price:o1) zapisujemy jako sh_price_o1,…
         bar.add(tk.Button(bar, text="Zapisz", command=lambda: self.save(None)))
         bar.add(tk.Button(bar, text="⟳ Zapisz i pobierz ceny", command=lambda: self.save(sync.PRICES)))
         if not self.is_qm:
@@ -166,6 +170,7 @@ class ScannerEditor(tk.Toplevel):
             messagebox.showinfo("Import", "Nie znalazłem kodów filtrów (parametr f= w adresie).", parent=self)
             return
         self.raw.set(codes)
+        self.check_count()   # od razu pokazujemy, ile spółek zwróci Finviz dla wklejonych kodów
 
     # --- test liczby wyników
     def check_count(self):

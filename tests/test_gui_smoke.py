@@ -544,3 +544,28 @@ def test_pinned_window_and_grouped_launcher(app):
     app.root.update()
     kids = app.manager.tree.get_children()
     assert any(k.startswith("grp:") for k in kids)
+
+
+def test_pinned_box_chart_does_not_open_scanner_window(app):
+    from desktop import scanners
+    v = app.view
+    app.root.update()
+    t = v.store.rows[0]["ticker"]
+    _, dates, _, _ = v.store.series(t, v.store.tf)
+    v.store.pin(t, {"top": 1e6, "bottom": 1e5, "start": dates[-10]})
+    dup = scanners.duplicate(app.data_root, scanners.DEFAULT_ID, "Kopia")   # skaner z danymi i przypiętym boxem, bez otwartego okna
+    import shutil
+    src, dst = scanners.scanner_dir(app.data_root, scanners.DEFAULT_ID), scanners.scanner_dir(app.data_root, dup["id"])
+    for f in src.iterdir():
+        if f.is_file() and f.name != "finviz_screen.json":
+            shutil.copy(f, dst / f.name)
+    app.open_pinned()
+    app.root.update()
+    pw = app.pinned_win
+    iid = next(i for i, (sid, _r) in pw.rows.items() if sid == dup["id"])
+    pw.tree.selection_set(iid)
+    pw.open_row()
+    app.root.update()
+    assert dup["id"] not in app.windows and app.view_for(dup["id"]) is None   # okno skanera się nie otworzyło
+    host = app.hosts[dup["id"]]
+    assert host.chart is not None and host.chart.winfo_exists() and host.chart.focus_box and host.chart.ticker == t

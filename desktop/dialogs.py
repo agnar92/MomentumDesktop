@@ -227,10 +227,7 @@ class PinnedWindow(tk.Toplevel):
         if not item:
             return
         sid, r = item
-        self.app.open_scanner_window(sid)
-        view = self.app.view_for(sid)
-        if view is None:
-            return
+        view = self.app.view_for(sid) or self.app.chart_host(sid, self)   # nie otwieramy okna skanera / watchlisty — tylko wykres
         box = dict(r["box"])
         _, dates, _, _ = view.store.series(r["ticker"], view.store.tf)
         if box.get("i0", -1) < 0:   # przypięty: indeks z daty startu

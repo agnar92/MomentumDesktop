@@ -208,7 +208,8 @@ def test_launcher_orders_by_recent_and_session_is_restored(app, tmp_path):
     app2 = A.App(app.data_root)
     try:
         app2.root.update()
-        assert app2.view_for(b["id"]) is not None and app2.view_for(a["id"]) is None
+        assert _wait(app2, lambda: app2.view_for(b["id"]) is not None)   # okna z sesji wczytują się w tle (kółko „wczytuję”)
+        assert app2.view_for(a["id"]) is None
         assert app2.launcher is not None and app2.launcher.winfo_exists()
     finally:
         app2.root.destroy()

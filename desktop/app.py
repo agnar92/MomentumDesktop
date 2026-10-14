@@ -687,7 +687,6 @@ class App:
         if sid in self.syncing:
             messagebox.showinfo("Synchronizacja", "Ten skaner już się synchronizuje — poczekaj, aż skończy (inne skanery możesz synchronizować równolegle).", parent=view.root)
             return
-        no_cache = not any((d / "eps_cache.json").exists() for d in (view.store.dir, self.data_root))
         kind = view.scanner.get("kind") or scanners.KIND_FINVIZ
         if kind == scanners.KIND_WATCHLIST:
             self.start_merge(view)
@@ -695,9 +694,7 @@ class App:
         is_glb = "glb" in scanners.load_config(view.store.dir)   # skan Wish potrzebuje samych cen (+ danych miesięcznych), nie fundamentów
         if is_glb:
             mode = sync.PRICES
-        upgraded = kind == scanners.KIND_FINVIZ and not is_glb and mode == sync.PRICES and not (view.store.dir / "sync_state.json").exists() and no_cache
-        if upgraded:   # nigdzie nie ma jeszcze EPS ani estymat (ani w skanerze, ani we wspólnym cache) — pierwszy Sync pobiera fundamenty
-            mode = sync.FUNDAMENTALS
+        # Przyciski robią dokładnie to, co mówią: „ceny” = tylko ceny (zamknięcia, High, Low), „fundamenty” = ceny + EPS i estymaty. Żadnego dociągania fundamentów po cichu.
         view.set_sync_enabled(False)
         fund = mode == sync.FUNDAMENTALS
         name = view.scanner["name"]
@@ -705,9 +702,7 @@ class App:
         self.syncing[sid] = win
         win.log(f"Skaner: {name}")
         if mode == sync.PRICES and sid != scanners.DEFAULT_ID and not (view.store.dir / "sync_state.json").exists():
-            win.log("Nowy skaner: ceny pobieram szybko, EPS bierzemy ze wspólnego cache; spółki bez EPS dostaną dane po „Fundamenty”.")
-        if upgraded:
-            win.log("To pierwsza synchronizacja tego skanera — pobieram też fundamenty (EPS, estymaty), żeby CANSLIM i oceny miały dane.")
+            win.log("Tylko ceny (zamknięcia, High, Low); EPS i estymaty bierzemy ze wspólnego cache — spółki bez nich dostaną dane po „Fundamenty”.")
         if not skip_finviz:   # co dokładnie pobieramy z Finviz
             cfg = view.store.finviz_config()
             for line in finviz_codes.summary_lines(cfg.get("filters"), cfg.get("max_tickers")):

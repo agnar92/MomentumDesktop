@@ -125,7 +125,7 @@ def _wait(app, cond, seconds=4):
     return cond()
 
 
-def test_first_sync_of_new_scanner_fetches_fundamentals(app, monkeypatch):
+def test_prices_sync_of_new_scanner_never_fetches_fundamentals(app, monkeypatch):
     from desktop import scanners, sync
     monkeypatch.setattr("tkinter.messagebox.showinfo", lambda *a, **k: None)
     sc = scanners.upsert(app.data_root, {"name": "Nowy"}, "geo_usa", 20)
@@ -133,10 +133,13 @@ def test_first_sync_of_new_scanner_fetches_fundamentals(app, monkeypatch):
     view = app.view_for(sc["id"])
     seen = {}
     monkeypatch.setattr(sync, "run_in_subprocess", lambda data_dir, log, **k: seen.update(k) or 0)
-    (app.data_root / "eps_cache.json").unlink(missing_ok=True)   # nigdzie nie ma EPS -> pierwszy Sync pobiera fundamenty
+    (app.data_root / "eps_cache.json").unlink(missing_ok=True)   # nigdzie nie ma EPS — „ceny” i tak pobierają same ceny
     app.start_sync(view, sync.PRICES)
     assert _wait(app, lambda: not app.syncing)
-    assert seen["mode"] == sync.FUNDAMENTALS and seen["shared_root"] == app.data_root
+    assert seen["mode"] == sync.PRICES
+    app.start_sync(view, sync.FUNDAMENTALS)                      # dopiero „fundamenty” pobierają ceny i fundamenty
+    assert _wait(app, lambda: not app.syncing)
+    assert seen["mode"] == sync.FUNDAMENTALS
 
 
 def test_new_scanner_with_shared_eps_cache_syncs_only_prices(app, monkeypatch):

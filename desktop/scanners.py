@@ -8,7 +8,7 @@ import shutil
 import time
 from pathlib import Path
 
-from . import qm, store
+from . import finviz_catalog, qm, store
 
 DEFAULT_ID = "default"
 DEFAULT_NAME = "CANSLIM (domyślny)"
@@ -34,7 +34,7 @@ def scanner_dir(root, sid):
 
 def load_config(directory):
     cfg = store.read_json(Path(directory) / "finviz_screen.json", {}) or {}
-    out = {"filters": str(cfg.get("filters") or "").strip(), "max_tickers": int(cfg.get("max_tickers") or 300)}
+    out = {"filters": finviz_catalog.normalize_codes(str(cfg.get("filters") or "")), "max_tickers": int(cfg.get("max_tickers") or 300)}
     if isinstance(cfg.get("qm"), dict):   # skaner Qullamaggie: progi w tym samym pliku (czyta je też proces synchronizacji)
         out["qm"] = qm.normalize(cfg["qm"])
     return out
@@ -44,7 +44,7 @@ def save_config(directory, filters, max_tickers, qm_cfg=None):
     directory = Path(directory)
     directory.mkdir(parents=True, exist_ok=True)
     cfg = store.read_json(directory / "finviz_screen.json", {}) or {}
-    cfg["filters"], cfg["max_tickers"] = ",".join(c.strip() for c in filters.split(",") if c.strip()), int(max_tickers)
+    cfg["filters"], cfg["max_tickers"] = finviz_catalog.normalize_codes(filters), int(max_tickers)
     if qm_cfg is not None:
         cfg["qm"] = qm.normalize(qm_cfg)
     store.write_json(directory / "finviz_screen.json", cfg)

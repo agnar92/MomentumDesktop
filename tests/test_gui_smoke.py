@@ -471,6 +471,8 @@ def _clipped_buttons(win):
 
     def walk(w):
         for c in w.winfo_children():
+            if isinstance(c, tk.Toplevel):
+                continue   # okna potomne (np. wykres otwarty z okna przypiętych boxów) sprawdzamy osobno
             if isinstance(c, (tk.Button, tk.Checkbutton, tk.Radiobutton)) and c.winfo_ismapped():
                 if c.winfo_rootx() - rx + c.winfo_width() > W + 1 or c.winfo_rooty() - ry + c.winfo_height() > H + 1:
                     bad.append(c.cget("text"))
@@ -538,7 +540,7 @@ def test_pinned_window_and_grouped_launcher(app):
     pw.tree.selection_set(next(iter(pw.rows)))
     pw.open_row()
     app.root.update()
-    assert v.chart is not None and v.chart.focus_box
+    assert pw.host.chart is not None and pw.host.chart.focus_box
     assert not _clipped_buttons(pw) and not _clipped_buttons(app.launcher)
     app.open_manager()
     app.root.update()
@@ -547,14 +549,15 @@ def test_pinned_window_and_grouped_launcher(app):
 
 
 def test_pinned_box_chart_does_not_open_scanner_window(app):
+    import shutil
     from desktop import scanners
     v = app.view
     app.root.update()
-    t = v.store.rows[0]["ticker"]
-    _, dates, _, _ = v.store.series(t, v.store.tf)
-    v.store.pin(t, {"top": 1e6, "bottom": 1e5, "start": dates[-10]})
-    dup = scanners.duplicate(app.data_root, scanners.DEFAULT_ID, "Kopia")   # skaner z danymi i przypiętym boxem, bez otwartego okna
-    import shutil
+    rows = [r["ticker"] for r in v.store.rows[:2]]
+    _, dates, _, _ = v.store.series(rows[0], v.store.tf)
+    for t in rows:
+        v.store.pin(t, {"top": 1e6, "bottom": 1e5, "start": dates[-10]})
+    dup = scanners.duplicate(app.data_root, scanners.DEFAULT_ID, "Kopia")   # skaner z danymi i przypiętymi boxami, bez otwartego okna
     src, dst = scanners.scanner_dir(app.data_root, scanners.DEFAULT_ID), scanners.scanner_dir(app.data_root, dup["id"])
     for f in src.iterdir():
         if f.is_file() and f.name != "finviz_screen.json":
@@ -562,10 +565,35 @@ def test_pinned_box_chart_does_not_open_scanner_window(app):
     app.open_pinned()
     app.root.update()
     pw = app.pinned_win
+    assert len(pw.rows) >= 4
     iid = next(i for i, (sid, _r) in pw.rows.items() if sid == dup["id"])
     pw.tree.selection_set(iid)
-    pw.open_row()
+    pw.open_row()                                   # pierwsze otwarcie: dwuklik / Enter
     app.root.update()
     assert dup["id"] not in app.windows and app.view_for(dup["id"]) is None   # okno skanera się nie otworzyło
-    host = app.hosts[dup["id"]]
-    assert host.chart is not None and host.chart.winfo_exists() and host.chart.focus_box and host.chart.ticker == t
+    ch = pw.host.chart
+    assert ch is not None and ch.winfo_exists() and ch.focus_box
+    first = (pw.rows[iid][0], ch.ticker)
+    # strzałki w oknie wykresu zmieniają zaznaczenie na liście i wykres
+    ch.event_generate("<Down>")
+    app.root.update()
+    ids = list(pw.tree.get_children())
+    cur = pw.current()
+    assert cur != iid and cur in ids
+    assert ch.ticker == pw.rows[cur][1]["ticker"] and pw.host.scanner["id"] == pw.rows[cur][0]
+    assert (pw.rows[cur][0], ch.ticker) != first or len(ids) == 1
+    # zmiana zaznaczenia na liście (strzałką na liście) też przełącza otwarty wykres
+    pw.tree.selection_set(ids[0])
+    app.root.update()
+    assert ch.ticker == pw.rows[ids[0]][1]["ticker"]
+
+
+def test_restored_scanner_windows_load_in_background(app):
+    from desktop import scanners
+    sc = scanners.upsert(app.data_root, {"name": "Ładowany", "kind": scanners.KIND_WATCHLIST, "sources": []})
+    app.open_scanner_window(sc["id"], defer=True)
+    w = app.windows[sc["id"]]
+    assert w.view is None and w.loader is not None          # od razu okno z kółkiem „wczytuję”
+    app.root.update()
+    assert _wait(app, lambda: w.view is not None)
+    assert w.loader is None and app.view_for(sc["id"]) is w.view

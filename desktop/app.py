@@ -14,17 +14,17 @@ from .launcher import LauncherWindow
 from .dialogs import (BoxesWindow, CanslimWindow, ColumnsWindow, FilterWindow, FinvizCriteriaWindow, ListNamesWindow, PinnedWindow, SymbolDialog,
                       WhatsNewWindow)
 from .theme import BG, FG, PANEL, Flow, MenuBar, apply_dark, autowrap, fit_window, setup_style
-from .widgets import StockTable, SyncWindow
+from .widgets import LoadingFrame, StockTable, SyncWindow
 
 
 class ScannerView(tk.Frame):
     """Lista jednego skanera (własne dane, kolumny, skala, filtr lokalny, wykres) — w głównym oknie albo w osobnym oknie skanera."""
 
-    def __init__(self, master, app, scanner, root_window):
+    def __init__(self, master, app, scanner, root_window, loaded=None):
         super().__init__(master, bg=PANEL)
         self.app, self.scanner, self.root = app, scanner, root_window
         default = scanner["id"] == scanners.DEFAULT_ID
-        self.store = store.Store(scanners.scanner_dir(app.data_root, scanner["id"]), seed=default)
+        self.store = loaded or store.Store(scanners.scanner_dir(app.data_root, scanner["id"]), seed=default)
         self.chart = self.filter_win = self.boxes = None
         self.main_filter = {}
         self.kind = scanner.get("kind") or scanners.KIND_FINVIZ
@@ -268,13 +268,20 @@ class ScannerView(tk.Frame):
 
 
 class ChartHost:
-    """Lekki „widok” dla wykresu otwieranego spoza okna skanera (np. z okna przypiętych boxów): ma dane skanera z dysku, ale NIE otwiera okna
-    skanera ani watchlisty. Zapewnia to, czego oczekuje ChartWindow (store, root, open_canslim, step_chart…)."""
+    """Lekki „widok” dla wykresu otwieranego spoza okna skanera (okno przypiętych boxów): ma dane skanera z dysku, ale NIE otwiera okna
+    skanera ani watchlisty. Zapewnia to, czego oczekuje ChartWindow (store, root, open_canslim, step_chart…). Jeden host obsługuje cały
+    wykres — przy przejściu na box z innego skanera podmieniamy tylko dane (`use`), więc strzałki ↑/↓ przechodzą przez całą listę."""
 
-    def __init__(self, app, scanner, parent):
-        self.app, self.scanner, self.root = app, scanner, parent
-        self.store = store.Store(scanners.scanner_dir(app.data_root, scanner["id"]), seed=scanner["id"] == scanners.DEFAULT_ID)
+    def __init__(self, app, parent):
+        self.app, self.root, self.parent = app, parent, parent
+        self.scanner = self.store = None
         self.chart = None
+
+    def use(self, scanner):
+        """Przełącza dane na skaner `scanner` (świeże z dysku, tylko gdy to inny skaner niż poprzednio)."""
+        if self.scanner is None or self.scanner["id"] != scanner["id"]:
+            self.scanner = scanner
+            self.store = store.Store(scanners.scanner_dir(self.app.data_root, scanner["id"]), seed=scanner["id"] == scanners.DEFAULT_ID)
 
     def open_chart(self, ticker, focus=None):
         if not ticker:
@@ -293,15 +300,21 @@ class ChartHost:
             CanslimWindow(self, ticker)
 
     def step_chart(self, delta):
-        pass
+        """↑/↓ w oknie wykresu: przechodzi do następnego / poprzedniego boxa na liście przypiętych."""
+        if self.parent.winfo_exists():
+            self.parent.step(delta)
 
     def open_symbol_dialog(self):
         pass
 
     def refresh_lists(self):
-        win = getattr(self.app, "pinned_win", None)
-        if win is not None and win.winfo_exists():
-            win.refresh()
+        """Po przypięciu / odpięciu na wykresie: odśwież listę przypiętych i otwarty widok tego skanera (zapis jest na dysku)."""
+        view = self.app.view_for(self.scanner["id"]) if self.scanner else None
+        if view is not None and view.store is not self.store:
+            view.store.pinned = dict(self.store.pinned)
+            view.refresh_lists()
+        if self.parent.winfo_exists():
+            self.parent.refresh(keep=True)
 
 
 class WatchlistView(ScannerView):
@@ -310,10 +323,10 @@ class WatchlistView(ScannerView):
 
     DEFAULT_COLUMNS = ["ticker", "flag", "price", "qm_max_ratio", "low_ratio_1m", "low_ratio_3m", "low_ratio_6m", "qm_windows", "darvas"]
 
-    def __init__(self, master, app, scanner, root_window):
+    def __init__(self, master, app, scanner, root_window, loaded=None):
         tk.Frame.__init__(self, master, bg=PANEL)
         self.app, self.scanner, self.root = app, scanner, root_window
-        self.store = store.Store(scanners.scanner_dir(app.data_root, scanner["id"]), seed=False)
+        self.store = loaded or store.Store(scanners.scanner_dir(app.data_root, scanner["id"]), seed=False)
         self.chart = self.filter_win = self.boxes = None
         self.main_filter = {}
         self.kind = scanners.KIND_WATCHLIST
@@ -368,33 +381,90 @@ class WatchlistView(ScannerView):
         self.prices_btn.config(state="normal" if on else "disabled")
 
 
-class WatchlistWindow(tk.Toplevel):
+def load_store_async(root, scanner, app, done):
+    """Wczytuje dane skanera w wątku (okno z kręcącym się kółkiem nie zamarza); `done(store)` woła się w pętli Tk, store=None przy błędzie."""
+    result = {}
+
+    def work():
+        try:
+            result["store"] = store.Store(scanners.scanner_dir(app.data_root, scanner["id"]), seed=scanner["id"] == scanners.DEFAULT_ID)
+        except Exception:   # noqa: BLE001 — okno zbuduje wtedy własny Store i pokaże błąd normalnie
+            result["store"] = None
+
+    def poll():
+        if "store" in result:
+            done(result["store"])
+        else:
+            root.after(40, poll)
+
+    threading.Thread(target=work, daemon=True).start()
+    root.after(40, poll)
+
+
+class _ScannerWindowBase(tk.Toplevel):
+    """Wspólne dla okien skanera i watchlisty: przy `defer=True` (start programu) okno pokazuje się od razu z kółkiem „wczytuję”, a dane
+    dochodzą w tle; `self.view` jest None, dopóki nie skończą się wczytywać."""
+
+    VIEW = None
+    SIZE = (1360, 720)
+
+    def __init__(self, app, scanner, defer=False):
+        super().__init__(app.root)
+        self.app, self.scanner, self.view, self.loader = app, scanner, None, None
+        self.configure(bg=BG)
+        self.title(f"{scanner['name']} — wczytuję…")
+        apply_dark(self)
+        self.protocol("WM_DELETE_WINDOW", lambda: app.window_closed(scanner["id"]))
+        if defer:
+            self.geometry(f"{self.SIZE[0]}x{self.SIZE[1]}")
+            self.loader = LoadingFrame(self, f"Wczytuję „{scanner['name']}”…")
+            self.loader.pack(fill="both", expand=True)
+            load_store_async(self, scanner, app, self._finish)
+        else:
+            self._build(None)
+
+    def _finish(self, loaded):
+        if self.winfo_exists():
+            self._build(loaded, resize=False)
+            self.app.refresh_launcher()
+
+    def _build(self, loaded, resize=True):
+        if self.loader is not None:
+            self.loader.destroy()
+            self.loader = None
+        self.view = self.VIEW(self, self.app, self.scanner, self, loaded=loaded)
+        self.view.pack(fill="both", expand=True)
+        self.after_build(resize)
+
+    def after_build(self, resize):
+        pass
+
+
+class WatchlistWindow(_ScannerWindowBase):
     """Małe okno watchlisty (wąskie, z samymi tickerami)."""
 
-    def __init__(self, app, scanner):
-        super().__init__(app.root)
-        self.configure(bg=BG)
-        apply_dark(self)
-        self.view = WatchlistView(self, app, scanner, self)
-        self.view.pack(fill="both", expand=True)
+    VIEW = WatchlistView
+    SIZE = (560, 620)
+
+    def after_build(self, resize):
         width = sum(columns_mod.DEFS[c][1] for c in self.view.columns() if c in columns_mod.DEFS) + 40   # szerokość = suma kolumn
-        fit_window(self, min(max(width, 430), 900), 620, min_w=360)
-        self.protocol("WM_DELETE_WINDOW", lambda: app.window_closed(scanner["id"]))
+        if resize:
+            fit_window(self, min(max(width, 430), 900), 620, min_w=360)
+        else:
+            self.geometry(f"{min(max(width, 430), 900)}x620")
+            self.minsize(360, 300)
 
 
-class ScannerListWindow(tk.Toplevel):
+class ScannerListWindow(_ScannerWindowBase):
     """Osobne okno własnego skanera."""
 
-    def __init__(self, app, scanner):
-        super().__init__(app.root)
-        self.configure(bg=BG)
-        apply_dark(self)
-        self.view = ScannerView(self, app, scanner, self)
-        self.view.pack(fill="both", expand=True)
-        fit_window(self, 1360, 720)
+    VIEW = ScannerView
+
+    def after_build(self, resize):
+        if resize:
+            fit_window(self, 1360, 720)
         self.bind("<F5>", lambda e: self.view.start_sync(sync.PRICES))
         self.bind("<Shift-F5>", lambda e: self.view.start_sync(sync.FUNDAMENTALS))
-        self.protocol("WM_DELETE_WINDOW", lambda: app.window_closed(scanner["id"]))
 
 
 class App:
@@ -454,7 +524,7 @@ class App:
         ]
 
     def all_views(self):
-        return [self.view] + [w.view for w in self.windows.values() if w.winfo_exists()]
+        return [self.view] + [w.view for w in self.windows.values() if w.winfo_exists() and w.view is not None]
 
     def refresh_flag_views(self):
         """Flagi są wspólne dla wszystkich skanerów: po zmianie odświeżamy wszystkie listy."""
@@ -475,14 +545,6 @@ class App:
             return self.view
         w = self.windows.get(sid)
         return w.view if w is not None and w.winfo_exists() else None
-
-    def chart_host(self, sid, parent):
-        """Widok do otwarcia wykresu skanera `sid` bez otwierania jego okna (świeże dane z dysku; ten sam host, dopóki jego wykres jest otwarty)."""
-        hosts = self.__dict__.setdefault("hosts", {})
-        host = hosts.get(sid)
-        if host is None or host.chart is None or not host.chart.winfo_exists():
-            host = hosts[sid] = ChartHost(self, scanners.get(self.data_root, sid), parent)
-        return host
 
     def open_pinned(self):
         if getattr(self, "pinned_win", None) is None or not self.pinned_win.winfo_exists():
@@ -505,7 +567,7 @@ class App:
         if sc:
             (WatchlistEditor(self, sc) if sc.get("kind") == scanners.KIND_WATCHLIST else ScannerEditor(self, sc))
 
-    def open_scanner_window(self, sid):
+    def open_scanner_window(self, sid, defer=False):
         session.touch(self.session, sid)
         if sid == scanners.DEFAULT_ID:
             self.show_main()
@@ -516,7 +578,7 @@ class App:
             else:
                 sc = scanners.get(self.data_root, sid)
                 if sc:
-                    self.windows[sid] = (WatchlistWindow if sc.get("kind") == scanners.KIND_WATCHLIST else ScannerListWindow)(self, sc)
+                    self.windows[sid] = (WatchlistWindow if sc.get("kind") == scanners.KIND_WATCHLIST else ScannerListWindow)(self, sc, defer=defer)
         self.save_session()
         self.refresh_launcher()
 
@@ -585,7 +647,7 @@ class App:
             self.main_hidden, want_launcher = True, True
         for sid in to_open:
             if sid != scanners.DEFAULT_ID and scanners.get(self.data_root, sid):
-                self.open_scanner_window(sid)
+                self.open_scanner_window(sid, defer=True)   # okno od razu z kółkiem „wczytuję”, dane w tle
         if want_launcher:
             self.open_launcher()
 

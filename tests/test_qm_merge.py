@@ -317,8 +317,9 @@ def test_glb_prefilter_skips_far_from_high_and_fetch_respects_budget(tmp_path, m
     out = {s["ticker"]: s for s in json.loads((tmp_path / "watchlist.json").read_text())["stocks"]}
     assert sorted(asked) == ["NEAR", "UNK"] and out["FAR"]["glb_state"] == "NONE" and out["NEAR"]["glb_state"] == "WAIT"
     # twardy limit czasu: wiszące zapytania nie blokują Synca, a masowe błędy nie uruchamiają wolnej ścieżki yfinance
-    monkeypatch.setattr(glb, "_fetch_one", lambda session, t: time.sleep(5))
+    import requests  # noqa: F401 — import poza pomiarem czasu (zimny import na CI trwa sekundy)
+    monkeypatch.setattr(glb, "_fetch_one", lambda session, t: time.sleep(6))
     monkeypatch.setattr(glb, "_fetch_yfinance", lambda *a, **k: (_ for _ in ()).throw(AssertionError("zapasowa ścieżka nie powinna ruszyć")))
     logs, t0 = [], time.time()
     res = glb.fetch_monthly([f"T{i}" for i in range(300)], logs.append, workers=4, budget=1)
-    assert res == {} and time.time() - t0 < 4 and any("limit czasu" in x for x in logs)
+    assert res == {} and time.time() - t0 < 4.5 and any("limit czasu" in x for x in logs)   # budżet 1 s, zapytania śpią po 6 s — nie czekamy na nie

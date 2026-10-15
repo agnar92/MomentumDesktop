@@ -21,7 +21,7 @@ Prosta, „retro” aplikacja okienkowa (Python + Tkinter, styl TC2000) oparta n
   **Watchlista** to tylko małe, wąskie okno z listą tickerów z kilku skanów wg kryteriów — kliknięcie tickera (albo ↑ / ↓) otwiera lub przełącza Dar-Card
   i wykres słupkowy. Bez filtrów i paska skanera; nic nie pobiera, tylko składa listę z już pobranych skanów (*Skanery → Nowa watchlista…*, przycisk
   *⟳ Odśwież*, odświeża się też sama po Sync skanu). Dla każdego skanu wybierasz kryterium: **wszystkie spółki**, **Qullamaggie**, **CANSLIM ≥ n/7** albo **Wish: Green Line Breakout**.
-- **Filtr po kolumnach w watchliście** (*⚗ Filtr…*): mały skrypt na dowolnych kolumnach, także tych, których nie pokazujesz w tabeli (kolumny dodajesz przyciskiem *▤ Kolumny…*). Jeden warunek w linii
+- **Filtr po kolumnach w skanach i watchlistach** (*⚗ Filtr kolumn…*): mały skrypt na dowolnych kolumnach, także tych, których nie pokazujesz w tabeli (kolumny dodajesz przyciskiem *▤ Kolumny…*). Jeden warunek w linii
   (linie łączone `and`), albo `and` / `or` i nawiasy: `adr_pct >= 4`, `"Cena/min 3M" > 1.5 and price < 100`, `glb_state == WYBICIE`, `rs_rating != brak`. Operatory `> < >= <= == !=`; kolumna = klucz
   (`adr_pct`) albo etykieta w cudzysłowie; tekst bez rozróżniania wielkości liter, także w postaci wyświetlanej (`darvas == KUP`). Lewa lista pokazuje dostępne kolumny (dwuklik wstawia nazwę), a podgląd na
   żywo mówi, ile spółek pasuje albo gdzie jest błąd. Filtr zapisuje się razem z watchlistą; błędny skrypt nie ukrywa listy, tylko pokazuje komunikat w pasku statusu.

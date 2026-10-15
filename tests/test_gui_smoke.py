@@ -732,3 +732,20 @@ def test_watchlist_expression_filter_is_saved_and_applied(app, monkeypatch):
     assert len(mv.table.visible()) == total and "filtr" in mv.status.cget("text") and "nieznana kolumna" in mv.status.cget("text")
     win.clear()
     assert len(mv.table.visible()) == total and scanners.get(app.data_root, wl["id"])["filter"] == ""
+
+
+def test_scan_window_expression_filter(app):
+    from desktop import scanners
+    app.open_scanner_window(scanners.DEFAULT_ID)
+    sv = app.view_for(scanners.DEFAULT_ID)
+    app.root.update()
+    total = len(sv.table.visible())
+    assert total > 5
+    prices = sorted(r["price"] for r in sv.store.rows if isinstance(r.get("price"), (int, float)))
+    cut = prices[len(prices) // 2]
+    sv.set_expr_filter(f"price >= {cut}")
+    app.root.update()
+    assert 0 < len(sv.table.visible()) < total and "●" in sv.expr_btn.cget("text")
+    assert scanners.get(app.data_root, scanners.DEFAULT_ID)["filter"].startswith("price >=")
+    sv.set_expr_filter("")
+    assert len(sv.table.visible()) == total

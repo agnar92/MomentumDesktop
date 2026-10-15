@@ -45,21 +45,22 @@ def boxes(c, confirm=CONFIRM, bottom_confirm=None):
             if not _ok(c[k]) or c[k] < run_max:
                 continue
             run_max = c[k]
-            if k + confirm < n and all(v <= c[k] for v in c[k + 1:k + confirm + 1]):
+            if k + confirm < n and all(_ok(v) and v <= c[k] for v in c[k + 1:k + confirm + 1]):   # luka w danych (None) nie potwierdza szczytu — jak NaN w JS
                 t, top = k, c[k]
                 break
         if t < 0:
             break
         bottom, bi, confirmed, end, outcome = math.inf, -1, False, -1, "open"
         for j in range(t + 1, n):
-            if c[j] > top:
+            v, ok = c[j], _ok(c[j])   # tydzień bez notowania (None) nie zmienia boxa, ale upływ czasu liczy się do potwierdzenia dołu
+            if ok and v > top:
                 outcome, end = "up", j
                 break
-            if confirmed and c[j] < bottom:
+            if confirmed and ok and v < bottom:
                 outcome, end = "down", j
                 break
-            if not confirmed and c[j] < bottom:
-                bottom, bi = c[j], j
+            if not confirmed and ok and v < bottom:
+                bottom, bi = v, j
             if not confirmed and bi >= 0 and j - bi >= bottom_confirm:
                 confirmed = True
         if end < 0:

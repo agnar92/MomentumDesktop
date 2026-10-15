@@ -147,14 +147,15 @@ class ScannerEditor(tk.Toplevel):
     def build_glb_frame(self, g):
         box = tk.LabelFrame(self, text=" Wish: Green Line Breakout (wykres miesięczny, zamknięcia) ", bg=PANEL, fg=FG)
         box.pack(fill="x", padx=6, pady=4)
-        self.gv = {"confirm_months": tk.StringVar(value=f"{g['confirm_months']:g}"), "late_pct": tk.StringVar(value=f"{g['late_pct']:g}")}
-        for n, (label, key) in enumerate((("Linia = szczyt nie pobity przez ≥ (miesięcy):", "confirm_months"), ("„Za późno”, gdy cena > (% nad linią):", "late_pct"))):
-            tk.Label(box, text=label, bg=PANEL, anchor="e").grid(row=0, column=n * 2, sticky="e", padx=(10, 3), pady=3)
-            tk.Entry(box, textvariable=self.gv[key], width=6).grid(row=0, column=n * 2 + 1, sticky="w")
+        self.gv = {k: tk.StringVar(value=f"{g[k]:g}") for k in ("confirm_months", "late_pct", "max_from_high_pct")}
+        for n, (label, key) in enumerate((("Linia = szczyt nie pobity przez ≥ (miesięcy):", "confirm_months"), ("„Za późno”, gdy cena > (% nad linią):", "late_pct"),
+                                          ("Analizuj spółki do ≤ (% pod szczytem 52 tyg.):", "max_from_high_pct"))):
+            tk.Label(box, text=label, bg=PANEL, anchor="e").grid(row=n // 2, column=(n % 2) * 2, sticky="e", padx=(10, 3), pady=3)
+            tk.Entry(box, textvariable=self.gv[key], width=6).grid(row=n // 2, column=(n % 2) * 2 + 1, sticky="w")
         autowrap(tk.Label(box, text="Po Sync pobieram miesięczne zamknięcia z całej historii i liczę zieloną linię (najwyższe zamknięcie miesięczne, którego przez kilka miesięcy nikt nie pobił — "
                                     "jak top Darvasa, tylko na wykresie miesięcznym). Kolumna GLB: WYBICIE (w tym miesiącu), po wybiciu, czeka (cena pod linią), za późno. "
                                     "Linia jest też rysowana na wykresie. Filtry Finviz poniżej są tylko wstępnym sitem (akcje, płynność, cena) — ATH i linię liczy aplikacja, więc nie trzeba filtra szczytu z Finviz.",
-                          bg=PANEL, fg="#8b95a3")).grid(row=1, column=0, columnspan=4, sticky="we", padx=10, pady=(0, 4))
+                          bg=PANEL, fg="#8b95a3")).grid(row=2, column=0, columnspan=4, sticky="we", padx=10, pady=(0, 4))
         box.columnconfigure(3, weight=1)
 
     def glb_values(self):

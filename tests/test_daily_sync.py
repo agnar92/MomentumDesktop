@@ -113,7 +113,7 @@ def test_run_in_subprocess_streams_log_and_exit_code(tmp_path, monkeypatch):
     monkeypatch.setattr(sync, "worker_command", lambda *a, **k: [sys.executable, "-c", "print('pierwsza ✅'); print(); print('druga'); raise SystemExit(3)"])
     lines = []
     assert sync.run_in_subprocess(tmp_path, lines.append, mode=sync.PRICES) == 3
-    assert lines == ["pierwsza ✅", "druga"]
+    assert lines == ["pierwsza ✅", "druga", "Proces synchronizacji zakończony (kod 3)."]
     monkeypatch.setattr(sync, "worker_command", lambda *a, **k: ["/nie/ma/takiego/programu"])
     assert sync.run_in_subprocess(tmp_path, lines.append) == 1 and "Nie można uruchomić" in lines[-1]
 

@@ -301,3 +301,24 @@ def test_wish_scan_sync_is_prices_only(tmp_path):
 def test_wish_preset_has_no_finviz_ath_filter():
     from desktop import builder
     assert "ta_alltime" not in builder.WISH_FILTERS and "sh_price_o1" in builder.WISH_FILTERS
+
+
+def test_glb_prefilter_skips_far_from_high_and_fetch_respects_budget(tmp_path, monkeypatch):
+    import json
+    import time
+
+    from desktop import glb
+    base = [10, 12, 14, 16, 18, 20, 18, 17, 18, 19]
+    wl = {"stocks": [{"ticker": "NEAR", "price": 19.0, "pct_from_high_52w": -5.0}, {"ticker": "FAR", "price": 8.0, "pct_from_high_52w": -60.0},
+                     {"ticker": "UNK", "price": 19.0}]}
+    (tmp_path / "watchlist.json").write_text(json.dumps(wl))
+    asked = []
+    glb.apply(tmp_path, {}, lambda *_: None, fetch=lambda t, log: asked.extend(t) or {x: {"d": [], "c": base} for x in t})
+    out = {s["ticker"]: s for s in json.loads((tmp_path / "watchlist.json").read_text())["stocks"]}
+    assert sorted(asked) == ["NEAR", "UNK"] and out["FAR"]["glb_state"] == "NONE" and out["NEAR"]["glb_state"] == "WAIT"
+    # twardy limit czasu: wiszące zapytania nie blokują Synca, a masowe błędy nie uruchamiają wolnej ścieżki yfinance
+    monkeypatch.setattr(glb, "_fetch_one", lambda session, t: time.sleep(5))
+    monkeypatch.setattr(glb, "_fetch_yfinance", lambda *a, **k: (_ for _ in ()).throw(AssertionError("zapasowa ścieżka nie powinna ruszyć")))
+    logs, t0 = [], time.time()
+    res = glb.fetch_monthly([f"T{i}" for i in range(300)], logs.append, workers=4, budget=1)
+    assert res == {} and time.time() - t0 < 4 and any("limit czasu" in x for x in logs)

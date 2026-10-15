@@ -1,12 +1,15 @@
 """Momentum Desktop — uruchomienie: python main.py
   --selftest: sprawdza tylko, czy silnik Finviz / yfinance się ładuje; --sync <katalog> …: proces pomocniczy jednej synchronizacji (używany przez program)."""
+import os
 import sys
 
 if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1] == "--sync":
         from desktop import sync
 
-        sys.exit(sync.worker_main(sys.argv[2:]))
+        code = sync.worker_main(sys.argv[2:])
+        sys.stdout.flush()
+        os._exit(code or 0)   # bez czekania na zbłąkane wątki (yfinance / requests) — proces pomocniczy kończy się od razu po synchronizacji
     elif "--selftest" in sys.argv:
         from desktop import sync
 

@@ -1,4 +1,5 @@
 """Wspólne widżety: lista spółek z wybieranymi kolumnami i okno dziennika synchronizacji."""
+import time
 import tkinter as tk
 from tkinter import ttk
 
@@ -189,11 +190,15 @@ class SyncWindow(tk.Toplevel):
         self.bar.start(12)
         self.text = tk.Text(self, bg="#0f1318", fg=FG, wrap="word", state="disabled")
         self.text.pack(fill="both", expand=True)
+        self.t0 = time.time()
         fit_window(self, 760, 420)
 
     def log(self, line):
+        self.t0 = getattr(self, "t0", None) or time.time()
+        el = int(time.time() - self.t0)
+        stamp = f"[{el // 60}:{el % 60:02d}] "   # czas od początku synchronizacji — widać, który etap trwa i ile
         self.text.config(state="normal")
-        self.text.insert("end", line + "\n")
+        self.text.insert("end", stamp + line + "\n")
         self.text.see("end")
         self.text.config(state="disabled")
 

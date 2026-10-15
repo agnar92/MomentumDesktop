@@ -1,7 +1,9 @@
 """Okna aplikacji Momentum Desktop — prosty, „retro” interfejs w stylu TC2000: główne okno (skaner domyślny), własne skanery w osobnych oknach,
 wykresy, boxy, kreator skanerów Finviz, synchronizacja."""
+import contextlib
 import queue
 import threading
+import traceback
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
@@ -763,30 +765,57 @@ class App:
                     v.reload()
 
     def _poll(self):
+        """Odbiera komunikaty procesów synchronizacji. Wyjątek w obsłudze jednego komunikatu nie może zabić pętli (wtedy okno synchronizacji „pracowałoby”
+        w nieskończoność, a lista nigdy by się nie odświeżyła) — błąd trafia do dziennika synchronizacji i pliku data/error.log, a pętla działa dalej."""
         try:
             while True:
-                kind, sid, val = self.q.get_nowait()
-                win = self.syncing.get(sid)
-                if kind == "log":
-                    if win is not None and win.winfo_exists():
-                        win.log(val)
-                elif kind == "done":
-                    self.syncing.pop(sid, None)
-                    view = self.view_for(sid)
-                    if view is not None:
-                        view.set_sync_enabled(True)
-                        if val:
-                            view.reload() if view.kind == scanners.KIND_WATCHLIST else self.after_sync(view)
+                try:
+                    kind, sid, val = self.q.get_nowait()
+                except queue.Empty:
+                    break
+                try:
+                    self._handle(kind, sid, val)
+                except Exception:   # noqa: BLE001
+                    self._report_error(sid, traceback.format_exc())
+        finally:
+            self.root.after(150, self._poll)
+
+    def _report_error(self, sid, tb):
+        win = self.syncing.get(sid)
+        if win is not None and win.winfo_exists():
+            win.log("❌ Błąd programu przy obsłudze synchronizacji:\n" + tb)
+        with contextlib.suppress(OSError):
+            with open(self.data_root / "error.log", "a", encoding="utf-8") as f:
+                f.write(f"--- {sync.now_iso()} ({sid})\n{tb}\n")
+
+    def _handle(self, kind, sid, val):
+        win = self.syncing.get(sid)
+        if kind == "log":
+            if win is not None and win.winfo_exists():
+                win.log(val)
+        elif kind == "done":
+            self.syncing.pop(sid, None)
+            try:
+                view = self.view_for(sid)
+                if view is not None:
+                    view.set_sync_enabled(True)
                     if val:
-                        self.refresh_merges(sid)
-                    if self.manager is not None and self.manager.winfo_exists():
-                        self.manager.refresh()
-                    if win is not None and win.winfo_exists():
-                        win.done(val)
-                    self.refresh_launcher()
-        except queue.Empty:
-            pass
-        self.root.after(150, self._poll)
+                        view.reload() if view.kind == scanners.KIND_WATCHLIST else self.after_sync(view)
+                if val:
+                    self.refresh_merges(sid)
+                if self.manager is not None and self.manager.winfo_exists():
+                    self.manager.refresh()
+                self.refresh_launcher()
+            except Exception:   # noqa: BLE001 — okno synchronizacji zawsze się kończy, nawet gdy odświeżenie listy się nie udało
+                tb = traceback.format_exc()
+                if win is not None and win.winfo_exists():
+                    win.log("❌ Błąd odświeżania listy po synchronizacji:\n" + tb)
+                with contextlib.suppress(OSError):
+                    with open(self.data_root / "error.log", "a", encoding="utf-8") as f:
+                        f.write(f"--- {sync.now_iso()} ({sid})\n{tb}\n")
+            finally:
+                if win is not None and win.winfo_exists():
+                    win.done(val)
 
     def after_sync(self, view):
         """Przeładowuje dane skanera i porównuje listę z poprzednią (co nowego); okno zmian otwiera się samo, gdy coś się zmieniło."""

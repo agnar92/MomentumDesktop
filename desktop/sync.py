@@ -404,4 +404,6 @@ def run_in_subprocess(data_dir, log, mode=FUNDAMENTALS, skip_finviz=False, extra
         line = line.rstrip("\n")
         if line.strip():
             log(line)
-    return p.wait()
+    code = p.wait()
+    log(f"Proces synchronizacji zakończony (kod {code}).")
+    return code

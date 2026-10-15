@@ -650,3 +650,30 @@ def test_sync_window_log_has_elapsed_stamp(app):
     text = w.text.get("1.0", "end")
     assert text.startswith("[0:0") and "pierwsza linia" in text
     w.destroy()
+
+
+def test_poll_survives_errors_in_done_handler_and_finishes_sync_window(app, monkeypatch):
+    from desktop import scanners
+    from desktop.widgets import SyncWindow
+    sc = scanners.upsert(app.data_root, {"name": "Awaria"}, "geo_usa", 20)
+    app.open_scanner_window(sc["id"])
+    app.root.update()
+    view = app.view_for(sc["id"])
+    win = SyncWindow(app, "x")
+    app.syncing[sc["id"]] = win
+
+    def boom(_view):
+        raise RuntimeError("awaria odświeżania")
+    monkeypatch.setattr(app, "after_sync", boom)
+    app.q.put(("done", sc["id"], True))
+    assert _wait(app, lambda: sc["id"] not in app.syncing)
+    app.root.update()
+    text = win.text.get("1.0", "end")
+    assert "awaria odświeżania" in text and str(win.btn["state"]) == "normal"   # błąd widoczny w dzienniku, okno zakończone, przycisk Zamknij aktywny
+    assert (app.data_root / "error.log").exists()
+    # pętla odbioru żyje: kolejne komunikaty nadal są obsługiwane
+    win2 = SyncWindow(app, "y")
+    app.syncing["inny"] = win2
+    app.q.put(("log", "inny", "linia po awarii"))
+    assert _wait(app, lambda: "linia po awarii" in win2.text.get("1.0", "end"))
+    assert view is not None

@@ -677,3 +677,23 @@ def test_poll_survives_errors_in_done_handler_and_finishes_sync_window(app, monk
     app.q.put(("log", "inny", "linia po awarii"))
     assert _wait(app, lambda: "linia po awarii" in win2.text.get("1.0", "end"))
     assert view is not None
+
+
+def test_darvas_boxes_tolerate_gaps_in_closes_and_store_loads_them(app):
+    from desktop import darvas
+    c = [10, 11, None, 13, 12, None, 11, 10.5, 11, None, 11.5, 11, 10, None, 9.5, 9]
+    bx = darvas.boxes(c)                       # luki (None) w środku serii nie wywalają boxów ani stanu
+    st = darvas.status(c)
+    assert isinstance(bx, list) and st["state"] in ("WAIT", "HOLD", "OUT", "SELL", "NONE", "BUY", "NOVOL", "LATE")
+    assert darvas.boxes([10, None, 12, None, None, None, None]) is not None
+    # pełna ścieżka: spółka z lukami w danych tygodniowych i dziennych ładuje się do listy bez wyjątku
+    v = app.view
+    t = v.store.rows[0]["ticker"]
+    full = v.store.stocks_full[t]
+    full["c"] = [None if i % 7 == 3 else x for i, x in enumerate(full["c"])]
+    d = v.store.charts_d.get("stocks", {}).get(t)
+    if d:
+        d["c"] = [None if i % 9 == 4 else x for i, x in enumerate(d["c"])]
+    row = darvas.status(full["c"], full.get("v"))
+    assert row["state"] is not None
+    v.store.reload()

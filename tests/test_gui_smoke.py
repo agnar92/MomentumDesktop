@@ -640,3 +640,13 @@ def test_chart_window_remembers_settings_across_tickers_and_windows(app):
     v.open_chart(t2)
     c2 = v.chart
     assert c2.tf.get() == "D" and c2.mode.get() == "bars" and c2.log.get() is False and c2.n_show == n
+
+
+def test_sync_window_log_has_elapsed_stamp(app):
+    from desktop.widgets import SyncWindow
+    w = SyncWindow(app, "x")
+    w.log("pierwsza linia")
+    app.root.update()
+    text = w.text.get("1.0", "end")
+    assert text.startswith("[0:0") and "pierwsza linia" in text
+    w.destroy()

@@ -70,11 +70,16 @@ def age_days(iso, now=None):
 HISTORY_PERIOD = "3y"   # silnik Momentum domyślnie pobiera 10 lat (wykres 6-letni w stylu książki); do naszej analizy (RS 12M, ADR, bazy, Darvas) wystarczą 3 lata
 
 
+PRICE_BATCH = 100
+EPS_WORKERS = 8      # silnik używa 4 wątków do EPS i estymat; 8 skraca fundamenty ok. dwukrotnie (pomiar), a Yahoo to jeszcze znosi
+
+
 def history_downloader(orig, period=HISTORY_PERIOD):
     """Opakowanie download_prices: bez jawnego okresu pobiera `period` (3 lata) zamiast 10 lat; wywołania z własnym okresem (np. kurs USD/PLN) bez zmian."""
     def wrapped(tickers, *a, **k):
         if not a and "period" not in k:
             k["period"] = period
+            k.setdefault("batch_size", PRICE_BATCH)   # większe paczki yfinance: mniej rund (pomiar: ~25 % szybciej niż po 50)
         return orig(tickers, *a, **k)
     return wrapped
 
@@ -259,6 +264,7 @@ def run_sync(data_dir, log=print, mode=FUNDAMENTALS, skip_finviz=False, max_tick
         watchlist.update_estimates = lambda tickers, path=None, **k: (store.read_json(path, {}) or {}).get("stocks", {})
     else:
         watchlist.update_eps_cache, watchlist.update_estimates = orig_eps, orig_est
+    watchlist.EPS_WORKERS = EPS_WORKERS   # globalna stała silnika, czytana przy każdym wywołaniu (proces synchronizacji jest osobny)
     orig_dl = getattr(watchlist, "_orig_download_prices", None) or getattr(watchlist, "download_prices", None)
     orig_cm = getattr(watchlist, "_orig_compute_metrics", None) or getattr(watchlist, "compute_metrics", None)
     watchlist._orig_download_prices, watchlist._orig_compute_metrics = orig_dl, orig_cm

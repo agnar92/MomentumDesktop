@@ -274,6 +274,79 @@ class PinnedWindow(tk.Toplevel):
         self.host.open_chart(r["ticker"], focus=box)
 
 
+class ExprFilterWindow(tk.Toplevel):
+    """Filtr listy po dowolnych kolumnach: mały „skrypt” (kolumna >= wartość, and / or, nawiasy). Lewa lista = dostępne kolumny (dwuklik wstawia nazwę),
+    podgląd na żywo: ile spółek pasuje albo gdzie jest błąd składni. Zapisuje się razem z watchlistą."""
+
+    HELP = ('Jeden warunek w linii (linie łączone „and”), albo and / or i nawiasy w jednej linii. Operatory: >  <  >=  <=  ==  !=. '
+            'Kolumna = klucz (adr_pct) lub etykieta w cudzysłowie ("Cena/min 3M"). Tekst: glb_state == WYBICIE, sector == "Technology". '
+            'Przykłady:  adr_pct >= 4   |   "Cena/min 3M" > 1.5 and price < 100   |   rs_rating != brak   |   # komentarz')
+
+    def __init__(self, view):
+        super().__init__(view.root)
+        self.view = view
+        self.title(f"Filtr po kolumnach — {view.scanner['name']}")
+        self.configure(bg=BG)
+        apply_dark(self)
+        bar = Flow(self)
+        bar.pack(fill="x", side="bottom")
+        self.status = tk.Label(bar, text="", bg=PANEL, fg="#8b95a3")
+        bar.add(tk.Button(bar, text="Zastosuj i zapisz", command=self.apply))
+        bar.add(tk.Button(bar, text="Wyczyść", command=self.clear))
+        bar.add(tk.Button(bar, text="Zamknij", command=self.destroy))
+        bar.add(self.status)
+        autowrap(tk.Label(self, text=self.HELP, bg=PANEL, fg="#8b95a3")).pack(fill="x", padx=8, pady=(6, 2))
+        body = tk.Frame(self, bg=BG)
+        body.pack(fill="both", expand=True)
+        self.cols = tk.Listbox(body, width=34, selectmode="browse", bg="#0f1318", fg=FG, selectbackground=SEL, exportselection=False, activestyle="none")
+        self.cols.pack(side="left", fill="y", padx=(4, 2), pady=4)
+        self.text = tk.Text(body, wrap="none", bg="#0f1318", fg="#ffffff", insertbackground="#ffffff", undo=True, font=MONO, height=10, width=48)
+        self.text.pack(side="left", fill="both", expand=True, padx=(2, 4), pady=4)
+        self.keys = [k for k in columns_mod.available(view.store.rows, view.scanner.get("extra") or []) if k not in ("flag", "change")]
+        for k in self.keys:
+            self.cols.insert("end", f"{columns_mod.label(k)}   [{k}]")
+        self.cols.bind("<Double-1>", self.insert_column)
+        self.text.insert("1.0", view.scanner.get("filter") or "")
+        self._job = None
+        self.text.bind("<KeyRelease>", lambda e: self.schedule_preview())
+        self.text.focus_set()
+        self.preview()
+        fit_window(self, 820, 420, min_w=560)
+
+    def insert_column(self, _e=None):
+        sel = self.cols.curselection()
+        if sel:
+            self.text.insert("insert", self.keys[sel[0]])
+            self.text.focus_set()
+            self.schedule_preview()
+
+    def schedule_preview(self):
+        if self._job:
+            self.after_cancel(self._job)
+        self._job = self.after(250, self.preview)
+
+    def preview(self):
+        self._job = None
+        from . import exprfilter
+        try:
+            rows = self.view.store.rows
+            n = len(exprfilter.apply(rows, self.text.get("1.0", "end"), self.keys))
+            self.status.config(text=f"✓ pasuje {n} z {len(rows)} spółek", fg="#3ddc84")
+            return True
+        except exprfilter.ExprError as e:
+            self.status.config(text=f"✗ {e}", fg="#ff7b7b")
+            return False
+
+    def apply(self):
+        if not self.preview():
+            return
+        self.view.set_expr_filter(self.text.get("1.0", "end").strip())
+
+    def clear(self):
+        self.text.delete("1.0", "end")
+        self.apply()
+
+
 class FinvizCriteriaWindow(tk.Toplevel):
     """Co synchronizujemy: kryteria skanera Finviz (kody filtrów z data/finviz_screen.json) po ludzku."""
 

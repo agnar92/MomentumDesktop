@@ -65,10 +65,10 @@ def load(root):
     items = store.read_json(Path(root) / "scanners.json", []) or []
     items = [{"id": s["id"], "name": s.get("name") or s["id"], "columns": s.get("columns"), "extra": list(s.get("extra") or []),
               "kind": KIND_WATCHLIST if s.get("kind") in (KIND_WATCHLIST, "merge") else KIND_QM if s.get("kind") == KIND_QM else KIND_FINVIZ,
-              "sources": [norm_source(x) for x in s.get("sources") or [] if x]}
+              "sources": [norm_source(x) for x in s.get("sources") or [] if x], "filter": str(s.get("filter") or "")}   # filter = skrypt filtra po kolumnach (watchlista)
              for s in items if isinstance(s, dict) and s.get("id")]
     if not any(s["id"] == DEFAULT_ID for s in items):
-        items.insert(0, {"id": DEFAULT_ID, "name": DEFAULT_NAME, "columns": None, "extra": [], "kind": KIND_FINVIZ, "sources": []})
+        items.insert(0, {"id": DEFAULT_ID, "name": DEFAULT_NAME, "columns": None, "extra": [], "kind": KIND_FINVIZ, "sources": [], "filter": ""})
     items.sort(key=lambda s: s["id"] != DEFAULT_ID)
     return items
 
@@ -108,7 +108,7 @@ def upsert(root, scanner, filters=None, max_tickers=None, qm_cfg=None, glb_cfg=N
 def duplicate(root, sid, new_name):
     src = get(root, sid)
     cfg = load_config(scanner_dir(root, sid))
-    new = upsert(root, {"name": new_name, "columns": src.get("columns"), "extra": src.get("extra"), "kind": src.get("kind"), "sources": src.get("sources")},
+    new = upsert(root, {"name": new_name, "columns": src.get("columns"), "extra": src.get("extra"), "kind": src.get("kind"), "sources": src.get("sources"), "filter": src.get("filter")},
                  cfg["filters"], cfg["max_tickers"], cfg.get("qm"), cfg.get("glb"))
     return new
 

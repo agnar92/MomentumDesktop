@@ -13,7 +13,7 @@ from . import flags as flags_mod
 from .builder import ScannerEditor, ScannerManager, WatchlistEditor
 from .chartwin import ChartWindow
 from .launcher import LauncherWindow
-from .dialogs import (BoxesWindow, CanslimWindow, ColumnsWindow, FilterWindow, FinvizCriteriaWindow, ListNamesWindow, PinnedWindow, SymbolDialog,
+from .dialogs import (BoxesWindow, CanslimWindow, ColumnsWindow, ExprFilterWindow, FilterWindow, FinvizCriteriaWindow, ListNamesWindow, PinnedWindow, SymbolDialog,
                       WhatsNewWindow)
 from .theme import BG, FG, PANEL, Flow, MenuBar, apply_dark, autowrap, fit_window, setup_style
 from .widgets import LoadingFrame, StockTable, SyncWindow
@@ -340,6 +340,8 @@ class WatchlistView(ScannerView):
         tb.add(self.prices_btn)
         tb.add(tk.Button(tb, text="✎ Kryteria…", command=self.edit_scanner, relief="flat"))
         tb.add(tk.Button(tb, text="▤ Kolumny…", command=self.choose_columns, relief="flat"))   # dodatkowe dane ze skanów do sortowania (klik w nagłówek)
+        self.expr_btn = tk.Button(tb, text="⚗ Filtr…", command=self.open_expr_filter, relief="flat")   # filtr po dowolnych kolumnach (mały skrypt: kolumna >= wartość)
+        tb.add(self.expr_btn)
         for text, val in (("Tydz.", "W"), ("Dzień", "D")):
             tb.add(tk.Radiobutton(tb, text=text, value=val, variable=self.tf, command=lambda: self.set_tf(self.tf.get()), bg=PANEL,
                                   indicatoron=False, padx=7, relief="flat"))
@@ -364,15 +366,43 @@ class WatchlistView(ScannerView):
         self.root.title(f"Watchlista — {self.scanner['name']}")
 
     def _rows(self):
-        return list(self.store.rows)
+        rows = list(self.store.rows)
+        text = (self.scanner.get("filter") or "").strip()
+        self.expr_error = ""
+        if text:
+            from . import exprfilter
+            try:
+                keys = columns_mod.available(self.store.rows, self.scanner.get("extra") or [])
+                rows = exprfilter.apply(rows, text, keys)
+            except exprfilter.ExprError as e:
+                self.expr_error = str(e)   # błędny skrypt nie ukrywa listy — pokazujemy całość i błąd w pasku statusu
+        return rows
+
+    def open_expr_filter(self):
+        win = getattr(self, "expr_win", None)
+        if win is not None and win.winfo_exists():
+            win.lift()
+        else:
+            self.expr_win = ExprFilterWindow(self)
+
+    def set_expr_filter(self, text):
+        """Zapisuje filtr po kolumnach w watchliście i odświeża listę."""
+        self.scanner["filter"] = text
+        scanners.upsert(self.app.data_root, self.scanner)
+        self.refresh_lists()
 
     def refresh_lists(self):
         rows = self._rows()
+        self.expr_btn.config(text="⚗ Filtr ●…" if (self.scanner.get("filter") or "").strip() else "⚗ Filtr…",
+                             fg="#ffd166" if (self.scanner.get("filter") or "").strip() else FG)
         self.table.set_rows(rows)
         self.table.set_tf_label(self.store.tf)
         wl = self.store.watchlist
         src = ", ".join(x["name"] for x in (scanners.get(self.app.data_root, s["id"]) for s in self.scanner.get("sources") or []) if x)
-        self.status.config(text=f"  {len(rows)} tickerów · dane z sesji: {wl.get('data_as_of', '—')} · ze skanów: {src or '—'}")
+        total = len(self.store.rows)
+        flt = f" (filtr: {len(rows)} z {total})" if (self.scanner.get("filter") or "").strip() and not self.expr_error else ""
+        err = f"  ⚠ filtr: {self.expr_error}" if self.expr_error else ""
+        self.status.config(text=f"  {len(rows)} tickerów{flt} · dane z sesji: {wl.get('data_as_of', '—')} · ze skanów: {src or '—'}{err}")
         if self.boxes and self.boxes.winfo_exists():
             self.boxes.refresh()
 

@@ -697,3 +697,38 @@ def test_darvas_boxes_tolerate_gaps_in_closes_and_store_loads_them(app):
     row = darvas.status(full["c"], full.get("v"))
     assert row["state"] is not None
     v.store.reload()
+
+
+def test_watchlist_expression_filter_is_saved_and_applied(app, monkeypatch):
+    from desktop import scanners
+    monkeypatch.setattr("tkinter.messagebox.showinfo", lambda *a, **k: None)
+    wl = scanners.upsert(app.data_root, {"name": "Filtrowana", "kind": scanners.KIND_WATCHLIST, "sources": [{"id": scanners.DEFAULT_ID, "rule": {"type": "all"}}]})
+    app.open_scanner_window(wl["id"])
+    mv = app.view_for(wl["id"])
+    from desktop import merge
+    merge.build(app.data_root, scanners.get(app.data_root, wl["id"]), lambda *_: None)
+    mv.reload()
+    app.root.update()
+    total = len(mv.store.rows)
+    assert total > 5 and len(mv.table.visible()) == total
+    prices = sorted(r["price"] for r in mv.store.rows if isinstance(r.get("price"), (int, float)))
+    cut = prices[len(prices) // 2]
+    mv.open_expr_filter()
+    win = mv.expr_win
+    app.root.update()
+    win.text.insert("1.0", f"price >= {cut}\n")
+    assert win.preview() and "pasuje" in win.status.cget("text")
+    win.apply()
+    app.root.update()
+    shown = mv.table.visible()
+    assert 0 < len(shown) < total and all(mv.store.row(t)["price"] >= cut for t in shown)
+    assert scanners.get(app.data_root, wl["id"])["filter"].startswith("price >=")           # zapisany przy watchliście
+    assert "filtr:" in mv.status.cget("text") and "●" in mv.expr_btn.cget("text")
+    # błędny skrypt: lista nie znika, błąd widać w oknie i w pasku statusu
+    win.text.delete("1.0", "end")
+    win.text.insert("1.0", "price >=")
+    assert not win.preview() and "oczekiwałem wartości" in win.status.cget("text")
+    mv.set_expr_filter("nie_ma_kolumny > 1")
+    assert len(mv.table.visible()) == total and "filtr" in mv.status.cget("text") and "nieznana kolumna" in mv.status.cget("text")
+    win.clear()
+    assert len(mv.table.visible()) == total and scanners.get(app.data_root, wl["id"])["filter"] == ""

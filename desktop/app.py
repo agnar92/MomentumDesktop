@@ -41,6 +41,8 @@ class ScannerView(tk.Frame):
             self.prices_btn.config(text="⟳ Ceny", width=12)
         tb.add(tk.Button(tb, text="Filtr…", command=self.open_filter, relief="flat"))
         tb.add(tk.Button(tb, text="Boxy…", command=self.open_boxes, relief="flat"))
+        self.expr_btn = tk.Button(tb, text="⚗ Filtr kolumn…", command=self.open_expr_filter, relief="flat")   # filtr po dowolnych kolumnach (mały skrypt: kolumna >= wartość)
+        tb.add(self.expr_btn)
         self.news_btn = tk.Button(tb, text="Co nowego", command=self.open_changes, relief="flat")
         tb.add(self.news_btn)
         mb = tk.Menubutton(tb, text="Narzędzia ▾", relief="flat", bg=PANEL, fg=FG, activebackground="#2d3744", padx=8)
@@ -122,7 +124,37 @@ class ScannerView(tk.Frame):
 
     def _rows(self):
         self.flag_box.config(values=list(self.FLAG_CHOICES) + [f"{lst['icon']} {lst['name']}" for lst in self.app.flags.lists])
-        return store.scan(self.store.rows, {**self.main_filter, "text": self.search.get(), "flag": self._flag_code()})
+        return self._apply_expr(store.scan(self.store.rows, {**self.main_filter, "text": self.search.get(), "flag": self._flag_code()}))
+
+    # --- filtr po kolumnach (mały skrypt: kolumna >= wartość) — dla skanów i watchlist
+    def _apply_expr(self, rows):
+        text = (self.scanner.get("filter") or "").strip()
+        self.expr_error = ""
+        if text:
+            from . import exprfilter
+            try:
+                keys = columns_mod.available(self.store.rows, self.scanner.get("extra") or [])
+                rows = exprfilter.apply(rows, text, keys)
+            except exprfilter.ExprError as e:
+                self.expr_error = str(e)   # błędny skrypt nie ukrywa listy — pokazujemy całość i błąd w pasku statusu
+        return rows
+
+    def _update_expr_btn(self):
+        on = bool((self.scanner.get("filter") or "").strip())
+        self.expr_btn.config(text="⚗ Filtr kolumn ●…" if on else "⚗ Filtr kolumn…", fg="#ffd166" if on else FG)
+
+    def open_expr_filter(self):
+        win = getattr(self, "expr_win", None)
+        if win is not None and win.winfo_exists():
+            win.lift()
+        else:
+            self.expr_win = ExprFilterWindow(self)
+
+    def set_expr_filter(self, text):
+        """Zapisuje filtr po kolumnach przy skanerze / watchliście i odświeża listę."""
+        self.scanner["filter"] = text
+        scanners.upsert(self.app.data_root, self.scanner)
+        self.refresh_lists()
 
     def set_flag(self, ticker, lid):
         if ticker:
@@ -139,6 +171,9 @@ class ScannerView(tk.Frame):
         self.status.config(text=f"  Dane z sesji: {wl.get('data_as_of', 'brak — kliknij Sync')}   Spółek: {len(rows)}/{len(self.store.rows)}   Rynek (M): {regime}"
                                 f"   Finviz: {'(stare dane!)' if wl.get('finviz_stale') else 'ok'}   Katalog: {self.store.dir}")
         self.filter_lbl.config(text="⚑ filtr aktywny" if any(v for v in self.main_filter.values()) else "")
+        self._update_expr_btn()
+        if self.expr_error:
+            self.status.config(text=self.status.cget("text") + f"   ⚠ filtr kolumn: {self.expr_error}")
         n = changes.total(self.store.changes["diff"])
         self.news_btn.config(text=f"Co nowego ({n})" if n else "Co nowego", fg="#ffd166" if n else FG)
         self.update_age()
@@ -340,7 +375,7 @@ class WatchlistView(ScannerView):
         tb.add(self.prices_btn)
         tb.add(tk.Button(tb, text="✎ Kryteria…", command=self.edit_scanner, relief="flat"))
         tb.add(tk.Button(tb, text="▤ Kolumny…", command=self.choose_columns, relief="flat"))   # dodatkowe dane ze skanów do sortowania (klik w nagłówek)
-        self.expr_btn = tk.Button(tb, text="⚗ Filtr…", command=self.open_expr_filter, relief="flat")   # filtr po dowolnych kolumnach (mały skrypt: kolumna >= wartość)
+        self.expr_btn = tk.Button(tb, text="⚗ Filtr kolumn…", command=self.open_expr_filter, relief="flat")   # filtr po dowolnych kolumnach (mały skrypt: kolumna >= wartość)
         tb.add(self.expr_btn)
         for text, val in (("Tydz.", "W"), ("Dzień", "D")):
             tb.add(tk.Radiobutton(tb, text=text, value=val, variable=self.tf, command=lambda: self.set_tf(self.tf.get()), bg=PANEL,
@@ -366,35 +401,11 @@ class WatchlistView(ScannerView):
         self.root.title(f"Watchlista — {self.scanner['name']}")
 
     def _rows(self):
-        rows = list(self.store.rows)
-        text = (self.scanner.get("filter") or "").strip()
-        self.expr_error = ""
-        if text:
-            from . import exprfilter
-            try:
-                keys = columns_mod.available(self.store.rows, self.scanner.get("extra") or [])
-                rows = exprfilter.apply(rows, text, keys)
-            except exprfilter.ExprError as e:
-                self.expr_error = str(e)   # błędny skrypt nie ukrywa listy — pokazujemy całość i błąd w pasku statusu
-        return rows
-
-    def open_expr_filter(self):
-        win = getattr(self, "expr_win", None)
-        if win is not None and win.winfo_exists():
-            win.lift()
-        else:
-            self.expr_win = ExprFilterWindow(self)
-
-    def set_expr_filter(self, text):
-        """Zapisuje filtr po kolumnach w watchliście i odświeża listę."""
-        self.scanner["filter"] = text
-        scanners.upsert(self.app.data_root, self.scanner)
-        self.refresh_lists()
+        return self._apply_expr(list(self.store.rows))
 
     def refresh_lists(self):
         rows = self._rows()
-        self.expr_btn.config(text="⚗ Filtr ●…" if (self.scanner.get("filter") or "").strip() else "⚗ Filtr…",
-                             fg="#ffd166" if (self.scanner.get("filter") or "").strip() else FG)
+        self._update_expr_btn()
         self.table.set_rows(rows)
         self.table.set_tf_label(self.store.tf)
         wl = self.store.watchlist

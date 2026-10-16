@@ -79,7 +79,7 @@ def box_info(top, bottom, zone_pct=STOP_PCT):
 
 
 def status(c, vol=None, zone_pct=STOP_PCT, max_ext_pct=MAX_EXT_PCT, vol_bars=VOL_WEEKS):
-    """Stan na ostatnim tygodniowym zamknięciu: BUY / NOVOL / LATE / HOLD / SELL / WAIT / OUT / NONE."""
+    """Stan na ostatnim tygodniowym zamknięciu: BUY / NOVOL / LATE / HOLD / SELL / WAIT / NONE."""
     bx = boxes(c)
     lr = last_real(c)
     if not bx or lr < 0:
@@ -106,10 +106,14 @@ def status(c, vol=None, zone_pct=STOP_PCT, max_ext_pct=MAX_EXT_PCT, vol_bars=VOL
         return {**base, "state": "BUY", "stop": _r2(last["top"] * (1 - START_STOP_PCT / 100)),
                 "vol_ratio": None if vr is None else round(vr, 2),
                 "text": f"KUP — zamknięcie nad górą boxa {_r2(last['top'])}{vtxt}; stop początkowy ok. {START_STOP_PCT} % pod wejściem ({_r2(last['top'] * (1 - START_STOP_PCT / 100))}), potem pod dnem kolejnych boxów"}
-    if last["outcome"] == "down":
-        if had_up:
-            return {**base, "state": "SELL", "text": f"SPRZEDAJ — po wyższym boxie cena spadła pod jego dno {zone_from} (strefa zagrożenia do {stop})"}
-        return {**base, "state": "OUT", "text": f"POZA — box złamany w dół (dno {zone_from}) bez wcześniejszego wybicia; brak powodu, by trzymać"}
+    # zamknięcie pod dnem boxa = od razu SPRZEDAJ (wchodzimy w 5 % strefę zagrożenia); sygnał trwa, dopóki cena
+    # nie wróci nad złamane dno (nowy box tworzy się już pod nim)
+    broken = next((b for b in (last, prev) if b and b["outcome"] == "down" and c[lr] < b["bottom"]), None)
+    if broken:
+        zb = _r2(broken["bottom"])
+        zs = _r2(broken["bottom"] * (1 - zone_pct / 100))
+        return {**base, "state": "SELL", "bottom": zb, "zone_from": zb, "stop": zs,
+                "text": f"SPRZEDAJ — cena zeszła pod dno boxa {zb} (strefa zagrożenia {zs}–{zb}, exit pod {zs})"}
     if last["outcome"] == "up":
         return {**base, "state": "HOLD", "text": f"TRZYMAJ — wybicie nad {_r2(last['top'])} jest za nami, czekamy na nowy, wyższy box; stop pod dnem ostatniego boxa {stop}"}
     if had_up:

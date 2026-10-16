@@ -48,3 +48,11 @@ def test_overview_sections():
     ov = darvas.overview(items, ["w"] * 22, {"AAA": {"top": 15, "bottom": 13.9, "start": "w"}})
     assert [r["ticker"] for r in ov["buy"]] == ["AAA"]
     assert ov["pinned"][0]["state"] == "ABOVE"
+
+
+def test_close_under_box_bottom_is_sell_without_prior_breakout():
+    base = [10, 11, 12, 13, 12.5, 12.0, 11.8, 12.2, 12.4, 12.1, 11.9, 12.3, 12.0]
+    st = darvas.status(base + [11.7])                      # zamknięcie pod dnem 11.8
+    assert st["state"] == "SELL" and st["bottom"] == 11.8 and st["stop"] == 11.21 and "pod dno" in st["text"]
+    assert darvas.status(base + [11.7, 11.0, 10.5, 10.8])["state"] == "SELL"   # nowy box pod złamanym dnem nie kasuje sygnału
+    assert darvas.status(base + [11.7, 11.0, 10.5, 12.1])["state"] != "SELL"   # powrót nad złamane dno

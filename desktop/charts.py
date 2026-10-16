@@ -168,6 +168,12 @@ def hatch(cv, x0, y0, x1, y1, color="#8a929e", gap=7):
         k += gap
 
 
+def _price_dot(cv, x, y, r=6):
+    """Wyraźna kropka aktualnej ceny: czarna obwódka + biały pierścień + żółty środek — widoczna i na jasnym boxie, i na ciemnym tle."""
+    cv.create_oval(x - r - 2, y - r - 2, x + r + 2, y + r + 2, fill="#000000", outline="")
+    cv.create_oval(x - r, y - r, x + r, y + r, fill="#ffd166", outline=WHITE, width=2)
+
+
 def _tag(cv, x, y, text, fill, fg="#000"):
     cv.create_rectangle(x, y - 7, x + RIGHT - 8, y + 7, fill=fill, outline="")
     cv.create_text(x + 3, y, text=text, fill=fg, font=FONT, anchor="w")
@@ -306,6 +312,7 @@ def draw_bars(cv, full, weeks, spx, win, opts=None):
         yy = y(c[last])
         cv.create_line(LEFT, yy, W - RIGHT, yy, fill=GREEN if up else RED, dash=(1, 3))
         _tag(cv, W - RIGHT + 2, yy, fmt_price(c[last]), GREEN if up else RED)
+        _price_dot(cv, xf(last), yy, 5)   # kropka na ostatnim zamknięciu (widać, gdzie cena jest względem boxa)
     # MACD (czytelny: tło panelu, 4-kolorowy histogram, grube linie, znaczniki przecięć, wartości na osi i w tytule)
     if show_macd:
         line, sg, hist = macd(c)
@@ -427,8 +434,9 @@ def draw_darcard(cv, full, weeks, win, opts=None):
     li = last_idx(c)
     if i0 <= li < i1:
         x, yy = xf(li), y(c[li])
-        cv.create_oval(x - 5, yy - 5, x + 5, yy + 5, fill=LINE, outline=WHITE, width=2)
-        _tag(cv, W - RIGHT + 2, yy, fmt_price(c[li]), LINE, "#fff")
+        cv.create_line(x, yy, W - RIGHT, yy, fill="#ffd166", dash=(2, 3))   # kropkowana prowadnica do ceny na osi
+        _price_dot(cv, x, yy, 6)
+        _tag(cv, W - RIGHT + 2, yy, fmt_price(c[li]), "#ffd166")
     # zaznaczony box: trzy poziomy z cenami na osi
     sel = opts.get("selected")
     if sel is not None and 0 <= sel < len(hits):

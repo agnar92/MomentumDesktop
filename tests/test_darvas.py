@@ -74,3 +74,25 @@ def test_weekly_confirm_is_two_and_daily_three():
     assert (4.23, 3.91, False, "up") in two and (5.0, 4.07, False, "up") in two
     assert darvas.boxes(c, 3) == [] and darvas.confirm_for("W") == 2 and darvas.confirm_for("D") == 3
     assert darvas.DAILY["confirm"] == 3
+
+
+def test_box_deeper_than_25_percent_is_broken_before_bottom_confirms():
+    # MRVL 2025: szczyt 124 i spadek bez potwierdzonego dołu — dawniej jeden „box” 124 → 49 pochłaniał całą korektę
+    c = [111.36, 113.08, 117.61, 113.83, 124.22, 123.49, 112.38, 110.15, 106.05, 103.36, 91.43, 70.54, 68.45, 70.09, 61.77, 49.22, 53.22, 51.54, 58.73, 62.13]
+    bx = darvas.boxes(c)
+    big = bx[0]
+    assert big["top"] == 124.22 and big["outcome"] == "down" and big["i1"] == 10      # złamany zamknięciem 91,43 (−26 % pod górą)
+    assert (big["top"] - big["bottom"]) / big["top"] * 100 <= darvas.MAX_DEPTH_PCT
+    assert all((b["top"] - b["bottom"]) / b["top"] * 100 <= darvas.MAX_DEPTH_PCT + 1e-9 for b in bx)
+    assert len(bx) >= 2                                                              # po złamaniu powstają kolejne (mniejsze) boxy
+
+
+def test_new_box_is_cancelled_when_price_falls_back_under_previous_box_bottom():
+    # MRVL 12.2024–03.2025 (zamknięcia tygodniowe): box 120,19 / 111,36 wybity w górę, potem powrót pod 111 — nowy box (szczyt 124) nie może żyć dalej
+    c = [66.14, 65.35, 58.92, 60.22, 68.93, 71.44, 75.81, 65.83, 74.06, 73.45, 70.59, 73.0, 73.65, 79.47, 81.22, 84.36, 93.35, 87.41, 92.07, 92.25,
+         112.97, 120.19, 111.36, 113.08, 117.61, 113.83, 124.22, 123.49, 112.38, 110.15, 106.05, 103.36, 91.43, 70.54, 68.45, 70.09, 61.77]
+    bx = darvas.boxes(c)
+    up = next(b for b in bx if b["top"] == 120.19)
+    new = next(b for b in bx if b["top"] == 124.22)
+    assert up["outcome"] == "up" and up["bottom"] == 111.36
+    assert new["outcome"] == "down" and new["i1"] == c.index(110.15) and new["bottom"] == 112.38   # złamany pierwszym zamknięciem pod 111,36

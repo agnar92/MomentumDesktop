@@ -1,27 +1,86 @@
-"""Parytet z docs/js/darvas.js z Momentum: oczekiwane wartości policzone tamtym kodem (node) na tej samej serii."""
-
+"""Reguły boxów Darvasa (tygodniowe zamknięcia): góra / dół = zamknięcie nieprzebite przez 3 kolejne tygodnie, tylko potwierdzone boxy, sam top = linia."""
 from desktop import darvas
 
-C = [10, 10.5, 11, 12, 11.5, 11.2, 11.4, 11.1, 12.5, 13, 12.8, 12.6, 12.2, 12.9, 14, 15, 14.5, 14.2, 14.4, 14.1, 13.9, 16]
+S = [10, 11, 12, 13, 12.5, 12.0, 11.8, 12.2, 12.4, 12.1, 12.3]      # top 13 (idx 3), dół 11,8 (idx 6) potwierdzony po 3 tygodniach (idx 9)
+MRVL = [66.14, 65.35, 58.92, 60.22, 68.93, 71.44, 75.81, 65.83, 74.06, 73.45, 70.59, 73.0, 73.65, 79.47, 81.22, 84.36, 93.35, 87.41, 92.07, 92.25,
+        112.97, 120.19, 111.36, 113.08, 117.61, 113.83, 124.22, 123.49, 112.38, 110.15, 106.05, 103.36, 91.43, 70.54, 68.45, 70.09, 61.77]
 
 
-def test_boxes_match_js():
-    got = [(b["i0"], b["i1"], b["top"], b["bottom"], b["confirmed"], b["outcome"]) for b in darvas.boxes(C, 3)]
-    assert got == [(3, 8, 12, 11.1, False, "up"), (9, 14, 13, 12.2, False, "up"), (15, 21, 15, 13.9, False, "up")]
+def test_top_and_bottom_need_three_weeks():
+    bx = darvas.boxes(S)
+    assert [(b["i0"], b["top"], b["bottom"], b["outcome"]) for b in bx] == [(3, 13, 11.8, "open")]
+    assert darvas.top_lines(S) == []
+    assert darvas.top_lines([10, 11, 12, 13, 12.5, 12.0]) == []          # za wcześnie: tylko 2 tygodnie po topie
+    assert darvas.confirm_for("W") == 3 and darvas.confirm_for("D") == 3
 
 
-def test_status_buy_needs_volume():
-    vol = [100] * 21 + [300]
-    st = darvas.status(C, vol)
-    assert st["state"] == "BUY" and st["vol_ratio"] == 3 and st["stop"] == 13.5
-    assert st["text"].startswith("KUP — zamknięcie nad górą boxa 15 na wolumenie 3.00×")
-    weak = darvas.status(C, [100] * 22)
-    assert weak["state"] == "NOVOL"
+def test_only_top_is_a_dashed_line_until_broken_with_8_pct_stop():
+    c = [10, 11, 12, 13, 12.5, 12.0, 11.8]
+    assert darvas.boxes(c) == []                                            # dół jeszcze niepotwierdzony — nie ma boxa
+    assert darvas.top_lines(c) == [{"i0": 3, "i1": 6, "top": 13, "open": True}]
+    st = darvas.status(c)
+    assert st["state"] == "WAIT" and st["stop"] == 11.96 and darvas.line_info(13)["stop"] == 11.96
+    broken = c + [13.5]
+    assert darvas.boxes(broken) == [] and darvas.top_lines(broken) == [{"i0": 3, "i1": 7, "top": 13, "open": False}]
+    st = darvas.status(broken)
+    assert st["state"] == "BUY" and st["stop"] == 11.96                     # wybicie samego topu: stop 8 %
 
 
-def test_status_late_when_over_10_pct():
-    c = C[:-1] + [17.5]
-    assert darvas.status(c)["state"] == "LATE"
+def test_breakout_attempt_keeps_box_until_price_falls_into_its_zone():
+    up = S + [13.5]
+    assert darvas.boxes(up)[0]["outcome"] == "up" and darvas.status(up)["state"] == "BUY"
+    back = darvas.status(up + [12.8, 12.0])                                 # powrót do boxa: nadal obowiązuje
+    assert back["state"] == "HOLD" and "w boxie" in back["text"]
+    bx = darvas.boxes(up + [12.8, 12.0, 11.5])                              # zejście pod dno 11,8 = strefa zagrożenia: anulowany
+    assert bx[0]["cancelled"] and bx[0]["end"] == len(up) + 2
+    assert darvas.status(up + [12.8, 12.0, 11.5])["state"] == "SELL"
+
+
+def test_double_breakout_buys_again_after_dip_inside_box():
+    c = [10, 11, 12, 13, 12.5, 12.0, 11.8, 12.2, 12.4, 12.1, 11.9, 13.5, 12.8, 13.6]
+    assert darvas.status(c[:12])["state"] == "BUY"        # pierwsza próba przebicia
+    assert darvas.status(c[:13])["state"] == "HOLD"       # powrót do boxa: box obowiązuje
+    assert darvas.status(c)["state"] == "BUY"             # druga próba
+
+
+def test_new_box_above_replaces_the_broken_out_one():
+    c = S + [13.5, 14, 14.5, 14.2, 14.0, 14.1, 14.3, 14.2]
+    old, new = darvas.boxes(c)
+    assert old["outcome"] == "up" and old["end"] == new["i0"] == 13 and not old.get("cancelled")
+    assert (new["top"], new["bottom"]) == (14.5, 14.0)
+
+
+def test_box_broken_below_without_breakout_is_inverted_and_new_search_starts():
+    c = S + [11.5]
+    bx = darvas.boxes(c)
+    assert bx[0]["outcome"] == "down" and bx[0]["i1"] == len(S)
+    assert darvas.status(c)["state"] == "SELL"
+    assert darvas.status(S + [11.5, 12.9])["state"] == "WAIT"               # cena wróciła nad dno, box i tak anulowany — czekamy na nowy
+
+
+def test_falling_knife_makes_no_box():
+    assert darvas.boxes([10, 11, 12, 13, 12, 11, 10, 9, 8, 7, 6]) == []
+
+
+def test_mrvl_breakout_box_cancelled_in_danger_zone_and_no_giant_box():
+    bx = darvas.boxes(MRVL)
+    r = next(b for b in bx if b["top"] == 120.19)
+    assert r["outcome"] == "up" and r["cancelled"] and r["end"] == MRVL.index(110.15)       # pod dnem 111,36
+    assert not any(b["top"] == 124.22 for b in bx)                         # tego „boxa” nie ma — dół się nie ustalił
+    assert max((b["top"] - b["bottom"]) / b["top"] for b in bx) < 0.2      # żadnego wielkiego boxa przez całą korektę
+    assert darvas.status(MRVL[:28])["state"] == "HOLD" and darvas.status(MRVL)["state"] == "SELL"
+
+
+def test_status_late_and_volume_rules():
+    vol = [100] * 11 + [300]
+    st = darvas.status(S + [13.5], vol)
+    assert st["state"] == "BUY" and st["vol_ratio"] == 3 and st["text"].startswith("KUP — zamknięcie nad górą 13 na wolumenie 3.00×")
+    assert darvas.status(S + [13.5], [100] * 12)["state"] == "NOVOL"
+    assert darvas.status(S + [15])["state"] == "LATE"
+    weak = [100] * 11 + [50]
+    assert darvas.status(S + [13.5], weak, pure=True)["state"] == "BUY"
+    assert darvas.status(S + [15], pure=True)["state"] == "BUY"
+    assert "sesji" in darvas.status(S + [12.2], **darvas.DAILY)["text"]
 
 
 def test_pin_status():
@@ -44,71 +103,7 @@ def test_too_short_series():
 
 
 def test_overview_sections():
-    items = [{"ticker": "AAA", "price": 16, "c": C, "v": [100] * 21 + [300]}, {"ticker": "BBB", "price": 5, "c": [1, 2]}]
-    ov = darvas.overview(items, ["w"] * 22, {"AAA": {"top": 15, "bottom": 13.9, "start": "w"}})
+    items = [{"ticker": "AAA", "price": 13.5, "c": S + [13.5], "v": [100] * 11 + [300]}, {"ticker": "BBB", "price": 5, "c": [1, 2]}]
+    ov = darvas.overview(items, ["w"] * 12, {"AAA": {"top": 13, "bottom": 11.8, "start": "w"}})
     assert [r["ticker"] for r in ov["buy"]] == ["AAA"]
     assert ov["pinned"][0]["state"] == "ABOVE"
-
-
-def test_pure_darvas_buys_on_plain_breakout_and_daily_text_uses_sessions():
-    vol = [100] * 21 + [50]                       # przebicie na słabym wolumenie
-    assert darvas.status(C, vol)["state"] == "NOVOL"
-    assert darvas.status(C, vol, pure=True)["state"] == "BUY"
-    far = C[:-1] + [C[-2] * 1.5]                  # daleko nad górą: normalnie ZA PÓŹNO, w czystym — KUP
-    assert darvas.status(far)["state"] == "LATE" and darvas.status(far, pure=True)["state"] == "BUY"
-    assert "sesji" in darvas.status([10, 11, 12, 13, 12.5, 12.0, 11.8, 12.2, 12.4, 12.1], **darvas.DAILY)["text"]
-
-
-def test_weekly_confirm_is_two_and_daily_three():
-    # IOVA 2026-05…08 (zamknięcia tygodniowe): silny trend z krótkimi konsolidacjami — przy „zamknięcie + 2 kolejne” powstają niepotwierdzone boxy
-    c = [3.45, 4.11, 4.1, 4.23, 4.08, 3.91, 4.25, 4.31, 4.23, 5.0, 4.99, 4.07, 6.34, 6.98, 8.29, 8.01, 8.79, 8.6]
-    two = [(b["top"], b["bottom"], b["confirmed"], b["outcome"]) for b in darvas.boxes(c)]
-    assert (4.23, 3.91, False, "up") in two and (5.0, 4.07, False, "up") in two
-    assert darvas.boxes(c, 3) == [] and darvas.confirm_for("W") == 2 and darvas.confirm_for("D") == 3
-    assert darvas.DAILY["confirm"] == 3
-
-
-MRVL = [66.14, 65.35, 58.92, 60.22, 68.93, 71.44, 75.81, 65.83, 74.06, 73.45, 70.59, 73.0, 73.65, 79.47, 81.22, 84.36, 93.35, 87.41, 92.07, 92.25,
-        112.97, 120.19, 111.36, 113.08, 117.61, 113.83, 124.22, 123.49, 112.38, 110.15, 106.05, 103.36, 91.43, 70.54, 68.45, 70.09, 61.77]
-
-
-def test_falling_series_without_confirmed_bottom_is_not_a_box():
-    c = [10, 11, 12, 13, 12, 11, 10, 9, 8, 7, 6]
-    assert darvas.boxes(c) == []
-
-
-def test_zone_is_observed_and_only_exit_level_sells():
-    base = [10, 11, 12, 13, 12.5, 12.0, 11.8, 12.2, 12.4, 12.1, 11.9, 12.3, 12.0]
-    zone = darvas.status(base + [11.7])                    # pod dnem 11,8, ale nad poziomem wyjścia 11,21 = strefa zagrożenia: obserwuj
-    assert zone["state"] != "SELL" and zone["stop"] == 11.21
-    sell = darvas.status(base + [11.7, 11.0])              # zamknięcie pod 11,21 = box przestaje obowiązywać
-    assert sell["state"] == "SELL" and sell["stop"] == 11.21 and "poziom wyjścia" in sell["text"]
-    assert darvas.status(base + [11.7, 11.0, 12.1])["state"] != "SELL"   # powrót w górę: nie ma już sygnału sprzedaży
-
-
-def test_exit_level_is_zone_edge_or_10_pct_under_top_for_large_box():
-    assert darvas.exit_level(120.19, 111.36) == 111.36 * 0.95           # głębokość 7,3 % — dolna krawędź strefy zagrożenia
-    assert darvas.exit_level(100, 80) == 90                             # duży box (20 %): 10 % pod górą
-
-
-MRVL = [66.14, 65.35, 58.92, 60.22, 68.93, 71.44, 75.81, 65.83, 74.06, 73.45, 70.59, 73.0, 73.65, 79.47, 81.22, 84.36, 93.35, 87.41, 92.07, 92.25,
-        112.97, 120.19, 111.36, 113.08, 117.61, 113.83, 124.22, 123.49, 112.38, 110.15, 106.05, 103.36, 91.43, 70.54, 68.45, 70.09, 61.77]
-
-
-def test_broken_out_box_is_tracked_until_price_leaves_its_zone():
-    # box 120,19 / 111,36 wybity; powrót do boxa i do strefy zagrożenia go nie kończy, dopiero zamknięcie pod 105,79 (103,36)
-    bx = darvas.boxes(MRVL)
-    r = next(b for b in bx if b["top"] == 120.19)
-    assert r["outcome"] == "up" and r["end"] == MRVL.index(103.36)
-    assert not any(b["top"] == 124.22 for b in bx)                      # nowy box nie powstał (dół się nie ustalił) — nie jest rysowany
-    assert not any(b["i0"] > r["end"] and b["top"] - b["bottom"] > 0.3 * b["top"] for b in bx)   # po wyjściu nie ma „boxa” z samego spadku
-    st = darvas.status(MRVL)
-    assert st["state"] == "SELL" and st["stop"] == 105.79
-    assert darvas.status(MRVL[:30])["state"] == "HOLD"                  # 110,15: w strefie zagrożenia, obserwujemy
-
-
-def test_double_breakout_buys_again_after_dip_inside_box():
-    c = [10, 11, 12, 13, 12.5, 12.0, 11.8, 12.2, 12.4, 12.1, 11.9, 13.5, 12.8, 13.6]
-    assert darvas.status(c[:12])["state"] == "BUY"        # pierwsze wybicie nad 13
-    assert darvas.status(c[:13])["state"] == "HOLD"       # powrót do boxa: box nadal obowiązuje
-    assert darvas.status(c)["state"] == "BUY"             # drugie wybicie

@@ -13,6 +13,7 @@ SMA10, SMA40, SPX, LINE = "#e5484d", "#f0b429", "#7d8590", "#4aa3ff"
 SMA_COLORS = {10: SMA10, 40: SMA40, 50: SMA40, 200: "#e6e9ef"}
 GREEN, RED, GOLD, WHITE = "#3ddc84", "#ff5c5c", "#ffd166", "#ffffff"
 BOX_FILL, BOX_PLAIN = "#c9ced8", "#e6e9ef"
+TOPLINE = "#3b9cff"   # przerywana linia samego topu (bez potwierdzonego dołu)
 FONT = ("Consolas", 9)
 
 LEFT, RIGHT, TOP, BOTTOM = 6, 62, 8, 18
@@ -376,13 +377,14 @@ def draw_darcard(cv, full, weeks, win, opts=None):
         return LEFT + (i - i0 + 0.5) * step
     bx = darvas.boxes(c, darvas.confirm_for(opts.get("tf")))
     vis = [(k, b) for k, b in enumerate(bx) if b.get("end", b["i1"]) >= i0 and b["i0"] < i1]
+    tls = [t for t in darvas.top_lines(c, darvas.confirm_for(opts.get("tf"))) if t["i1"] >= i0 and t["i0"] < i1]
     cs = _finite(c[i0:i1])
     if not cs:
         return {}
     pin = opts.get("pinned")
     glb_level = opts.get("glb")
     lo = min(cs + [b["bottom"] * (1 - darvas.STOP_PCT / 100) for _, b in vis] + ([pin["bottom"] * 0.95] if pin else []) + ([glb_level] if glb_level else []))
-    hi = max(cs + [b["top"] for _, b in vis] + ([pin["top"]] if pin else []) + ([glb_level] if glb_level else []))
+    hi = max(cs + [b["top"] for _, b in vis] + [t["top"] for t in tls] + ([pin["top"]] if pin else []) + ([glb_level] if glb_level else []))
     log = opts.get("log", True)
     if log and lo > 0:
         pad = math.log(hi / lo) * 0.06 + 0.002
@@ -411,13 +413,23 @@ def draw_darcard(cv, full, weeks, win, opts=None):
             x1 = W - RIGHT
         yt, yb, yz = y(b["top"]), y(b["bottom"]), y(b["bottom"] * (1 - darvas.STOP_PCT / 100))
         bad = b["outcome"] == "down"
-        hatch(cv, x0, yb, x1, yz)   # strefa zagrożenia 5 % pod dołem (ukośne kreski)
-        cv.create_rectangle(x0, yt, x1, yb, fill="#7a2f2f" if bad else (BOX_PLAIN if b["confirmed"] else BOX_FILL),
-                            outline=RED if bad else DIM, dash=() if b["confirmed"] else (3, 2))
-        if not b["confirmed"] and not bad:   # dół niepotwierdzony: czerwona przerywana linia
-            cv.create_line(x0, yb, x1, yb, fill=RED, width=2, dash=(6, 3))
-        hits.append({"rect": (x0, yt, x1, yz), "box": {"top": b["top"], "bottom": b["bottom"], "i0": b["i0"], "i1": b["i1"], "kind": "darvas",
+        if bad:   # odwrócony box (dół przebity bez wybicia): strefa zagrożenia jest u góry
+            yz = y(b["top"] * (1 + darvas.STOP_PCT / 100))
+            hatch(cv, x0, yz, x1, yt, RED)
+        else:
+            hatch(cv, x0, yb, x1, yz)   # strefa zagrożenia 5 % pod dołem (ukośne kreski)
+        cv.create_rectangle(x0, yt, x1, yb, fill="#7a2f2f" if bad else BOX_PLAIN, outline=RED if bad else DIM)
+        hits.append({"rect": (x0, min(yt, yz), x1, max(yt, yz)), "box": {"top": b["top"], "bottom": b["bottom"], "i0": b["i0"], "i1": b["i1"], "kind": "darvas",
                                                        "outcome": b["outcome"], "confirmed": b["confirmed"], "start": weeks[b["i0"]] if b["i0"] < len(weeks) else ""}})
+    for t in tls:   # sam top (dół niepotwierdzony): niebieska przerywana linia aż do przebicia; klik = stop 8 % i przybliżenie
+        x0 = xf(max(t["i0"], i0)) - step / 2
+        x1 = W - RIGHT if t["open"] else xf(min(t["i1"], i1 - 1)) + step / 2
+        yy = y(t["top"])
+        cv.create_line(x0, yy, x1, yy, fill=TOPLINE, width=2, dash=(6, 4))
+        stop = darvas.line_info(t["top"])["stop"]
+        hits.append({"rect": (x0, yy - 5, x1, yy + 5), "box": {"top": t["top"], "bottom": stop, "i0": t["i0"], "i1": t["i1"], "kind": "topline",
+                                                              "outcome": "open" if t["open"] else "up", "confirmed": False,
+                                                              "start": weeks[t["i0"]] if t["i0"] < len(weeks) else ""}})
     if pin:   # przypięty (monitorowany) box — kontur w kolorze statusu od początku do prawej krawędzi
         st = darvas.pin_status(pin, c[last_idx(c)] if last_idx(c) >= 0 else None)
         col = {"ABOVE": GREEN, "INSIDE": GOLD, "ZONE": RED, "EXIT": RED}.get(st["state"], GOLD)
@@ -443,7 +455,9 @@ def draw_darcard(cv, full, weeks, win, opts=None):
         b = hits[sel]["box"]
         x0, y0, x1, y1 = hits[sel]["rect"]
         cv.create_rectangle(x0 - 1, y0 - 1, x1 + 1, y1 + 1, outline=GOLD, width=2, dash=(4, 2))
-        for price, col in ((b["top"], GREEN), (b["bottom"], WHITE), (b["bottom"] * (1 - darvas.STOP_PCT / 100), RED)):
+        levels = ((b["top"], TOPLINE), (b["bottom"], RED)) if b.get("kind") == "topline" else \
+            ((b["top"], GREEN), (b["bottom"], WHITE), (b["bottom"] * (1 - darvas.STOP_PCT / 100), RED))
+        for price, col in levels:
             cv.create_line(LEFT, y(price), W - RIGHT, y(price), fill=col, width=2)
             _tag(cv, W - RIGHT + 2, y(price), fmt_price(price), col)
     return {"kind": "darcard", "W": W, "H": H, "i0": i0, "i1": i1, "step": step, "xf": xf, "y": y, "hits": hits, "p_top": TOP, "m_bot": H - BOTTOM,
@@ -651,7 +665,7 @@ def tooltip_card(full, dates, i, tf):
         active = [b for b in boxes if b["outcome"] == "open" or b.get("end", b["i1"]) >= i]
         broke = [x for x in active if x["outcome"] == "down" and x["i1"] == i]   # w tygodniu złamania pokazujemy złamany box (nowy box zaczyna się w tym samym tygodniu)
         b = (broke or active or boxes)[-1]
-        stop = darvas.exit_level(b["top"], b["bottom"])
+        stop = b["bottom"] * (1 - darvas.STOP_PCT / 100)
         out.append(("─" * 22, DIM))
         head = f"box {b['bottom']:.2f}–{b['top']:.2f}"
         if b["outcome"] == "down" and i >= b["i1"]:

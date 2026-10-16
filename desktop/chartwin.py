@@ -239,7 +239,10 @@ class ChartWindow(tk.Toplevel):
         if self.mode.get() == "bars":
             opts = {"macd": self.macd_on.get(), "spx": True, "smas": smas, "tf": self.tf.get(), "log": self.log.get(), "glb": glb_level}
             fb = self.focus_box or (self.selected_box())
-            if fb:
+            if fb and fb.get("kind") == "topline":   # sam top: poziom topu i stop 8 %
+                opts["tags"] = [(fb["top"], charts.TOPLINE), (fb["bottom"], charts.RED)]
+                opts["levels"] = [v for v, _ in opts["tags"]]
+            elif fb:
                 opts["tags"] = [(fb["top"], charts.GREEN), (fb["bottom"], charts.WHITE), (round(fb["bottom"] * 0.95, 2), charts.RED)]
                 opts["levels"] = [v for v, _ in opts["tags"]]
                 opts["boxes"] = [{"i0": fb["i0"], "i1": fb["i1"] if fb.get("outcome") != "open" else len(full["c"]) - 1, "top": fb["top"], "bottom": fb["bottom"],
@@ -348,6 +351,14 @@ class ChartWindow(tk.Toplevel):
         if not box:
             self.info_lbl.config(text="Klik w box = poziomy · spacja = przełącz widok · suwak u góry = okno czasu · ↑/↓ = następna spółka · kółko = zoom")
             return
+        if box.get("kind") == "topline":   # sam top (dół niepotwierdzony): wejście nad topem, stop 8 %, bez przypinania
+            li = darvas.line_info(box["top"])
+            self.info_lbl.config(text=f"TOP {li['entry']} (dół jeszcze niepotwierdzony)   wejście: zamknięcie {'dnia' if self.tf.get() == 'D' else 'tygodnia'} > {li['entry']}\n"
+                                      f"stop {darvas.LINE_STOP_PCT} % pod topem = {li['stop']}   ryzyko od wejścia do stopu: {darvas.LINE_STOP_PCT} % na akcję")
+            self.btns.pack(fill="x", padx=8, pady=(2, 4))
+            (self.btn_full if self.focus_box else self.btn_zoom).pack(side="left", padx=(0, 4))
+            self.btn_close.pack(side="left", padx=4)
+            return
         info = darvas.box_info(box["top"], box["bottom"])
         pinned = self.app.store.pinned.get(self.ticker)
         is_pin = pinned and abs(pinned["top"] - box["top"]) < 0.005 and abs(pinned["bottom"] - box["bottom"]) < 0.005
@@ -376,7 +387,7 @@ class ChartWindow(tk.Toplevel):
 
     def toggle_pin(self):
         box = self.focus_box or self.selected_box()
-        if not box:
+        if not box or box.get("kind") == "topline":
             return
         pinned = self.app.store.pinned.get(self.ticker)
         if pinned and abs(pinned["top"] - box["top"]) < 0.005 and abs(pinned["bottom"] - box["bottom"]) < 0.005:

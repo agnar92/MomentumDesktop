@@ -749,3 +749,32 @@ def test_scan_window_expression_filter(app):
     assert scanners.get(app.data_root, scanners.DEFAULT_ID)["filter"].startswith("price >=")
     sv.set_expr_filter("")
     assert len(sv.table.visible()) == total
+
+
+def test_measure_profit_while_dragging_disappears_on_release(app):
+    v = app.view
+    app.root.update()
+    v.open_chart("NVDA")
+    ch = v.chart
+    ch.update()
+    ch.redraw()
+    ch.update()
+    g = ch.geoms["card"]
+    ev = lambda x, y: type("E", (), {"x": x, "y": y})()   # noqa: E731
+    xa, xb = g["xf"](g["i0"] + 10), g["xf"](g["i0"] + 18)
+    ya, yb = g["p_top"] + 200, g["p_top"] + 100            # drugi punkt wyżej = zysk
+    m = charts.measure(g, (xa, ya), (xb, yb))
+    assert m["bars"] == 8 and m["pct"] > 0 and m["price1"] > m["price0"]
+    assert charts.measure(g, (xb, yb), (xa, ya))["pct"] < 0
+    cv = ch.cv_card
+    ch.meas_press(ev(xa, ya), cv)
+    ch.meas_drag(ev(xb, yb), cv)
+    ch.update()
+    assert cv.find_withtag("measure") and "tyg." in " ".join(str(cv.itemcget(i, "text")) for i in cv.find_withtag("measure") if cv.type(i) == "text")
+    ch.meas_release(ev(xb, yb), cv)
+    assert not cv.find_withtag("measure") and ch.selected is None    # puszczenie kasuje pomiar, przeciągnięcie nie zaznacza boxa
+    x0, y0, x1, y1 = g["hits"][-1]["rect"]
+    c = ev((x0 + x1) / 2, (y0 + y1) / 2)
+    ch.meas_press(c, cv)
+    ch.meas_release(c, cv)                                   # zwykłe kliknięcie nadal zaznacza box
+    assert ch.selected is not None

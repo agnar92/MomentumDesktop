@@ -439,7 +439,6 @@ def draw_darcard(cv, full, weeks, win, opts=None):
             yt, ys_ = y(pin["top"]), y(pin["bottom"])
             cv.create_line(x0, yt, x1, yt, fill=TOPLINE, width=2, dash=(6, 4))
             cv.create_line(x0, ys_, x1, ys_, fill=RED, width=1, dash=(3, 3))
-            cv.create_text(x0 + 4, yt - 3, text=f"📌 {st['text']}", fill=col, font=FONT, anchor="sw")
             hits.append({"rect": (x0, yt - 5, x1, ys_ + 5), "box": {"top": pin["top"], "bottom": pin["bottom"], "i0": start, "i1": last_idx(c), "kind": "pinned", "line": True,
                                                                   "outcome": "open", "start": pin.get("start", "")}})
         else:

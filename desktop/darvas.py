@@ -48,6 +48,7 @@ def boxes(c, confirm=None, bottom_confirm=None):
     out = []
     i = 0
     while i < n:
+        floor = out[-1]["bottom"] if out and out[-1]["outcome"] == "up" else None   # schodek: powrót pod dół poprzedniego boxa = nieudane wybicie
         top, t, run_max = None, -1, -math.inf
         for k in range(i, n):
             if not _ok(c[k]) or c[k] < run_max:
@@ -63,6 +64,9 @@ def boxes(c, confirm=None, bottom_confirm=None):
             v, ok = c[j], _ok(c[j])   # tydzień bez notowania (None) nie zmienia boxa, ale upływ czasu liczy się do potwierdzenia dołu
             if ok and v > top:
                 outcome, end = "up", j
+                break
+            if ok and floor is not None and v < floor:   # cena wróciła pod dół boxa, z którego wybiła: schodek się zawalił, nowy box jest anulowany
+                outcome, end = "down", j
                 break
             if ok and v < top * (1 - MAX_DEPTH_PCT / 100):   # spadek jak z klifu: dół nie zdążył się utworzyć, box jest złamany (inaczej jeden „box” pochłaniał całą korektę)
                 outcome, end = "down", j

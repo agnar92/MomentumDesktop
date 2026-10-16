@@ -374,7 +374,7 @@ def draw_darcard(cv, full, weeks, win, opts=None):
     step = (W - LEFT - RIGHT) / n
     def xf(i):
         return LEFT + (i - i0 + 0.5) * step
-    bx = darvas.boxes(c)
+    bx = darvas.boxes(c, darvas.confirm_for(opts.get("tf")))
     vis = [(k, b) for k, b in enumerate(bx) if b["i1"] >= i0 and b["i0"] < i1]
     cs = _finite(c[i0:i1])
     if not cs:
@@ -607,11 +607,12 @@ def tooltip_card(full, dates, i, tf):
     chg = _pct(c[i], c[i - 1] if i > 0 else None)
     if chg is not None:
         out.append((f"zmiana {chg:+.2f}% vs poprzedni", GREEN if chg >= 0 else RED))
-    boxes = [b for b in darvas.boxes(c) if b["i0"] <= i]
+    boxes = [b for b in darvas.boxes(c, darvas.confirm_for(tf)) if b["i0"] <= i]
     if boxes:
         # box obowiązujący w tym tygodniu: zaczął się przed i, a nie skończył (otwarty) albo kończy się dopiero w i lub później
         active = [b for b in boxes if b["outcome"] == "open" or b["i1"] >= i]
-        b = (active or boxes)[-1]
+        broke = [x for x in active if x["outcome"] == "down" and x["i1"] == i]   # w tygodniu złamania pokazujemy złamany box (nowy box zaczyna się w tym samym tygodniu)
+        b = (broke or active or boxes)[-1]
         stop = b["bottom"] * (1 - darvas.STOP_PCT / 100)
         out.append(("─" * 22, DIM))
         head = f"box {b['bottom']:.2f}–{b['top']:.2f}"

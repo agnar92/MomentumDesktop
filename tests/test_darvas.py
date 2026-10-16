@@ -6,7 +6,7 @@ C = [10, 10.5, 11, 12, 11.5, 11.2, 11.4, 11.1, 12.5, 13, 12.8, 12.6, 12.2, 12.9,
 
 
 def test_boxes_match_js():
-    got = [(b["i0"], b["i1"], b["top"], b["bottom"], b["confirmed"], b["outcome"]) for b in darvas.boxes(C)]
+    got = [(b["i0"], b["i1"], b["top"], b["bottom"], b["confirmed"], b["outcome"]) for b in darvas.boxes(C, 3)]
     assert got == [(3, 8, 12, 11.1, False, "up"), (9, 14, 13, 12.2, False, "up"), (15, 21, 15, 13.9, False, "up")]
 
 
@@ -65,3 +65,12 @@ def test_pure_darvas_buys_on_plain_breakout_and_daily_text_uses_sessions():
     far = C[:-1] + [C[-2] * 1.5]                  # daleko nad górą: normalnie ZA PÓŹNO, w czystym — KUP
     assert darvas.status(far)["state"] == "LATE" and darvas.status(far, pure=True)["state"] == "BUY"
     assert "sesji" in darvas.status([10, 11, 12, 13, 12.5, 12.0, 11.8, 12.2, 12.4, 12.1], **darvas.DAILY)["text"]
+
+
+def test_weekly_confirm_is_two_and_daily_three():
+    # IOVA 2026-05…08 (zamknięcia tygodniowe): silny trend z krótkimi konsolidacjami — przy „zamknięcie + 2 kolejne” powstają niepotwierdzone boxy
+    c = [3.45, 4.11, 4.1, 4.23, 4.08, 3.91, 4.25, 4.31, 4.23, 5.0, 4.99, 4.07, 6.34, 6.98, 8.29, 8.01, 8.79, 8.6]
+    two = [(b["top"], b["bottom"], b["confirmed"], b["outcome"]) for b in darvas.boxes(c)]
+    assert (4.23, 3.91, False, "up") in two and (5.0, 4.07, False, "up") in two
+    assert darvas.boxes(c, 3) == [] and darvas.confirm_for("W") == 2 and darvas.confirm_for("D") == 3
+    assert darvas.DAILY["confirm"] == 3

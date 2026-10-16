@@ -195,7 +195,7 @@ class ChartWindow(tk.Toplevel):
         box = {k: v for k, v in box.items() if k != "dates"}
         if "confirmed" not in box:   # box z listy Boxy nie niesie flagi — bierzemy ją z boxów Darvasa tej spółki
             full = self.series()[0]
-            m = next((b for b in darvas.boxes(full["c"]) if b["i0"] == box.get("i0")), None) if full else None
+            m = next((b for b in darvas.boxes(full["c"], darvas.confirm_for(self.tf.get())) if b["i0"] == box.get("i0")), None) if full else None
             box = {**box, "confirmed": m["confirmed"] if m else True}
         self.focus_box = box
         n = len(self.dates)
@@ -231,7 +231,7 @@ class ChartWindow(tk.Toplevel):
         glb_level = (st.row(self.ticker) or {}).get("glb_level")   # zielona linia Wisha (skan Wish) — rysowana na obu wykresach
         if self.mode.get() == "darcard":
             self.update_idletasks()
-            self.geoms["card"] = charts.draw_darcard(self.cv_card, full, dates, win, {"pinned": pinned, "selected": self.selected, "log": self.log.get(), "glb": glb_level})
+            self.geoms["card"] = charts.draw_darcard(self.cv_card, full, dates, win, {"pinned": pinned, "selected": self.selected, "log": self.log.get(), "glb": glb_level, "tf": self.tf.get()})
             self.hit_geom = self.geoms["card"]
         if self.mode.get() == "bars":
             opts = {"macd": self.macd_on.get(), "spx": True, "smas": smas, "tf": self.tf.get(), "log": self.log.get(), "glb": glb_level}

@@ -6,7 +6,8 @@ Strefa zagrożenia = 5 % pod dołem boxa (jej dolna krawędź = exit). Heurystyk
 """
 import math
 
-CONFIRM = 3
+CONFIRM = 2            # tygodniowo: góra / dół = zamknięcie + 2 kolejne bez przebicia (na dziennym wg PDF: 3 sesje — CONFIRM_DAILY)
+CONFIRM_DAILY = 3
 MIN_HEIGHT_PCT = 1.5
 STOP_PCT = 5            # szerokość strefy zagrożenia pod dołem boxa
 MAX_EXT_PCT = 10        # KUP tylko do 10 % nad górą boxa
@@ -34,8 +35,13 @@ def last_real(c):
     return n - 1
 
 
-def boxes(c, confirm=CONFIRM, bottom_confirm=None):
-    """[{i0, i1, top, bottom, confirmed, outcome: up|down|open}] rosnąco po czasie."""
+def confirm_for(tf):
+    return CONFIRM_DAILY if tf == "D" else CONFIRM
+
+
+def boxes(c, confirm=None, bottom_confirm=None):
+    """[{i0, i1, top, bottom, confirmed, outcome: up|down|open}] rosnąco po czasie. confirm: ile kolejnych zamknięć nie może przebić góry / dołu."""
+    confirm = CONFIRM if confirm is None else confirm
     bottom_confirm = confirm if bottom_confirm is None else bottom_confirm
     n = last_real(c) + 1
     out = []
@@ -79,10 +85,10 @@ def box_info(top, bottom, zone_pct=STOP_PCT):
             "zone_pct": zone_pct, "depth_pct": _r2((top - bottom) / top * 100)}
 
 
-def status(c, vol=None, zone_pct=STOP_PCT, max_ext_pct=MAX_EXT_PCT, vol_bars=VOL_WEEKS, pure=None, unit="tygodnia"):
+def status(c, vol=None, zone_pct=STOP_PCT, max_ext_pct=MAX_EXT_PCT, vol_bars=VOL_WEEKS, pure=None, unit="tygodnia", confirm=None):
     """Stan na ostatnim zamknięciu (tydzień / sesja): BUY / NOVOL / LATE / HOLD / SELL / WAIT / NONE. pure (domyślnie `PURE`): bez NOVOL i LATE."""
     pure = PURE if pure is None else pure
-    bx = boxes(c)
+    bx = boxes(c, confirm)
     lr = last_real(c)
     if not bx or lr < 0:
         return {"state": "NONE", "text": "brak boxa Darvasa (za mało danych)"}
@@ -138,7 +144,7 @@ def pin_status(box, price, zone_pct=STOP_PCT):
     return {"state": "EXIT", "rank": 0, "text": f"EXIT — cena {_r2(price)} poniżej strefy zagrożenia ({zone})"}
 
 
-DAILY = {"max_ext_pct": 5, "vol_bars": 50, "unit": "sesji"}   # wykres dzienny: wybicie nie dalej niż 5 % nad górą, wolumen vs średnia z 50 sesji
+DAILY = {"max_ext_pct": 5, "vol_bars": 50, "unit": "sesji", "confirm": CONFIRM_DAILY}   # wykres dzienny: wybicie nie dalej niż 5 % nad górą, wolumen vs średnia z 50 sesji
 
 
 def overview(items, weeks, pinned=None, new_weeks=NEW_WEEKS, params=None):
@@ -158,7 +164,8 @@ def overview(items, weeks, pinned=None, new_weeks=NEW_WEEKS, params=None):
                 out["pinned"].append({"ticker": it["ticker"], "price": it.get("price"), "state": st["state"], "rank": st["rank"],
                                       "text": st["text"], "box": dict(pin)})
         ds = status(c, it.get("v"), **(params or {}))
-        bx = boxes(c)
+        conf = (params or {}).get("confirm") or CONFIRM
+        bx = boxes(c, conf)
         last = bx[-1] if bx else None
         if ds["state"] == "NONE" or not last:
             continue
@@ -169,7 +176,7 @@ def overview(items, weeks, pinned=None, new_weeks=NEW_WEEKS, params=None):
         if sect:
             out[sect].append(row)
         # nowe boxy: góra potwierdzona (i0 + potwierdzenie) w ostatnich `new_weeks` tygodniach
-        fresh = [b for b in bx if lr - (new_weeks - 1) <= b["i0"] + CONFIRM <= lr]
+        fresh = [b for b in bx if lr - (new_weeks - 1) <= b["i0"] + conf <= lr]
         if fresh:
             f = fresh[-1]
             st = "ABOVE" if f["outcome"] == "up" else "EXIT" if f["outcome"] == "down" else "INSIDE"

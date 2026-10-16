@@ -6,7 +6,7 @@ C = [10, 10.5, 11, 12, 11.5, 11.2, 11.4, 11.1, 12.5, 13, 12.8, 12.6, 12.2, 12.9,
 
 
 def test_boxes_match_js():
-    got = [(b["i0"], b["i1"], b["top"], b["bottom"], b["confirmed"], b["outcome"]) for b in darvas.boxes(C)]
+    got = [(b["i0"], b["i1"], b["top"], b["bottom"], b["confirmed"], b["outcome"]) for b in darvas.boxes(C, 3)]
     assert got == [(3, 8, 12, 11.1, False, "up"), (9, 14, 13, 12.2, False, "up"), (15, 21, 15, 13.9, False, "up")]
 
 
@@ -48,3 +48,29 @@ def test_overview_sections():
     ov = darvas.overview(items, ["w"] * 22, {"AAA": {"top": 15, "bottom": 13.9, "start": "w"}})
     assert [r["ticker"] for r in ov["buy"]] == ["AAA"]
     assert ov["pinned"][0]["state"] == "ABOVE"
+
+
+def test_close_under_box_bottom_is_sell_without_prior_breakout():
+    base = [10, 11, 12, 13, 12.5, 12.0, 11.8, 12.2, 12.4, 12.1, 11.9, 12.3, 12.0]
+    st = darvas.status(base + [11.7])                      # zamknięcie pod dnem 11.8
+    assert st["state"] == "SELL" and st["bottom"] == 11.8 and st["stop"] == 11.21 and "pod dno" in st["text"]
+    assert darvas.status(base + [11.7, 11.0, 10.5, 10.8])["state"] == "SELL"   # nowy box pod złamanym dnem nie kasuje sygnału
+    assert darvas.status(base + [11.7, 11.0, 10.5, 12.1])["state"] != "SELL"   # powrót nad złamane dno
+
+
+def test_pure_darvas_buys_on_plain_breakout_and_daily_text_uses_sessions():
+    vol = [100] * 21 + [50]                       # przebicie na słabym wolumenie
+    assert darvas.status(C, vol)["state"] == "NOVOL"
+    assert darvas.status(C, vol, pure=True)["state"] == "BUY"
+    far = C[:-1] + [C[-2] * 1.5]                  # daleko nad górą: normalnie ZA PÓŹNO, w czystym — KUP
+    assert darvas.status(far)["state"] == "LATE" and darvas.status(far, pure=True)["state"] == "BUY"
+    assert "sesji" in darvas.status([10, 11, 12, 13, 12.5, 12.0, 11.8, 12.2, 12.4, 12.1], **darvas.DAILY)["text"]
+
+
+def test_weekly_confirm_is_two_and_daily_three():
+    # IOVA 2026-05…08 (zamknięcia tygodniowe): silny trend z krótkimi konsolidacjami — przy „zamknięcie + 2 kolejne” powstają niepotwierdzone boxy
+    c = [3.45, 4.11, 4.1, 4.23, 4.08, 3.91, 4.25, 4.31, 4.23, 5.0, 4.99, 4.07, 6.34, 6.98, 8.29, 8.01, 8.79, 8.6]
+    two = [(b["top"], b["bottom"], b["confirmed"], b["outcome"]) for b in darvas.boxes(c)]
+    assert (4.23, 3.91, False, "up") in two and (5.0, 4.07, False, "up") in two
+    assert darvas.boxes(c, 3) == [] and darvas.confirm_for("W") == 2 and darvas.confirm_for("D") == 3
+    assert darvas.DAILY["confirm"] == 3

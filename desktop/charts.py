@@ -168,6 +168,12 @@ def hatch(cv, x0, y0, x1, y1, color="#8a929e", gap=7):
         k += gap
 
 
+def _price_dot(cv, x, y, r=6):
+    """Wyraźna kropka aktualnej ceny: czarna obwódka + biały pierścień + żółty środek — widoczna i na jasnym boxie, i na ciemnym tle."""
+    cv.create_oval(x - r - 2, y - r - 2, x + r + 2, y + r + 2, fill="#000000", outline="")
+    cv.create_oval(x - r, y - r, x + r, y + r, fill="#ffd166", outline=WHITE, width=2)
+
+
 def _tag(cv, x, y, text, fill, fg="#000"):
     cv.create_rectangle(x, y - 7, x + RIGHT - 8, y + 7, fill=fill, outline="")
     cv.create_text(x + 3, y, text=text, fill=fg, font=FONT, anchor="w")
@@ -306,6 +312,7 @@ def draw_bars(cv, full, weeks, spx, win, opts=None):
         yy = y(c[last])
         cv.create_line(LEFT, yy, W - RIGHT, yy, fill=GREEN if up else RED, dash=(1, 3))
         _tag(cv, W - RIGHT + 2, yy, fmt_price(c[last]), GREEN if up else RED)
+        _price_dot(cv, xf(last), yy, 5)   # kropka na ostatnim zamknięciu (widać, gdzie cena jest względem boxa)
     # MACD (czytelny: tło panelu, 4-kolorowy histogram, grube linie, znaczniki przecięć, wartości na osi i w tytule)
     if show_macd:
         line, sg, hist = macd(c)
@@ -367,7 +374,7 @@ def draw_darcard(cv, full, weeks, win, opts=None):
     step = (W - LEFT - RIGHT) / n
     def xf(i):
         return LEFT + (i - i0 + 0.5) * step
-    bx = darvas.boxes(c)
+    bx = darvas.boxes(c, darvas.confirm_for(opts.get("tf")))
     vis = [(k, b) for k, b in enumerate(bx) if b["i1"] >= i0 and b["i0"] < i1]
     cs = _finite(c[i0:i1])
     if not cs:
@@ -427,8 +434,9 @@ def draw_darcard(cv, full, weeks, win, opts=None):
     li = last_idx(c)
     if i0 <= li < i1:
         x, yy = xf(li), y(c[li])
-        cv.create_oval(x - 5, yy - 5, x + 5, yy + 5, fill=LINE, outline=WHITE, width=2)
-        _tag(cv, W - RIGHT + 2, yy, fmt_price(c[li]), LINE, "#fff")
+        cv.create_line(x, yy, W - RIGHT, yy, fill="#ffd166", dash=(2, 3))   # kropkowana prowadnica do ceny na osi
+        _price_dot(cv, x, yy, 6)
+        _tag(cv, W - RIGHT + 2, yy, fmt_price(c[li]), "#ffd166")
     # zaznaczony box: trzy poziomy z cenami na osi
     sel = opts.get("selected")
     if sel is not None and 0 <= sel < len(hits):
@@ -599,11 +607,12 @@ def tooltip_card(full, dates, i, tf):
     chg = _pct(c[i], c[i - 1] if i > 0 else None)
     if chg is not None:
         out.append((f"zmiana {chg:+.2f}% vs poprzedni", GREEN if chg >= 0 else RED))
-    boxes = [b for b in darvas.boxes(c) if b["i0"] <= i]
+    boxes = [b for b in darvas.boxes(c, darvas.confirm_for(tf)) if b["i0"] <= i]
     if boxes:
         # box obowiązujący w tym tygodniu: zaczął się przed i, a nie skończył (otwarty) albo kończy się dopiero w i lub później
         active = [b for b in boxes if b["outcome"] == "open" or b["i1"] >= i]
-        b = (active or boxes)[-1]
+        broke = [x for x in active if x["outcome"] == "down" and x["i1"] == i]   # w tygodniu złamania pokazujemy złamany box (nowy box zaczyna się w tym samym tygodniu)
+        b = (broke or active or boxes)[-1]
         stop = b["bottom"] * (1 - darvas.STOP_PCT / 100)
         out.append(("─" * 22, DIM))
         head = f"box {b['bottom']:.2f}–{b['top']:.2f}"

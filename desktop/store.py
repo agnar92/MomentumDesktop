@@ -74,9 +74,32 @@ def darvas_state(full, tf):
     return darvas.status(c, full.get("v"), **(darvas.DAILY if tf == "D" else {}))
 
 
-def enrich(stock, full, pin, weeks, tf="W", full_d=None):
-    """Dopisuje do spółki pola liczone lokalnie: stan Darvasa (tygodniowy i dzienny) i status przypiętego boxa."""
+MARKET_WARN = "  ⚠ rynek w korekcie (EMA10 < EMA20 tyg.) — tylko informacja"
+
+
+def macd_up(full):
+    """MACD (12, 26, 9) nad linią sygnału na ostatnim zamknięciu: True / False / None (za mało danych)."""
+    c = (full or {}).get("c") or []
+    if len([v for v in c if v is not None]) < 40:
+        return None
+    from . import charts   # lazy: charts importuje tkinter
+    line, sg, _ = charts.macd(c)
+    i = darvas.last_real(c)
+    if i < 0 or line[i] is None or sg[i] is None:
+        return None
+    return line[i] > sg[i]
+
+
+def enrich(stock, full, pin, weeks, tf="W", full_d=None, market_up=None):
+    """Dopisuje do spółki pola liczone lokalnie: stan Darvasa (tygodniowy i dzienny), MACD vs sygnał i status przypiętego boxa.
+    market_up (EMA10 > EMA20 tyg. na S&P 500 i Nasdaq): przy korekcie sygnał KUP dostaje ostrzeżenie — rynek jest tylko informacją, nie filtrem."""
     sw, sd = darvas_state(full, "W"), darvas_state(full_d, "D")
+    if market_up is False:
+        for st in (sw, sd):
+            if st["state"] == "BUY":
+                st["text"] = st.get("text", "") + MARKET_WARN
+    stock["macd_up_w"], stock["macd_up_d"] = macd_up(full), macd_up(full_d)
+    stock["macd_up"] = stock["macd_up_d"] if tf == "D" and full_d else stock["macd_up_w"]
     stock["_base_label"] = base_label(stock)
     stock["darvas_w"], stock["darvas_d"] = sw["state"], sd["state"]
     stock["darvas_text_w"], stock["darvas_text_d"] = sw.get("text", ""), sd.get("text", "")
@@ -95,6 +118,7 @@ class Store:
         self.dir = data_dir(base, seed)
         self.watchlist, self.charts, self.charts_d, self.pinned = {}, {}, {}, {}
         self.rows = []
+        self.market_up = None   # rynek wg EMA10 > EMA20 tygodniowych (S&P 500 i Nasdaq), None = brak danych
         self.tf = "W"   # „W” tygodniowy / „D” dzienny — wpływa na stan Darvasa w liście
         self._sma = {}
         self.adhoc = {}   # tickery spoza skanera pobrane na żądanie (Ctrl+K): {T: {weekly, weeks, daily, dates, row}}
@@ -116,6 +140,7 @@ class Store:
         self._sma = {}
         mkt = canslim.market(self.watchlist)
         self.mkt = mkt
+        self.market_up = canslim.ema_market(self.watchlist)["up"]
         extra = read_json(self.dir / "finviz_extra.json", {}) or {}   # dodatkowe kolumny zamówione w skanerze (tylko z Finviz)
         self.rows = [canslim.tag(self._enrich({**s, **extra.get(s["ticker"], {})}), mkt) for s in self.watchlist.get("stocks", [])]
         self.changes = changes.load(self.dir)   # co się zmieniło przy ostatnim Sync
@@ -134,7 +159,7 @@ class Store:
 
     def _enrich(self, s):
         t = s["ticker"]
-        return enrich(s, self.stocks_full.get(t), self.pinned.get(t), self.weeks, self.tf, self.charts_d.get("stocks", {}).get(t))
+        return enrich(s, self.stocks_full.get(t), self.pinned.get(t), self.weeks, self.tf, self.charts_d.get("stocks", {}).get(t), self.market_up)
 
     def set_tf(self, tf):
         """Przełącznik listy: tygodniowy / dzienny stan Darvasa (kolumna Darvas i filtry skanera)."""
@@ -142,6 +167,16 @@ class Store:
         for r in self.rows + [x["row"] for x in self.adhoc.values()]:
             r["darvas"] = r["darvas_d"] if self.tf == "D" else r["darvas_w"]
             r["darvas_text"] = r["darvas_text_d"] if self.tf == "D" else r["darvas_text_w"]
+            r["macd_up"] = r["macd_up_d"] if self.tf == "D" else r["macd_up_w"]
+
+    def set_pure(self, pure):
+        """„Czysty Darvas” (bez filtru wolumenu i limitu +10 %): przelicza stany w liście."""
+        darvas.PURE = bool(pure)
+        for r in self.rows:
+            self._enrich(r)
+        for t, x in self.adhoc.items():
+            enrich(x["row"], x["weekly"], self.pinned.get(t), x["weeks"], self.tf, x["daily"], self.market_up)
+        self.set_tf(self.tf)
 
     def series(self, ticker, tf):
         """(dane OHLCV, lista dat, S&P 500, średnie [(tablica, nazwa)]) dla wykresu w danej skali czasu; dane dzienne mają SMA 10 / 50 / 200."""
@@ -173,7 +208,7 @@ class Store:
     def add_adhoc(self, symbol, data, company=None):
         """Dodaje dane dowolnego tickera (adhoc.build): wiersz z Darvasem i CANSLIM (bez fundamentów) + serie do wykresów."""
         stock = {"ticker": symbol, "company": company or symbol, "price": round(data["price"], 2), "as_of": data["last_date"], "_adhoc": True}
-        stock = canslim.tag(enrich(stock, data["weekly"], self.pinned.get(symbol), data["weeks"], self.tf, data["daily"]), self.mkt)
+        stock = canslim.tag(enrich(stock, data["weekly"], self.pinned.get(symbol), data["weeks"], self.tf, data["daily"], self.market_up), self.mkt)
         stock["flag"] = None
         self.adhoc[symbol] = {**data, "row": stock}
         return stock
@@ -204,7 +239,7 @@ class Store:
 # ---------- skaner (filtry po danych już pobranych) ----------
 
 DEFAULT_FILTERS = {"rs_min": None, "eps_min": None, "comp_min": None, "max_to_pivot": None, "max_from_high": None,
-                   "states": [], "sector": "", "base_only": False, "min_adr": None, "pinned_only": False, "text": "", "cs_min": None, "cs_core": False, "flag": ""}
+                   "states": [], "sector": "", "base_only": False, "min_adr": None, "pinned_only": False, "macd_only": False, "text": "", "cs_min": None, "cs_core": False, "flag": ""}
 
 
 def _num(v):
@@ -246,6 +281,8 @@ def scan(rows, f):
         if f["sector"] and r.get("sector") != f["sector"]:
             continue
         if f["base_only"] and r.get("base_type") not in BUYABLE_BASES:
+            continue
+        if f["macd_only"] and r.get("macd_up") is not True:   # MACD (12, 26, 9) nad linią sygnału (skala jak w liście: tygodniowa / dzienna)
             continue
         if f["pinned_only"] and r.get("pbox") == "NONE":
             continue

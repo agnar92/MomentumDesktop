@@ -13,7 +13,7 @@ DEFS = {
     "cs": ("CANSLIM", 84, "e", "cs"), "cs_letters": ("C A N S L I M", 150, "w", "text"),
     "pct_from_high_52w": ("% od szczytu", 114, "e", "n1"), "base": ("Baza", 130, "w", "base"), "base_depth_pct": ("Głęb. bazy %", 108, "e", "n1"),
     "base_weeks": ("Tyg. bazy", 86, "e", "int"), "pivot": ("Pivot", 80, "e", "price"), "pct_to_pivot": ("Do pivotu %", 108, "e", "n1"),
-    "vcp": ("VCP", 54, "w", "bool"), "darvas": ("Darvas", 140, "w", "state"), "pbox": ("Box 📌", 84, "w", "pbox"),
+    "vcp": ("VCP", 54, "w", "bool"), "darvas": ("Darvas", 140, "w", "state"), "pbox": ("Box 📌", 84, "w", "pbox"), "macd_up": ("MACD > sygnał", 108, "w", "bool"),
     "adr_pct": ("ADR %", 70, "e", "n1"), "dollar_volume_avg": ("Obrót dzienny", 110, "e", "mcap"),
     "pct_above_sma50": ("% nad SMA50", 104, "e", "n1"), "pct_above_sma200": ("% nad SMA200", 110, "e", "n1"),
     "ret_3m_pct": ("Zwrot 3M %", 92, "e", "n1"), "ret_6m_pct": ("Zwrot 6M %", 92, "e", "n1"), "ret_12m_pct": ("Zwrot 12M %", 98, "e", "n1"),
@@ -36,8 +36,8 @@ DEFS = {
 DEFAULT_COLUMNS = ["ticker", "flag", "company", "price", "rs_rating", "eps_rating", "composite_rating", "cs", "cs_letters", "pct_from_high_52w", "base",
                    "pct_to_pivot", "darvas", "pbox", "change", "sector"]
 # pola policzone lokalnie — są zawsze (nawet przed pierwszym Sync)
-COMPUTED = {"cs", "cs_letters", "base", "darvas", "pbox", "flag", "change"}
-_SKIP = {"canslim", "spark", "darvas_w", "darvas_d", "darvas_text", "darvas_text_w", "darvas_text_d", "pbox_text", "pbox_rank", "as_of",
+COMPUTED = {"cs", "cs_letters", "base", "darvas", "pbox", "flag", "change", "macd_up"}
+_SKIP = {"canslim", "spark", "darvas_w", "darvas_d", "macd_up_w", "macd_up_d", "darvas_text", "darvas_text_w", "darvas_text_d", "pbox_text", "pbox_rank", "as_of",
          "pivot_break_date", "rs_score", "accdis_score", "eps_score", "glb_rank"}
 PBOX_LABELS = {"NONE": "", "ABOVE": "wybity", "INSIDE": "w boxie", "ZONE": "STREFA!", "EXIT": "EXIT!"}
 

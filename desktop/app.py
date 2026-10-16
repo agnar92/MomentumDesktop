@@ -7,7 +7,7 @@ import traceback
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
-from . import changes, exporter, finviz_codes, merge, scanners, session, store, sync
+from . import canslim, changes, darvas, exporter, finviz_codes, merge, scanners, session, store, sync
 from . import columns as columns_mod
 from . import flags as flags_mod
 from .builder import ScannerEditor, ScannerManager, WatchlistEditor
@@ -166,9 +166,8 @@ class ScannerView(tk.Frame):
         self.table.set_rows(rows)
         self.table.set_tf_label(self.store.tf)
         wl = self.store.watchlist
-        mk = self.store.mkt or {}
-        regime = {"uptrend": "✅ trend wzrostowy", "correction": "🛑 korekta"}.get(mk.get("regime"), "—")
-        self.status.config(text=f"  Dane z sesji: {wl.get('data_as_of', 'brak — kliknij Sync')}   Spółek: {len(rows)}/{len(self.store.rows)}   Rynek (M): {regime}"
+        regime = canslim.market_line(wl)
+        self.status.config(text=f"  Dane z sesji: {wl.get('data_as_of', 'brak — kliknij Sync')}   Spółek: {len(rows)}/{len(self.store.rows)}   Rynek: {regime}"
                                 f"   Finviz: {'(stare dane!)' if wl.get('finviz_stale') else 'ok'}   Katalog: {self.store.dir}")
         self.filter_lbl.config(text="⚑ filtr aktywny" if any(v for v in self.main_filter.values()) else "")
         self._update_expr_btn()
@@ -522,6 +521,7 @@ class App:
         self.q = queue.Queue()
         self.syncing = {}   # id skanera -> okno dziennika; synchronizacje różnych skanerów mogą trwać równolegle
         self.session = session.prune(session.load(self.data_root), [s["id"] for s in scanners.load(self.data_root)])
+        darvas.PURE = bool(self.session.get("darvas_pure"))   # „czysty Darvas”: ustawienie globalne, pamiętane między uruchomieniami
         self.launcher = None
         self.root.protocol("WM_DELETE_WINDOW", self.close_main)
         self.main_hidden = False
@@ -569,6 +569,14 @@ class App:
 
     def all_views(self):
         return [self.view] + [w.view for w in self.windows.values() if w.winfo_exists() and w.view is not None]
+
+    def set_darvas_pure(self, pure):
+        """„Czysty Darvas” (KUP = samo przebicie góry, bez filtru wolumenu i limitu +10 %) — dla wszystkich skanerów naraz."""
+        self.session["darvas_pure"] = bool(pure)
+        self.save_session()
+        for v in self.all_views():
+            v.store.set_pure(pure)
+            v.refresh_lists()
 
     def refresh_flag_views(self):
         """Flagi są wspólne dla wszystkich skanerów: po zmianie odświeżamy wszystkie listy."""

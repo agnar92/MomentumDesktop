@@ -6,13 +6,15 @@ Strefa zagrożenia = 5 % pod dołem boxa (jej dolna krawędź = exit). Heurystyk
 """
 import math
 
-CONFIRM = 3
+CONFIRM = 2            # tygodniowo: góra / dół = zamknięcie + 2 kolejne bez przebicia (na dziennym wg PDF: 3 sesje — CONFIRM_DAILY)
+CONFIRM_DAILY = 3
 MIN_HEIGHT_PCT = 1.5
 STOP_PCT = 5            # szerokość strefy zagrożenia pod dołem boxa
 MAX_EXT_PCT = 10        # KUP tylko do 10 % nad górą boxa
 BREAKOUT_VOL = 1.4      # wolumen wybicia >= 1,4x średniej z 10 tygodni
 VOL_WEEKS = 10
 START_STOP_PCT = 10     # stop początkowy przy pierwszym wybiciu
+PURE = False            # „czysty Darvas” jak w PDF: KUP = samo przebicie góry (bez filtru wolumenu i limitu +10 % nad górą)
 NEW_WEEKS = 4           # box jest „nowy”, gdy jego góra została potwierdzona w ostatnich tylu tygodniach
 
 
@@ -33,8 +35,13 @@ def last_real(c):
     return n - 1
 
 
-def boxes(c, confirm=CONFIRM, bottom_confirm=None):
-    """[{i0, i1, top, bottom, confirmed, outcome: up|down|open}] rosnąco po czasie."""
+def confirm_for(tf):
+    return CONFIRM_DAILY if tf == "D" else CONFIRM
+
+
+def boxes(c, confirm=None, bottom_confirm=None):
+    """[{i0, i1, top, bottom, confirmed, outcome: up|down|open}] rosnąco po czasie. confirm: ile kolejnych zamknięć nie może przebić góry / dołu."""
+    confirm = CONFIRM if confirm is None else confirm
     bottom_confirm = confirm if bottom_confirm is None else bottom_confirm
     n = last_real(c) + 1
     out = []
@@ -78,9 +85,10 @@ def box_info(top, bottom, zone_pct=STOP_PCT):
             "zone_pct": zone_pct, "depth_pct": _r2((top - bottom) / top * 100)}
 
 
-def status(c, vol=None, zone_pct=STOP_PCT, max_ext_pct=MAX_EXT_PCT, vol_bars=VOL_WEEKS):
-    """Stan na ostatnim tygodniowym zamknięciu: BUY / NOVOL / LATE / HOLD / SELL / WAIT / OUT / NONE."""
-    bx = boxes(c)
+def status(c, vol=None, zone_pct=STOP_PCT, max_ext_pct=MAX_EXT_PCT, vol_bars=VOL_WEEKS, pure=None, unit="tygodnia", confirm=None):
+    """Stan na ostatnim zamknięciu (tydzień / sesja): BUY / NOVOL / LATE / HOLD / SELL / WAIT / NONE. pure (domyślnie `PURE`): bez NOVOL i LATE."""
+    pure = PURE if pure is None else pure
+    bx = boxes(c, confirm)
     lr = last_real(c)
     if not bx or lr < 0:
         return {"state": "NONE", "text": "brak boxa Darvasa (za mało danych)"}
@@ -96,25 +104,29 @@ def status(c, vol=None, zone_pct=STOP_PCT, max_ext_pct=MAX_EXT_PCT, vol_bars=VOL
             pv = [v for v in vol[max(0, lr - vol_bars):lr] if _ok(v)]
             if len(pv) >= 4:
                 vr = vol[lr] / (sum(pv) / len(pv))
-        if vr is not None and vr < BREAKOUT_VOL:
+        if not pure and vr is not None and vr < BREAKOUT_VOL:
             return {**base, "state": "NOVOL", "vol_ratio": round(vr, 2),
                     "text": f"BEZ WOLUMENU — zamknięcie nad górą boxa {_r2(last['top'])}, ale wolumen tylko {vr:.2f}× średniej (wymagane {BREAKOUT_VOL}×); niepotwierdzone"}
-        if over > max_ext_pct / 100:
+        if not pure and over > max_ext_pct / 100:
             return {**base, "state": "LATE",
                     "text": f"ZA PÓŹNO — zamknięcie {over * 100:.1f} % nad górą boxa {_r2(last['top'])} (limit {max_ext_pct} %), nie goń"}
         vtxt = "" if vr is None else f" na wolumenie {vr:.2f}×"
         return {**base, "state": "BUY", "stop": _r2(last["top"] * (1 - START_STOP_PCT / 100)),
                 "vol_ratio": None if vr is None else round(vr, 2),
                 "text": f"KUP — zamknięcie nad górą boxa {_r2(last['top'])}{vtxt}; stop początkowy ok. {START_STOP_PCT} % pod wejściem ({_r2(last['top'] * (1 - START_STOP_PCT / 100))}), potem pod dnem kolejnych boxów"}
-    if last["outcome"] == "down":
-        if had_up:
-            return {**base, "state": "SELL", "text": f"SPRZEDAJ — po wyższym boxie cena spadła pod jego dno {zone_from} (strefa zagrożenia do {stop})"}
-        return {**base, "state": "OUT", "text": f"POZA — box złamany w dół (dno {zone_from}) bez wcześniejszego wybicia; brak powodu, by trzymać"}
+    # zamknięcie pod dnem boxa = od razu SPRZEDAJ (wchodzimy w 5 % strefę zagrożenia); sygnał trwa, dopóki cena
+    # nie wróci nad złamane dno (nowy box tworzy się już pod nim)
+    broken = next((b for b in (last, prev) if b and b["outcome"] == "down" and c[lr] < b["bottom"]), None)
+    if broken:
+        zb = _r2(broken["bottom"])
+        zs = _r2(broken["bottom"] * (1 - zone_pct / 100))
+        return {**base, "state": "SELL", "bottom": zb, "zone_from": zb, "stop": zs,
+                "text": f"SPRZEDAJ — cena zeszła pod dno boxa {zb} (strefa zagrożenia {zs}–{zb}, exit pod {zs})"}
     if last["outcome"] == "up":
         return {**base, "state": "HOLD", "text": f"TRZYMAJ — wybicie nad {_r2(last['top'])} jest za nami, czekamy na nowy, wyższy box; stop pod dnem ostatniego boxa {stop}"}
     if had_up:
         return {**base, "state": "HOLD", "text": f"TRZYMAJ — cena w najwyższym boxie {zone_from}–{_r2(last['top'])}, wahania w nim ignorujemy; stop pod strefą zagrożenia {stop}"}
-    return {**base, "state": "WAIT", "text": f"CZEKAJ — pierwszy box {zone_from}–{_r2(last['top'])}; kup po zamknięciu tygodnia nad {_r2(last['top'])}"}
+    return {**base, "state": "WAIT", "text": f"CZEKAJ — pierwszy box {zone_from}–{_r2(last['top'])}; kup po zamknięciu {unit} nad {_r2(last['top'])}"}
 
 
 def pin_status(box, price, zone_pct=STOP_PCT):
@@ -132,7 +144,7 @@ def pin_status(box, price, zone_pct=STOP_PCT):
     return {"state": "EXIT", "rank": 0, "text": f"EXIT — cena {_r2(price)} poniżej strefy zagrożenia ({zone})"}
 
 
-DAILY = {"max_ext_pct": 5, "vol_bars": 50}   # wykres dzienny: wybicie nie dalej niż 5 % nad górą, wolumen vs średnia z 50 sesji
+DAILY = {"max_ext_pct": 5, "vol_bars": 50, "unit": "sesji", "confirm": CONFIRM_DAILY}   # wykres dzienny: wybicie nie dalej niż 5 % nad górą, wolumen vs średnia z 50 sesji
 
 
 def overview(items, weeks, pinned=None, new_weeks=NEW_WEEKS, params=None):
@@ -152,7 +164,8 @@ def overview(items, weeks, pinned=None, new_weeks=NEW_WEEKS, params=None):
                 out["pinned"].append({"ticker": it["ticker"], "price": it.get("price"), "state": st["state"], "rank": st["rank"],
                                       "text": st["text"], "box": dict(pin)})
         ds = status(c, it.get("v"), **(params or {}))
-        bx = boxes(c)
+        conf = (params or {}).get("confirm") or CONFIRM
+        bx = boxes(c, conf)
         last = bx[-1] if bx else None
         if ds["state"] == "NONE" or not last:
             continue
@@ -163,7 +176,7 @@ def overview(items, weeks, pinned=None, new_weeks=NEW_WEEKS, params=None):
         if sect:
             out[sect].append(row)
         # nowe boxy: góra potwierdzona (i0 + potwierdzenie) w ostatnich `new_weeks` tygodniach
-        fresh = [b for b in bx if lr - (new_weeks - 1) <= b["i0"] + CONFIRM <= lr]
+        fresh = [b for b in bx if lr - (new_weeks - 1) <= b["i0"] + conf <= lr]
         if fresh:
             f = fresh[-1]
             st = "ABOVE" if f["outcome"] == "up" else "EXIT" if f["outcome"] == "down" else "INSIDE"

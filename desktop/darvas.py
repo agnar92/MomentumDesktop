@@ -9,7 +9,6 @@ import math
 CONFIRM = 2            # tygodniowo: góra / dół = zamknięcie + 2 kolejne bez przebicia (na dziennym wg PDF: 3 sesje — CONFIRM_DAILY)
 CONFIRM_DAILY = 3
 MIN_HEIGHT_PCT = 1.5
-MAX_DEPTH_PCT = 25      # box nie może być głębszy: zamknięcie > 25 % pod górą kończy (łamie) box, zanim dół zdążył się potwierdzić
 STOP_PCT = 5            # szerokość strefy zagrożenia pod dołem boxa
 MAX_EXT_PCT = 10        # KUP tylko do 10 % nad górą boxa
 BREAKOUT_VOL = 1.4      # wolumen wybicia >= 1,4x średniej z 10 tygodni
@@ -41,14 +40,17 @@ def confirm_for(tf):
 
 
 def boxes(c, confirm=None, bottom_confirm=None):
-    """[{i0, i1, top, bottom, confirmed, outcome: up|down|open}] rosnąco po czasie. confirm: ile kolejnych zamknięć nie może przebić góry / dołu."""
+    """[{i0, i1, top, bottom, confirmed, outcome: up|down|open, ref_bottom?}] rosnąco po czasie. confirm: ile kolejnych zamknięć nie może przebić góry / dołu.
+
+    Po zakończonym boxie (wybitym w górę, złamanym albo anulowanym) obowiązuje JEGO góra, dół i strefa zagrożenia (5 % pod dołem):
+    nowego boxa szukamy dopiero gdy cena wyjdzie dołem ze strefy zagrożenia albo wróci nad górę tamtego boxa."""
     confirm = CONFIRM if confirm is None else confirm
     bottom_confirm = confirm if bottom_confirm is None else bottom_confirm
     n = last_real(c) + 1
     out = []
     i = 0
+    floor = None    # dół poprzedniego boxa, z którego cena wybiła: powrót pod niego anuluje nowy box
     while i < n:
-        floor = out[-1]["bottom"] if out and out[-1]["outcome"] == "up" else None   # schodek: powrót pod dół poprzedniego boxa = nieudane wybicie
         top, t, run_max = None, -1, -math.inf
         for k in range(i, n):
             if not _ok(c[k]) or c[k] < run_max:
@@ -60,16 +62,14 @@ def boxes(c, confirm=None, bottom_confirm=None):
         if t < 0:
             break
         bottom, bi, confirmed, end, outcome = math.inf, -1, False, -1, "open"
+        ref_top, ref_bottom = top, None     # box, do którego odwołujemy się po zakończeniu tego
         for j in range(t + 1, n):
             v, ok = c[j], _ok(c[j])   # tydzień bez notowania (None) nie zmienia boxa, ale upływ czasu liczy się do potwierdzenia dołu
             if ok and v > top:
                 outcome, end = "up", j
                 break
             if ok and floor is not None and v < floor:   # cena wróciła pod dół boxa, z którego wybiła: schodek się zawalił, nowy box jest anulowany
-                outcome, end = "down", j
-                break
-            if ok and v < top * (1 - MAX_DEPTH_PCT / 100):   # spadek jak z klifu: dół nie zdążył się utworzyć, box jest złamany (inaczej jeden „box” pochłaniał całą korektę)
-                outcome, end = "down", j
+                outcome, end, ref_bottom = "down", j, floor
                 break
             if confirmed and ok and v < bottom:
                 outcome, end = "down", j
@@ -80,9 +80,30 @@ def boxes(c, confirm=None, bottom_confirm=None):
                 confirmed = True
         if end < 0:
             end = n - 1
-        if math.isfinite(bottom) and (top - bottom) / top * 100 >= MIN_HEIGHT_PCT:
-            out.append({"i0": t, "i1": end, "top": top, "bottom": bottom, "confirmed": confirmed, "outcome": outcome})
-        i = n if outcome == "open" else end
+        forming = outcome == "open" and not confirmed      # dół jeszcze się nie ustalił (cena wciąż spada) — to nie jest jeszcze box
+        if math.isfinite(bottom) and (top - bottom) / top * 100 >= MIN_HEIGHT_PCT and not forming:
+            box = {"i0": t, "i1": end, "top": top, "bottom": bottom, "confirmed": confirmed, "outcome": outcome}
+            if ref_bottom is not None:
+                box["ref_bottom"] = ref_bottom
+            out.append(box)
+        if outcome == "open":
+            break
+        if outcome == "up":
+            floor, i = bottom, end
+            continue
+        # box złamany / anulowany: czekamy, aż cena wyjdzie dołem ze strefy zagrożenia tamtego boxa (wtedy szukamy nowego od tego tygodnia)
+        # albo wróci nad jego górę (wtedy szukamy dalej, a poprzedni box nadal obowiązuje jako podłoga)
+        if ref_bottom is None:
+            ref_bottom, ref_top, keep = bottom, top, None
+        else:
+            keep = ref_bottom
+            ref_top = out[-2]["top"] if len(out) > 1 and out[-2]["outcome"] == "up" else top
+        zone_low = ref_bottom * (1 - STOP_PCT / 100)
+        nxt = next((k for k in range(end, n) if _ok(c[k]) and (c[k] < zone_low or c[k] > ref_top)), None)
+        if nxt is None:
+            break
+        floor = None if c[nxt] < zone_low else keep
+        i = nxt
     return out
 
 
@@ -124,10 +145,11 @@ def status(c, vol=None, zone_pct=STOP_PCT, max_ext_pct=MAX_EXT_PCT, vol_bars=VOL
                 "text": f"KUP — zamknięcie nad górą boxa {_r2(last['top'])}{vtxt}; stop początkowy ok. {START_STOP_PCT} % pod wejściem ({_r2(last['top'] * (1 - START_STOP_PCT / 100))}), potem pod dnem kolejnych boxów"}
     # zamknięcie pod dnem boxa = od razu SPRZEDAJ (wchodzimy w 5 % strefę zagrożenia); sygnał trwa, dopóki cena
     # nie wróci nad złamane dno (nowy box tworzy się już pod nim)
-    broken = next((b for b in (last, prev) if b and b["outcome"] == "down" and c[lr] < b["bottom"]), None)
+    broken = next((b for b in (last, prev) if b and b["outcome"] == "down" and c[lr] < b.get("ref_bottom", b["bottom"])), None)
     if broken:
-        zb = _r2(broken["bottom"])
-        zs = _r2(broken["bottom"] * (1 - zone_pct / 100))
+        rb = broken.get("ref_bottom", broken["bottom"])      # anulowany box odwołuje się do dołu poprzedniego, wybitego boxa
+        zb = _r2(rb)
+        zs = _r2(rb * (1 - zone_pct / 100))
         return {**base, "state": "SELL", "bottom": zb, "zone_from": zb, "stop": zs,
                 "text": f"SPRZEDAJ — cena zeszła pod dno boxa {zb} (strefa zagrożenia {zs}–{zb}, exit pod {zs})"}
     if last["outcome"] == "up":

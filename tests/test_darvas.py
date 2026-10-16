@@ -74,3 +74,14 @@ def test_weekly_confirm_is_two_and_daily_three():
     assert (4.23, 3.91, False, "up") in two and (5.0, 4.07, False, "up") in two
     assert darvas.boxes(c, 3) == [] and darvas.confirm_for("W") == 2 and darvas.confirm_for("D") == 3
     assert darvas.DAILY["confirm"] == 3
+
+
+def test_box_deeper_than_25_percent_is_broken_before_bottom_confirms():
+    # MRVL 2025: szczyt 124 i spadek bez potwierdzonego dołu — dawniej jeden „box” 124 → 49 pochłaniał całą korektę
+    c = [111.36, 113.08, 117.61, 113.83, 124.22, 123.49, 112.38, 110.15, 106.05, 103.36, 91.43, 70.54, 68.45, 70.09, 61.77, 49.22, 53.22, 51.54, 58.73, 62.13]
+    bx = darvas.boxes(c)
+    big = bx[0]
+    assert big["top"] == 124.22 and big["outcome"] == "down" and big["i1"] == 10      # złamany zamknięciem 91,43 (−26 % pod górą)
+    assert (big["top"] - big["bottom"]) / big["top"] * 100 <= darvas.MAX_DEPTH_PCT
+    assert all((b["top"] - b["bottom"]) / b["top"] * 100 <= darvas.MAX_DEPTH_PCT + 1e-9 for b in bx)
+    assert len(bx) >= 2                                                              # po złamaniu powstają kolejne (mniejsze) boxy

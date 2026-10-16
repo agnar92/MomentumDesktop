@@ -9,6 +9,7 @@ import math
 CONFIRM = 2            # tygodniowo: góra / dół = zamknięcie + 2 kolejne bez przebicia (na dziennym wg PDF: 3 sesje — CONFIRM_DAILY)
 CONFIRM_DAILY = 3
 MIN_HEIGHT_PCT = 1.5
+MAX_DEPTH_PCT = 25      # box nie może być głębszy: zamknięcie > 25 % pod górą kończy (łamie) box, zanim dół zdążył się potwierdzić
 STOP_PCT = 5            # szerokość strefy zagrożenia pod dołem boxa
 MAX_EXT_PCT = 10        # KUP tylko do 10 % nad górą boxa
 BREAKOUT_VOL = 1.4      # wolumen wybicia >= 1,4x średniej z 10 tygodni
@@ -62,6 +63,9 @@ def boxes(c, confirm=None, bottom_confirm=None):
             v, ok = c[j], _ok(c[j])   # tydzień bez notowania (None) nie zmienia boxa, ale upływ czasu liczy się do potwierdzenia dołu
             if ok and v > top:
                 outcome, end = "up", j
+                break
+            if ok and v < top * (1 - MAX_DEPTH_PCT / 100):   # spadek jak z klifu: dół nie zdążył się utworzyć, box jest złamany (inaczej jeden „box” pochłaniał całą korektę)
+                outcome, end = "down", j
                 break
             if confirmed and ok and v < bottom:
                 outcome, end = "down", j

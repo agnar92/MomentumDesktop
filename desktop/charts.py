@@ -13,7 +13,7 @@ SMA10, SMA40, SPX, LINE = "#e5484d", "#f0b429", "#7d8590", "#4aa3ff"
 SMA_COLORS = {10: SMA10, 40: SMA40, 50: SMA40, 200: "#e6e9ef"}
 GREEN, RED, GOLD, WHITE = "#3ddc84", "#ff5c5c", "#ffd166", "#ffffff"
 BOX_FILL, BOX_PLAIN = "#c9ced8", "#e6e9ef"
-TOPLINE = "#3b9cff"   # przerywana linia samego topu (bez potwierdzonego dołu)
+TOPLINE = GREEN   # przerywana linia samego topu (bez potwierdzonego dołu) — zielona, bo niebieski to linia zamknięć
 FONT = ("Consolas", 9)
 
 LEFT, RIGHT, TOP, BOTTOM = 6, 62, 8, 18
@@ -427,7 +427,7 @@ def draw_darcard(cv, full, weeks, win, opts=None):
         yy = y(t["top"])
         cv.create_line(x0, yy, x1, yy, fill=TOPLINE, width=2, dash=(6, 4))
         stop = darvas.line_info(t["top"])["stop"]
-        hits.append({"rect": (x0, yy - 5, x1, yy + 5), "box": {"top": t["top"], "bottom": stop, "i0": t["i0"], "i1": t["i1"], "kind": "topline",
+        hits.append({"rect": (x0, yy - 5, x1, yy + 5), "box": {"top": t["top"], "bottom": stop, "i0": t["i0"], "i1": t["i1"], "kind": "topline", "line": True,
                                                               "outcome": "open" if t["open"] else "up", "confirmed": False,
                                                               "start": weeks[t["i0"]] if t["i0"] < len(weeks) else ""}})
     if pin:   # przypięty (monitorowany) box — kontur w kolorze statusu od początku do prawej krawędzi
@@ -435,11 +435,19 @@ def draw_darcard(cv, full, weeks, win, opts=None):
         col = {"ABOVE": GREEN, "INSIDE": GOLD, "ZONE": RED, "EXIT": RED}.get(st["state"], GOLD)
         start = next((i for i, w in enumerate(weeks) if w >= pin.get("start", "")), i0) if pin.get("start") else i0
         x0, x1 = xf(max(start, i0)) - step / 2, W - RIGHT
-        cv.create_rectangle(x0, y(pin["top"]), x1, y(pin["bottom"]), outline=col, width=2, dash=(5, 3))
-        hatch(cv, x0, y(pin["bottom"]), x1, y(pin["bottom"] * (1 - darvas.STOP_PCT / 100)), col)
-        cv.create_text(x0 + 4, y(pin["top"]) + 3, text=f"📌 {st['text']}", fill=col, font=FONT, anchor="nw")
-        hits.append({"rect": (x0, y(pin["top"]), x1, y(pin["bottom"] * 0.95)), "box": {"top": pin["top"], "bottom": pin["bottom"], "i0": start,
-                                                                                    "i1": last_idx(c), "kind": "pinned", "outcome": "open", "start": pin.get("start", "")}})
+        if pin.get("line"):   # przypięty sam top: zielona przerywana linia + czerwony stop 8 %
+            yt, ys_ = y(pin["top"]), y(pin["bottom"])
+            cv.create_line(x0, yt, x1, yt, fill=TOPLINE, width=2, dash=(6, 4))
+            cv.create_line(x0, ys_, x1, ys_, fill=RED, width=1, dash=(3, 3))
+            cv.create_text(x0 + 4, yt - 3, text=f"📌 {st['text']}", fill=col, font=FONT, anchor="sw")
+            hits.append({"rect": (x0, yt - 5, x1, ys_ + 5), "box": {"top": pin["top"], "bottom": pin["bottom"], "i0": start, "i1": last_idx(c), "kind": "pinned", "line": True,
+                                                                  "outcome": "open", "start": pin.get("start", "")}})
+        else:
+            cv.create_rectangle(x0, y(pin["top"]), x1, y(pin["bottom"]), outline=col, width=2, dash=(5, 3))
+            hatch(cv, x0, y(pin["bottom"]), x1, y(pin["bottom"] * (1 - darvas.STOP_PCT / 100)), col)
+            cv.create_text(x0 + 4, y(pin["top"]) + 3, text=f"📌 {st['text']}", fill=col, font=FONT, anchor="nw")
+            hits.append({"rect": (x0, y(pin["top"]), x1, y(pin["bottom"] * 0.95)), "box": {"top": pin["top"], "bottom": pin["bottom"], "i0": start,
+                                                                                        "i1": last_idx(c), "kind": "pinned", "outcome": "open", "start": pin.get("start", "")}})
     if glb_level:
         _glb_line(cv, y, glb_level, LEFT, W - RIGHT, W, RIGHT)
     # ostatnia cena
@@ -455,7 +463,7 @@ def draw_darcard(cv, full, weeks, win, opts=None):
         b = hits[sel]["box"]
         x0, y0, x1, y1 = hits[sel]["rect"]
         cv.create_rectangle(x0 - 1, y0 - 1, x1 + 1, y1 + 1, outline=GOLD, width=2, dash=(4, 2))
-        levels = ((b["top"], TOPLINE), (b["bottom"], RED)) if b.get("kind") == "topline" else \
+        levels = ((b["top"], TOPLINE), (b["bottom"], RED)) if b.get("line") else \
             ((b["top"], GREEN), (b["bottom"], WHITE), (b["bottom"] * (1 - darvas.STOP_PCT / 100), RED))
         for price, col in levels:
             cv.create_line(LEFT, y(price), W - RIGHT, y(price), fill=col, width=2)

@@ -107,3 +107,12 @@ def test_overview_sections():
     ov = darvas.overview(items, ["w"] * 12, {"AAA": {"top": 13, "bottom": 11.8, "start": "w"}})
     assert [r["ticker"] for r in ov["buy"]] == ["AAA"]
     assert ov["pinned"][0]["state"] == "ABOVE"
+
+
+def test_pinned_top_line_has_8_pct_stop_and_no_danger_zone():
+    pin = {"top": 13, "bottom": 11.96, "line": True}
+    assert darvas.pin_status(pin, 13.5)["state"] == "ABOVE"
+    assert darvas.pin_status(pin, 12.5)["state"] == "INSIDE"
+    assert darvas.pin_status(pin, 12.0)["state"] == "INSIDE"                # nie ma strefy zagrożenia: poniżej stopu od razu EXIT
+    st = darvas.pin_status(pin, 11.9)
+    assert st["state"] == "EXIT" and "11.96" in st["text"]

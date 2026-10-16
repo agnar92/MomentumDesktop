@@ -248,11 +248,12 @@ class ChartWindow(tk.Toplevel):
                 opts["boxes"] = [{"i0": fb["i0"], "i1": fb["i1"] if fb.get("outcome") != "open" else len(full["c"]) - 1, "top": fb["top"], "bottom": fb["bottom"],
                                   "extend": fb.get("outcome") == "open", "color": charts.GOLD, "confirmed": fb.get("confirmed", True)}]
             if pinned:   # przypięty box / linia także na słupkowym: tylko poziomy z cenami na osi (bez tekstów)
-                pt = [(pinned["top"], charts.GREEN), (pinned["bottom"], charts.RED)] if pinned.get("line") else \
-                     [(pinned["top"], charts.GREEN), (pinned["bottom"], charts.WHITE), (round(pinned["bottom"] * 0.95, 2), charts.RED)]
+                pc = charts.PIN_COLOR   # wszystkie poziomy przypiętego w jednym kolorze (kropkowane), zaznaczony box zostaje zielony / biały / czerwony
+                pt = [(pinned["top"], pc, (2, 3)), (pinned["bottom"], pc, (2, 3))] if pinned.get("line") else \
+                     [(pinned["top"], pc, (2, 3)), (pinned["bottom"], pc, (2, 3)), (round(pinned["bottom"] * 0.95, 2), pc, (2, 3))]
                 have = {round(v, 2) for v, _ in opts.get("tags", [])}
-                opts["tags"] = opts.get("tags", []) + [(v, col) for v, col in pt if round(v, 2) not in have]
-                opts["levels"] = [v for v, _ in opts["tags"]]
+                opts["tags"] = opts.get("tags", []) + [t for t in pt if round(t[0], 2) not in have]
+                opts["levels"] = [t[0] for t in opts["tags"]]
             row = st.row(self.ticker) or {}
             if row.get("pivot") and row.get("base_type") in store.BUYABLE_BASES and abs(row.get("pct_to_pivot") or 99) < 15:
                 opts["pivot"] = row["pivot"]

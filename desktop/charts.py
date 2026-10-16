@@ -12,6 +12,7 @@ UP, DOWN = "#d5d9e0", "#e5484d"
 SMA10, SMA40, SPX, LINE = "#e5484d", "#f0b429", "#7d8590", "#4aa3ff"
 SMA_COLORS = {10: SMA10, 40: SMA40, 50: SMA40, 200: "#e6e9ef"}
 GREEN, RED, GOLD, WHITE = "#3ddc84", "#ff5c5c", "#ffd166", "#ffffff"
+PIN_COLOR = "#c58bff"   # poziomy przypiętego boxa / linii na słupkowym: jeden fioletowy kolor, żeby nie mylić ich z zaznaczonym boxem (zielony / biały / czerwony)
 BOX_FILL, BOX_PLAIN = "#c9ced8", "#e6e9ef"
 TOPLINE = GREEN   # przerywana linia samego topu (bez potwierdzonego dołu) — zielona, bo niebieski to linia zamknięć
 FONT = ("Consolas", 9)
@@ -296,9 +297,9 @@ def draw_bars(cv, full, weeks, spx, win, opts=None):
     if lastv is not None:
         cv.create_text(LEFT + 74, v_top, text=f"— średnia {vavg_n} {unit_v}: {fmt_vol(vavg[lastv])}   ▯ złota obwódka = ≥ {darvas.BREAKOUT_VOL}× średniej", fill="#ff9f43", font=FONT, anchor="nw")
     # poziomy boxa na osi ceny (wejście / dół / exit)
-    for price, col in opts.get("tags") or []:
+    for price, col, *dash in opts.get("tags") or []:
         yy = y(price)
-        cv.create_line(LEFT, yy, W - RIGHT, yy, fill=col, dash=(4, 3))
+        cv.create_line(LEFT, yy, W - RIGHT, yy, fill=col, dash=dash[0] if dash else (4, 3))
         _tag(cv, W - RIGHT + 2, yy, fmt_price(price), col)
     if opts.get("glb"):
         _glb_line(cv, y, opts["glb"], LEFT, W - RIGHT, W, RIGHT)

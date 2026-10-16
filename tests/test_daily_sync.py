@@ -133,3 +133,26 @@ def test_two_parallel_cache_merges_do_not_lose_entries(tmp_path):
     [t.start() for t in ts]
     [t.join() for t in ts]
     assert set(store.read_json(root / "eps_cache.json")) == {"T0", "T1", "T2", "T3"} and not (root / ".cache.lock").exists()
+
+
+def test_market_ema_line_macd_column_and_filter(tmp_path):
+    from desktop import canslim, columns
+    s = store.Store(tmp_path / "d")
+    e = canslim.ema_market(s.watchlist)
+    assert e["up"] is True and "EMA10/20" in canslim.market_line(s.watchlist) and "S&P 500" in canslim.market_line(s.watchlist)
+    down = {"market": {"sp500": {"ema10w": 90, "ema20w": 100}, "nasdaq": {"ema10w": 110, "ema20w": 100}}}
+    assert canslim.ema_market(down)["up"] is False and "🛑" in canslim.market_line(down)
+    ups = [r for r in s.rows if r["macd_up"] is True]
+    assert ups and len(ups) < len(s.rows) and "macd_up" in columns.available(s.rows)
+    assert {r["ticker"] for r in store.scan(s.rows, {"macd_only": True})} == {r["ticker"] for r in ups}
+    assert columns.format_cell(ups[0], "macd_up") == "✓"
+    buy = next(r for r in s.rows if r["darvas_w"] == "BUY") if any(r["darvas_w"] == "BUY" for r in s.rows) else None
+    st = store.enrich({"ticker": "X"}, {"c": [10, 10.5, 11, 12, 11.5, 11.2, 11.4, 11.1, 12.5, 13, 12.8, 12.6, 12.2, 12.9, 14, 15, 14.5, 14.2, 14.4, 14.1, 13.9, 16]},
+                      None, [], market_up=False)
+    assert st["darvas_w"] == "BUY" and "rynek w korekcie" in st["darvas_text_w"]
+    assert buy is None or "rynek" not in buy["darvas_text_w"]   # przy trendzie wzrostowym brak ostrzeżenia
+    s.set_pure(True)
+    try:
+        assert all(r["darvas_w"] not in ("NOVOL", "LATE") for r in s.rows)
+    finally:
+        s.set_pure(False)

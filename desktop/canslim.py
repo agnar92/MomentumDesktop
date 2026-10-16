@@ -39,6 +39,28 @@ def market(watchlist):
             "ftd": any(x and x.get("m_via_ftd") for x in idx)}
 
 
+def ema_market(watchlist):
+    """Rynek wg tygodniowych EMA 10 / 20 (S&P 500 i Nasdaq osobno): {"sp500": {up, gap}, "nasdaq": {...}, "up": bool|None}.
+    Tylko informacja (jak baner rynku w Momentum): up = wszystkie znane indeksy mają EMA10 > EMA20."""
+    m = (watchlist or {}).get("market") or {}
+    out, flags = {}, []
+    for key in ("sp500", "nasdaq"):
+        x = m.get(key)
+        if x and _num(x.get("ema10w")) and _num(x.get("ema20w")):
+            up = x["ema10w"] > x["ema20w"]
+            out[key] = {"up": up, "gap": (x["ema10w"] / x["ema20w"] - 1) * 100}
+            flags.append(up)
+    out["up"] = all(flags) if flags else None
+    return out
+
+
+def market_line(watchlist):
+    """Krótki opis rynku do paska statusu: „S&P 500 ✅ +1,6 %  Nasdaq ✅ +2,0 % (EMA10/20 tyg.)”."""
+    e = ema_market(watchlist)
+    parts = [f"{name} {'✅' if e[k]['up'] else '🛑'} {e[k]['gap']:+.1f} %" for k, name in (("sp500", "S&P 500"), ("nasdaq", "Nasdaq")) if k in e]
+    return "  ".join(parts) + " (EMA10/20 tyg.)" if parts else "—"
+
+
 def info(s, mkt=None):
     """{flags: {C..M: True/False/None}, score, known}; None = brak danych (nie obniża litery)."""
     regime = mkt.get("regime") if isinstance(mkt, dict) else mkt

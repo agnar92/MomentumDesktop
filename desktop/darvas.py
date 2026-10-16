@@ -13,6 +13,7 @@ MAX_EXT_PCT = 10        # KUP tylko do 10 % nad górą boxa
 BREAKOUT_VOL = 1.4      # wolumen wybicia >= 1,4x średniej z 10 tygodni
 VOL_WEEKS = 10
 START_STOP_PCT = 10     # stop początkowy przy pierwszym wybiciu
+PURE = False            # „czysty Darvas” jak w PDF: KUP = samo przebicie góry (bez filtru wolumenu i limitu +10 % nad górą)
 NEW_WEEKS = 4           # box jest „nowy”, gdy jego góra została potwierdzona w ostatnich tylu tygodniach
 
 
@@ -78,8 +79,9 @@ def box_info(top, bottom, zone_pct=STOP_PCT):
             "zone_pct": zone_pct, "depth_pct": _r2((top - bottom) / top * 100)}
 
 
-def status(c, vol=None, zone_pct=STOP_PCT, max_ext_pct=MAX_EXT_PCT, vol_bars=VOL_WEEKS):
-    """Stan na ostatnim tygodniowym zamknięciu: BUY / NOVOL / LATE / HOLD / SELL / WAIT / NONE."""
+def status(c, vol=None, zone_pct=STOP_PCT, max_ext_pct=MAX_EXT_PCT, vol_bars=VOL_WEEKS, pure=None, unit="tygodnia"):
+    """Stan na ostatnim zamknięciu (tydzień / sesja): BUY / NOVOL / LATE / HOLD / SELL / WAIT / NONE. pure (domyślnie `PURE`): bez NOVOL i LATE."""
+    pure = PURE if pure is None else pure
     bx = boxes(c)
     lr = last_real(c)
     if not bx or lr < 0:
@@ -96,10 +98,10 @@ def status(c, vol=None, zone_pct=STOP_PCT, max_ext_pct=MAX_EXT_PCT, vol_bars=VOL
             pv = [v for v in vol[max(0, lr - vol_bars):lr] if _ok(v)]
             if len(pv) >= 4:
                 vr = vol[lr] / (sum(pv) / len(pv))
-        if vr is not None and vr < BREAKOUT_VOL:
+        if not pure and vr is not None and vr < BREAKOUT_VOL:
             return {**base, "state": "NOVOL", "vol_ratio": round(vr, 2),
                     "text": f"BEZ WOLUMENU — zamknięcie nad górą boxa {_r2(last['top'])}, ale wolumen tylko {vr:.2f}× średniej (wymagane {BREAKOUT_VOL}×); niepotwierdzone"}
-        if over > max_ext_pct / 100:
+        if not pure and over > max_ext_pct / 100:
             return {**base, "state": "LATE",
                     "text": f"ZA PÓŹNO — zamknięcie {over * 100:.1f} % nad górą boxa {_r2(last['top'])} (limit {max_ext_pct} %), nie goń"}
         vtxt = "" if vr is None else f" na wolumenie {vr:.2f}×"
@@ -118,7 +120,7 @@ def status(c, vol=None, zone_pct=STOP_PCT, max_ext_pct=MAX_EXT_PCT, vol_bars=VOL
         return {**base, "state": "HOLD", "text": f"TRZYMAJ — wybicie nad {_r2(last['top'])} jest za nami, czekamy na nowy, wyższy box; stop pod dnem ostatniego boxa {stop}"}
     if had_up:
         return {**base, "state": "HOLD", "text": f"TRZYMAJ — cena w najwyższym boxie {zone_from}–{_r2(last['top'])}, wahania w nim ignorujemy; stop pod strefą zagrożenia {stop}"}
-    return {**base, "state": "WAIT", "text": f"CZEKAJ — pierwszy box {zone_from}–{_r2(last['top'])}; kup po zamknięciu tygodnia nad {_r2(last['top'])}"}
+    return {**base, "state": "WAIT", "text": f"CZEKAJ — pierwszy box {zone_from}–{_r2(last['top'])}; kup po zamknięciu {unit} nad {_r2(last['top'])}"}
 
 
 def pin_status(box, price, zone_pct=STOP_PCT):
@@ -136,7 +138,7 @@ def pin_status(box, price, zone_pct=STOP_PCT):
     return {"state": "EXIT", "rank": 0, "text": f"EXIT — cena {_r2(price)} poniżej strefy zagrożenia ({zone})"}
 
 
-DAILY = {"max_ext_pct": 5, "vol_bars": 50}   # wykres dzienny: wybicie nie dalej niż 5 % nad górą, wolumen vs średnia z 50 sesji
+DAILY = {"max_ext_pct": 5, "vol_bars": 50, "unit": "sesji"}   # wykres dzienny: wybicie nie dalej niż 5 % nad górą, wolumen vs średnia z 50 sesji
 
 
 def overview(items, weeks, pinned=None, new_weeks=NEW_WEEKS, params=None):

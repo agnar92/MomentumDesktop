@@ -56,3 +56,12 @@ def test_close_under_box_bottom_is_sell_without_prior_breakout():
     assert st["state"] == "SELL" and st["bottom"] == 11.8 and st["stop"] == 11.21 and "pod dno" in st["text"]
     assert darvas.status(base + [11.7, 11.0, 10.5, 10.8])["state"] == "SELL"   # nowy box pod złamanym dnem nie kasuje sygnału
     assert darvas.status(base + [11.7, 11.0, 10.5, 12.1])["state"] != "SELL"   # powrót nad złamane dno
+
+
+def test_pure_darvas_buys_on_plain_breakout_and_daily_text_uses_sessions():
+    vol = [100] * 21 + [50]                       # przebicie na słabym wolumenie
+    assert darvas.status(C, vol)["state"] == "NOVOL"
+    assert darvas.status(C, vol, pure=True)["state"] == "BUY"
+    far = C[:-1] + [C[-2] * 1.5]                  # daleko nad górą: normalnie ZA PÓŹNO, w czystym — KUP
+    assert darvas.status(far)["state"] == "LATE" and darvas.status(far, pure=True)["state"] == "BUY"
+    assert "sesji" in darvas.status([10, 11, 12, 13, 12.5, 12.0, 11.8, 12.2, 12.4, 12.1], **darvas.DAILY)["text"]

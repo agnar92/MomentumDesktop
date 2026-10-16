@@ -4,7 +4,7 @@ import threading
 import tkinter as tk
 from tkinter import ttk
 
-from . import adhoc, canslim, changes, finviz_codes, store
+from . import adhoc, canslim, changes, darvas, finviz_codes, store
 from . import columns as columns_mod
 from .theme import BG, FG, MONO, PANEL, SEL, Flow, apply_dark, autowrap, fit_window
 from .widgets import STATE_COLORS, StockTable
@@ -38,7 +38,7 @@ class FilterWindow(tk.Toplevel):
         sf = Flow(form)   # wiersze zawijają się w wąskim oknie
         sf.grid(row=3, column=0, columnspan=6, sticky="we", padx=4)
         sf.add(tk.Label(sf, text="Darvas:", bg=PANEL))
-        for st in ("BUY", "NOVOL", "LATE", "HOLD", "WAIT", "SELL", "OUT"):
+        for st in ("BUY", "NOVOL", "LATE", "HOLD", "WAIT", "SELL"):
             v = tk.BooleanVar()
             self.state_vars[st] = v
             sf.add(tk.Checkbutton(sf, text=store.STATE_LABELS[st], variable=v, bg=PANEL, command=self.run))
@@ -49,8 +49,12 @@ class FilterWindow(tk.Toplevel):
         self.sector_box = ttk.Combobox(row3, textvariable=self.sector, state="readonly", width=24)
         row3.add(self.sector_box)
         self.sector_box.bind("<<ComboboxSelected>>", lambda e: self.run())
-        self.base_only, self.pinned_only, self.cs_core = tk.BooleanVar(), tk.BooleanVar(), tk.BooleanVar()
+        self.base_only, self.pinned_only, self.cs_core, self.macd_only = tk.BooleanVar(), tk.BooleanVar(), tk.BooleanVar(), tk.BooleanVar()
+        self.pure = tk.BooleanVar(value=darvas.PURE)
+        sf.add(tk.Checkbutton(sf, text="czysty Darvas (KUP = samo przebicie, bez wolumenu i limitu +10 %)", variable=self.pure, bg=PANEL,
+                              command=lambda: app.set_darvas_pure(self.pure.get())))
         row3.add(tk.Checkbutton(row3, text="CANSLIM: C i A obowiązkowe", variable=self.cs_core, bg=PANEL, command=self.run))
+        row3.add(tk.Checkbutton(row3, text="MACD nad linią sygnału", variable=self.macd_only, bg=PANEL, command=self.run))
         row3.add(tk.Checkbutton(row3, text="tylko z bazą do kupienia", variable=self.base_only, bg=PANEL, command=self.run))
         row3.add(tk.Checkbutton(row3, text="tylko przypięte boxy", variable=self.pinned_only, bg=PANEL, command=self.run))
         row4 = Flow(form)
@@ -86,7 +90,7 @@ class FilterWindow(tk.Toplevel):
     def collect(self):
         f = {k: self._num(v.get()) for k, v in self.vars.items()}
         f.update(states=[s for s, v in self.state_vars.items() if v.get()], sector=self.sector.get(), base_only=self.base_only.get(),
-                 pinned_only=self.pinned_only.get(), cs_core=self.cs_core.get())
+                 pinned_only=self.pinned_only.get(), cs_core=self.cs_core.get(), macd_only=self.macd_only.get())
         return f
 
     def run(self):
@@ -103,6 +107,7 @@ class FilterWindow(tk.Toplevel):
         self.base_only.set(False)
         self.pinned_only.set(False)
         self.cs_core.set(False)
+        self.macd_only.set(False)
         self.preset.set("")
         self.run()
 

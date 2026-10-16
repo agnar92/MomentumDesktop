@@ -60,6 +60,7 @@ Prosta, „retro” aplikacja okienkowa (Python + Tkinter, styl TC2000) oparta n
 - **Filtr…** (osobne okno, na skaner) — filtry po już pobranych danych: RS, EPS Rating, Composite, CANSLIM (≥ n/7, opcjonalnie C i A
   obowiązkowe), odległość do pivotu, od szczytu 52 tyg., ADR, stan Darvasa, sektor, baza, przypięte boxy; gotowe skany; „Zastosuj na liście”.
 - **Boxy…** (osobne okno) — przegląd boxów Darvasa w sekcjach: monitorowane, nowe, KUP, do sprawdzenia, trzymaj, sprzedaj, czekaj.
+- **Darvas wg PDF „Teoria pudełek”**: SPRZEDAJ od razu po zamknięciu pod dnem boxa (też bez wcześniejszego wybicia; sygnał trwa, dopóki cena nie wróci nad złamane dno). Opcja **czysty Darvas** (okno *Filtr…*): KUP = samo przebicie góry, bez filtru wolumenu (1,4×) i limitu +10 % nad górą; ustawienie pamiętane. W skali **Dzień** reguły liczą się na sesjach (3 sesje potwierdzenia). **Rynek** w pasku statusu = S&P 500 i Nasdaq wg tygodniowych EMA 10 / 20 (✅/🛑 + odstęp %); przy korekcie sygnał KUP dostaje ostrzeżenie (tylko informacja, nie filtr). Kolumna i filtr **MACD > sygnał** (12·26·9, w skali listy: tydzień / dzień).
 - **Wykres** (osobne okno, można otworzyć kilka) — **Dar-Card** (schodkowe boxy Darvasa na tygodniowych zamknięciach, strefa
   zagrożenia 5 % pod dołem boxa) i **wykres słupkowy** HLC jak w książce O'Neila (SMA 10 / 40 tyg. albo 10 / 50 / 200 sesji, wolumen, MACD 12-26-9,
   linia S&P 500, pivot). Klik w box na Dar-Card = zaznaczenie (wejście / dół / exit na osi ceny), `🔍 Przybliż` = wykres słupkowy

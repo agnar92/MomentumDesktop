@@ -205,8 +205,14 @@ def pin_status(box, price, zone_pct=STOP_PCT):
     """Status przypiętego (monitorowanego) boxa względem ceny: ABOVE / INSIDE / ZONE / EXIT."""
     if not box or not _ok(price) or not box["top"] > box["bottom"]:
         return {"state": "NONE", "rank": 9, "text": ""}
-    zone = _r2(box["bottom"] * (1 - zone_pct / 100))
     top, bottom = box["top"], box["bottom"]
+    if box.get("line"):   # przypięty sam top: bottom = stop 8 %, bez strefy zagrożenia
+        if price > top:
+            return {"state": "ABOVE", "rank": 1, "text": f"top {_r2(top)} przebity (+{(price / top - 1) * 100:.1f} %), stop {_r2(bottom)}"}
+        if price >= bottom:
+            return {"state": "INSIDE", "rank": 2, "text": f"pod topem {_r2(top)}, do wybicia {(top / price - 1) * 100:.1f} %, stop {_r2(bottom)}"}
+        return {"state": "EXIT", "rank": 0, "text": f"EXIT — cena {_r2(price)} poniżej stopu {_r2(bottom)} (8 % pod topem {_r2(top)})"}
+    zone = _r2(bottom * (1 - zone_pct / 100))
     if price > top:
         return {"state": "ABOVE", "rank": 1, "text": f"wybił nad {_r2(top)} (+{(price / top - 1) * 100:.1f} %)"}
     if price >= bottom:

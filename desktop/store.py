@@ -216,7 +216,7 @@ class Store:
     def pin(self, ticker, box):
         """box = {top, bottom, start} albo None (odepnij)."""
         if box:
-            self.pinned[ticker] = {"top": box["top"], "bottom": box["bottom"], "start": box.get("start", "")}
+            self.pinned[ticker] = {"top": box["top"], "bottom": box["bottom"], "start": box.get("start", ""), **({"line": True} if box.get("line") else {})}
         else:
             self.pinned.pop(ticker, None)
         write_json(self.dir / "pinned.json", self.pinned)

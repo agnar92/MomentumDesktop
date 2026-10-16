@@ -469,6 +469,44 @@ def week_at(geom, x):
     return i if geom["i0"] <= i < geom["i1"] else None
 
 
+# ---------- pomiar zysku (przytrzymany lewy przycisk) ----------
+
+MEASURE_MIN_PX = 6
+
+
+def measure(geom, p0, p1):
+    """Pomiar między dwoma punktami wykresu (piksele): {pct, bars, price0, price1, x0, y0, x1, y1} albo None.
+    Cena z osi pod kursorem (swobodnie, nie tylko zamknięcia), czas = liczba słupków (tygodni / sesji) między najbliższymi słupkami."""
+    if not geom or not geom.get("price_at"):
+        return None
+    top, bot = geom["p_top"], geom.get("p_bot", geom["m_bot"])
+    pts = []
+    for x, y in (p0, p1):
+        y = min(max(y, top), bot)
+        i = geom["i0"] + round((x - LEFT) / geom["step"] - 0.5)
+        pts.append((i, geom["xf"](i), y, geom["price_at"](y)))
+    (i0, x0, y0, a), (i1, x1, y1, b) = pts
+    if not a or a <= 0 or not b or b <= 0:
+        return None
+    return {"pct": (b / a - 1) * 100, "bars": i1 - i0, "price0": a, "price1": b, "x0": x0, "y0": y0, "x1": x1, "y1": y1}
+
+
+def draw_measure(cv, m, unit="tyg."):
+    """Przerywana linia pomiaru z etykietą „+37,2 % · 8 tyg.”; wszystko pod tagiem `measure` (znika po puszczeniu przycisku)."""
+    cv.delete("measure")
+    col = GREEN if m["pct"] >= 0 else RED
+    cv.create_line(m["x0"], m["y0"], m["x1"], m["y1"], fill=col, width=2, dash=(6, 4), tags="measure")
+    for x, y in ((m["x0"], m["y0"]), (m["x1"], m["y1"])):
+        cv.create_oval(x - 4, y - 4, x + 4, y + 4, fill=col, outline="#000", tags="measure")
+    n = abs(m["bars"])
+    text = f"{m['pct']:+.1f} %  ·  {n} {unit}\n{fmt_price(m['price0'])} → {fmt_price(m['price1'])}"
+    xm, ym = (m["x0"] + m["x1"]) / 2, min(m["y0"], m["y1"]) - 10
+    t = cv.create_text(xm, max(ym, 24), text=text, fill=WHITE, font=FONT, anchor="s", justify="center", tags="measure")
+    bb = cv.bbox(t)
+    r = cv.create_rectangle(bb[0] - 5, bb[1] - 3, bb[2] + 5, bb[3] + 3, fill="#10151b", outline=col, tags="measure")
+    cv.tag_lower(r, t)
+
+
 # ---------- suwak okna czasu (minimapa) ----------
 
 MIN_WEEKS = 12

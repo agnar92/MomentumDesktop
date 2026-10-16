@@ -69,8 +69,11 @@ class ChartWindow(tk.Toplevel):
         self.btn_full = tk.Button(self.btns, text="← pełny wykres", command=self.clear_focus)
         self.body.pack_forget()   # dolne paski (opis boxa, przyciski) mają pierwszeństwo przed wykresem
         self.body.pack(fill="both", expand=True)
-        self.cv_card.bind("<Button-1>", self.on_click)
+        self.meas = None   # pomiar zysku: {cv, name, x, y, active} — rysowany tylko przy przytrzymanym lewym przycisku
         for cv in (self.cv_card, self.cv_bars):
+            cv.bind("<ButtonPress-1>", lambda e, c=cv: self.meas_press(e, c))
+            cv.bind("<B1-Motion>", lambda e, c=cv: self.meas_drag(e, c))
+            cv.bind("<ButtonRelease-1>", lambda e, c=cv: self.meas_release(e, c))
             cv.bind("<Configure>", lambda e: self.after_idle(self.redraw))
             cv.bind("<MouseWheel>", self.on_wheel)
             cv.bind("<Button-4>", lambda e: self.zoom(0.85))
@@ -258,7 +261,32 @@ class ChartWindow(tk.Toplevel):
                     best, best_d = n, d
         return best
 
+    # --- pomiar zysku: przytrzymaj lewy przycisk i przeciągnij; po puszczeniu znika
+    def meas_press(self, e, cv):
+        self.meas = {"cv": cv, "name": "card" if cv is self.cv_card else "bars", "x": e.x, "y": e.y, "active": False}
+
+    def meas_drag(self, e, cv):
+        m = self.meas
+        if not m or m["cv"] is not cv:
+            return
+        if not m["active"] and abs(e.x - m["x"]) + abs(e.y - m["y"]) < charts.MEASURE_MIN_PX:
+            return
+        m["active"] = True
+        for c in (self.cv_card, self.cv_bars):
+            c.delete("cross")
+        res = charts.measure(self.geoms.get(m["name"]), (m["x"], m["y"]), (e.x, e.y))
+        if res:
+            charts.draw_measure(cv, res, "sesji" if self.tf.get() == "D" else "tyg.")
+
+    def meas_release(self, e, cv):
+        m, self.meas = self.meas, None
+        cv.delete("measure")
+        if m and not m["active"] and cv is self.cv_card:
+            self.on_click(e)   # zwykłe kliknięcie (bez przeciągania) = zaznaczenie boxa
+
     def on_motion(self, e, cv):
+        if self.meas and self.meas["active"]:
+            return
         name = "card" if cv is self.cv_card else "bars"
         geom = self.geoms.get(name)
         i = charts.week_at(geom, e.x)

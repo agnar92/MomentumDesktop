@@ -150,3 +150,14 @@ def test_macd_cross_low_gives_low_of_cross_candle_when_macd_below_signal():
     assert darvas.macd_cross_low(up, [v - 0.3 for v in up]) == (None, None)    # MACD nad sygnałem — nic
     hold = darvas.status(TWO_UP + [14.8, 14.6], lows=[v - 0.1 for v in TWO_UP + [14.8, 14.6]])
     assert hold["state"] == "HOLD"
+
+
+def test_card_marks_rising_chain_and_glb_card_data():
+    a = darvas.card(TWO_UP)
+    assert a["n_up"] == 2 and [b["rank"] for b in a["boxes"]] == [1, 2] and a["topmost"] == 1 and a["status"]["state"] == "READY"
+    assert darvas.past_range(["2025-01-03", "2025-06-06", "2026-01-02"], [10, 12, 11]) == [("2025", 12, 10), ("2026", 11, 11)]
+    from desktop import glb
+    weeks = [f"2026-{m:02d}-{d:02d}" for m in range(1, 11) for d in (7, 21)]
+    c = [10, 11, 12, 13, 14, 15, 16, 20, 18, 17, 17, 18, 18, 18.5, 19, 19, 19, 19.5, 19, 21]   # rekord 20 (kwiecień) stoi ≥ 3 mies., ostatni tydzień nad linią
+    g = glb.card_data(None, weeks, c)
+    assert g["line"] == 20 and g["glb_state"] == "BREAK" and g["m"][-1] == "2026-10" and g["partial"] and not g["full"]

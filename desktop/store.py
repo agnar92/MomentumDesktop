@@ -102,6 +102,7 @@ def enrich(stock, full, pin, weeks, tf="W", full_d=None, market_up=None):
     stock["macd_up"] = stock["macd_up_d"] if tf == "D" and full_d else stock["macd_up_w"]
     stock["_base_label"] = base_label(stock)
     stock["darvas_w"], stock["darvas_d"] = sw["state"], sd["state"]
+    stock["darvas_n_up"] = sw.get("n_up")   # ile kolejnych rosnących boxów (karta Darvasa, tygodniowo); ≥ 2 = punkt kupna po wybiciu
     stock["darvas_text_w"], stock["darvas_text_d"] = sw.get("text", ""), sd.get("text", "")
     st = sd if tf == "D" and full_d else sw
     stock["darvas"] = st["state"]

@@ -292,6 +292,39 @@ def macd_cross_low(c, lows, fast=12, slow=26, sig=9):
     return None, None
 
 
+def card(c, vol=None, lows=None):
+    """Karta Darvasa jak w książce / Momentum (darCardAnalyze): boxy z ostatnich CARD_WEEKS tygodni (wszystkie, także złamane),
+    łańcuch kolejnych rosnących boxów i stan. -> {boxes: [{…, in_chain, rank (1, 2… w łańcuchu)}], topmost (indeks w boxes), n_up, status}."""
+    bx = boxes(c)
+    lr = last_real(c)
+    st = status(c, vol, lows=lows, pure=True) if lr >= 0 else {"state": "NONE", "text": ""}
+    if lr < 0 or not bx:
+        return {"boxes": [], "topmost": None, "n_up": 0, "status": st}
+    chain = [bx[-1]]
+    for b in reversed(bx[:-1]):
+        if b["top"] < chain[0]["top"] and not b.get("cancelled") and b["outcome"] == "up":
+            chain.insert(0, b)
+        else:
+            break
+    shown = [b for b in bx if b["end"] >= lr - CARD_WEEKS + 1]
+    n_up = st.get("n_up", 0) or 0
+    out = []
+    for b in shown:
+        k = next((i for i, x in enumerate(chain) if x is b), None)
+        out.append({**b, "in_chain": k is not None and n_up >= 2, "rank": (k + 1) if k is not None and n_up >= 2 else None})
+    return {"boxes": out, "topmost": len(out) - 1 if out and out[-1]["i0"] == bx[-1]["i0"] else None, "n_up": n_up, "status": st}
+
+
+def past_range(weeks, c, years=3):
+    """„Past Price Range” z dołu karty: [(rok, max, min)] zamknięć w ostatnich latach kalendarzowych."""
+    by = {}
+    for d, v in zip(weeks or [], c or []):
+        if d and _ok(v):
+            e = by.setdefault(d[:4], [v, v])
+            e[0], e[1] = max(e[0], v), min(e[1], v)
+    return [(y, _r2(by[y][0]), _r2(by[y][1])) for y in sorted(by)[-years:]]
+
+
 def pin_status(box, price, zone_pct=STOP_PCT):
     """Status przypiętego (monitorowanego) boxa względem ceny: ABOVE / INSIDE / ZONE / EXIT."""
     if not box or not _ok(price) or not box["top"] > box["bottom"]:

@@ -2,7 +2,7 @@
 import bisect
 import tkinter as tk
 
-from . import charts, darvas, store
+from . import charts, darvas, glb, scanners, store
 from .theme import BG, FG, PANEL, Flow, apply_dark, autowrap, fit_window, place_left_of
 from .widgets import STATE_COLORS
 
@@ -19,7 +19,7 @@ class ChartWindow(tk.Toplevel):
         apply_dark(self)
         # ustawienia okna są pamiętane globalnie (nie per spółka / box / skaner): skala czasu, widok, log, MACD, długość okna czasu, rozmiar okna
         pr = self.prefs()
-        self.free_mode = pr.get("mode") if pr.get("mode") in ("darcard", "bars") else "darcard"
+        self.free_mode = pr.get("mode") if pr.get("mode") in self.MODES else "darcard"
         self.mode = tk.StringVar(value=self.free_mode)
         self.tf = tk.StringVar(value=pr.get("tf") if pr.get("tf") in ("W", "D") else view.store.tf)   # „W” tygodniowy / „D” dzienny
         self.n_show, self.end = self.default_n(), None
@@ -37,7 +37,7 @@ class ChartWindow(tk.Toplevel):
         head.add(tk.Checkbutton(head, text="MACD", variable=self.macd_on, command=self.on_toggle, bg=PANEL))
         for text, val in (("Tydz.", "W"), ("Dzień", "D")):
             head.add(tk.Radiobutton(head, text=text, value=val, variable=self.tf, command=self.change_tf, bg=PANEL, indicatoron=False, padx=8))
-        for text, val in (("Dar-Card", "darcard"), ("Słupkowy", "bars")):
+        for text, val in (("Dar-Card", "darcard"), ("🃏 Karta", "karta"), ("🟩 GLB", "glb"), ("Słupkowy", "bars")):
             head.add(tk.Radiobutton(head, text=text, value=val, variable=self.mode, command=self.on_mode, bg=PANEL, indicatoron=False, padx=8))
         self.status_lbl = autowrap(tk.Label(self, text="", bg=PANEL), pad=16)
         self.status_lbl.pack(fill="x", padx=8)
@@ -95,6 +95,9 @@ class ChartWindow(tk.Toplevel):
         self._size_job = None
         self.bind("<Configure>", self._on_resize, add="+")
 
+    MODES = ("darcard", "karta", "glb", "bars")   # Dar-Card w skali czasu, oficjalna karta Darvasa (boxy obok siebie), karta GLB, wykres słupkowy
+    CARD_MODES = ("darcard", "karta", "glb")       # rysowane na płótnie cv_card
+
     # --- pamięć ustawień okna
     def prefs(self):
         return self.app.app.session.setdefault("chart", {})
@@ -112,6 +115,8 @@ class ChartWindow(tk.Toplevel):
 
     def on_mode(self):
         self.free_mode = self.mode.get()
+        self.selected = None
+        self.update_bar()
         self.remember()
         self.redraw()
 
@@ -219,7 +224,7 @@ class ChartWindow(tk.Toplevel):
         mode = self.mode.get()
         self.cv_card.pack_forget()
         self.cv_bars.pack_forget()
-        (self.cv_card if mode == "darcard" else self.cv_bars).pack(fill="both", expand=True)
+        (self.cv_card if mode in self.CARD_MODES else self.cv_bars).pack(fill="both", expand=True)
 
     def redraw(self):
         self.layout()
@@ -235,6 +240,20 @@ class ChartWindow(tk.Toplevel):
         if self.mode.get() == "darcard":
             self.update_idletasks()
             self.geoms["card"] = charts.draw_darcard(self.cv_card, full, dates, win, {"pinned": pinned, "selected": self.selected, "log": self.log.get(), "glb": glb_level, "tf": self.tf.get()})
+            self.hit_geom = self.geoms["card"]
+        if self.mode.get() in ("karta", "glb"):   # karty zawsze na tygodniowych zamknięciach (jak w Momentum), niezależnie od suwaka
+            self.update_idletasks()
+            wk, weeks, _s, _m = st.series(self.ticker, "W")
+            row = st.row(self.ticker) or {}
+            title = f"{self.ticker} — {row.get('company') or ''}".rstrip(" —")
+            if self.mode.get() == "karta":
+                self.geoms["card"] = charts.draw_card(self.cv_card, wk, weeks, {"pinned": pinned, "selected": self.selected, "title": title})
+            else:
+                monthly = getattr(self, "_monthly", None)
+                if monthly is None:
+                    self._monthly = monthly = store.read_json(st.dir / "monthly.json", {}) or {}
+                g = glb.card_data(monthly.get(self.ticker), weeks, (wk or {}).get("c") or [], (scanners.load_config(st.dir) or {}).get("glb")) if wk else None
+                self.geoms["card"] = charts.draw_glb_card(self.cv_card, g, {"title": title})
             self.hit_geom = self.geoms["card"]
         if self.mode.get() == "bars":
             opts = {"macd": self.macd_on.get(), "spx": True, "smas": smas, "tf": self.tf.get(), "log": self.log.get(), "glb": glb_level}
@@ -281,6 +300,8 @@ class ChartWindow(tk.Toplevel):
             return
         if not m["active"] and abs(e.x - m["x"]) + abs(e.y - m["y"]) < charts.MEASURE_MIN_PX:
             return
+        if m["name"] == "card" and self.mode.get() != "darcard":
+            return
         m["active"] = True
         for c in (self.cv_card, self.cv_bars):
             c.delete("cross")
@@ -298,6 +319,8 @@ class ChartWindow(tk.Toplevel):
         if self.meas and self.meas["active"]:
             return
         name = "card" if cv is self.cv_card else "bars"
+        if name == "card" and self.mode.get() != "darcard":   # karty nie mają osi czasu — bez krzyża i dymka
+            return
         geom = self.geoms.get(name)
         i = charts.week_at(geom, e.x)
         full, dates, _spx, smas = self.series()
@@ -386,7 +409,7 @@ class ChartWindow(tk.Toplevel):
         self.btn_close.pack(side="left", padx=4)
 
     def toggle_mode(self):
-        self.mode.set("bars" if self.mode.get() == "darcard" else "darcard")
+        self.mode.set(self.MODES[(self.MODES.index(self.mode.get()) + 1) % len(self.MODES)] if self.mode.get() in self.MODES else "darcard")
         self.on_mode()
 
     def zoom_selected(self):

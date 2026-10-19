@@ -8,7 +8,8 @@ import math
 
 CONFIRM = 3            # góra / dół = zamknięcie, którego nie przebija (nie jest niższe od) kolejne 3 tygodnie
 CONFIRM_DAILY = 3
-MIN_HEIGHT_PCT = 1.5
+LOCAL_PEAK = False      # jak Momentum: top = rosnące maksimum nieprzebite przez 3 kolejne zamknięcia, bez warunku lokalnego szczytu (True = stara reguła Desktopu)
+MIN_HEIGHT_PCT = 0      # wg książki box nie ma minimalnej wysokości (jak w Momentum)
 STOP_PCT = 5            # szerokość strefy zagrożenia pod dołem boxa
 LINE_STOP_PCT = 8       # sam top (bez potwierdzonego dołu): stop 8 % pod topem
 MAX_EXT_PCT = 10        # KUP tylko do 10 % nad górą boxa
@@ -17,6 +18,7 @@ VOL_WEEKS = 10
 START_STOP_PCT = 10     # stop początkowy przy pierwszym wybiciu
 PURE = False            # „czysty Darvas” jak w PDF: KUP = samo przebicie góry (bez filtru wolumenu i limitu +10 % nad górą)
 NEW_WEEKS = 4           # box jest „nowy”, gdy jego góra została potwierdzona w ostatnich tylu tygodniach
+CARD_WEEKS = 104        # karta = boxy z ostatnich 2 lat (reguła „karta spadająca” porównuje z wyższymi boxami z tego okna), jak DARCARD_SESSIONS w Momentum
 
 
 def _ok(v):
@@ -54,8 +56,7 @@ def _scan(c, confirm, bottom_confirm):
         for k in range(i, n):
             if not _ok(c[k]) or c[k] < run_max or (ref_top is not None and c[k] <= ref_top):
                 continue
-            prev = [c[m] for m in range(max(0, k - confirm), k) if _ok(c[m])]
-            if not all(c[k] > p for p in prev):    # nie jest lokalnym szczytem (cena nie rosła do niego) — nie podnosi też run_max
+            if LOCAL_PEAK and not all(c[k] > c[m] for m in range(max(0, k - confirm), k) if _ok(c[m])):   # (wyłączone) top musi być lokalnym szczytem
                 continue
             run_max = c[k]
             if k + confirm < n and all(_ok(v) and v <= c[k] for v in c[k + 1:k + confirm + 1]):   # luka w danych (None) nie potwierdza szczytu — jak NaN w JS
@@ -92,7 +93,7 @@ def _scan(c, confirm, bottom_confirm):
             continue
         if end < 0:
             end = n - 1
-        good = confirmed and math.isfinite(bottom) and (top - bottom) / top * 100 >= MIN_HEIGHT_PCT
+        good = confirmed and math.isfinite(bottom) and top > bottom and (top - bottom) / top * 100 >= MIN_HEIGHT_PCT
         if not confirmed:
             lines.append({"i0": t, "i1": end, "top": top, "open": outcome == "open"})
         elif good:
@@ -156,8 +157,9 @@ def _buy(c, lr, top, vol, vol_bars, pure, max_ext_pct, base, stop, stop_txt):
             "text": f"KUP — zamknięcie nad górą {_r2(top)}{vtxt}; {stop_txt}"}
 
 
-def status(c, vol=None, zone_pct=STOP_PCT, max_ext_pct=MAX_EXT_PCT, vol_bars=VOL_WEEKS, pure=None, unit="tygodnia", confirm=None):
-    """Stan na ostatnim zamknięciu (tydzień / sesja): BUY / NOVOL / LATE / HOLD / SELL / WAIT / NONE. pure (domyślnie `PURE`): bez NOVOL i LATE."""
+def status(c, vol=None, zone_pct=STOP_PCT, max_ext_pct=MAX_EXT_PCT, vol_bars=VOL_WEEKS, pure=None, unit="tygodnia", confirm=None, lows=None):
+    """Stan karty Darvasa na ostatnim zamknięciu (tydzień / sesja): BUY / NOVOL / LATE / READY / HOLD / SELL / WAIT / OUT / NONE (jak darCardAnalyze w Momentum,
+    plus filtry wybicia Desktopu NOVOL / LATE, wyłączane „czystym Darvasem”). lows = dołki świec (wyjście po MACD: podnieś stop do dołka świecy przecięcia)."""
     pure = PURE if pure is None else pure
     confirm = CONFIRM if confirm is None else confirm
     bx, ln = _scan(c, confirm, confirm)
@@ -176,29 +178,118 @@ def status(c, vol=None, zone_pct=STOP_PCT, max_ext_pct=MAX_EXT_PCT, vol_bars=VOL
         if tl["open"]:
             return {**base, "state": "WAIT", "text": f"CZEKAJ — jest tylko top {li['entry']} (dół jeszcze niepotwierdzony); kup po zamknięciu {unit} nad nim, stop {LINE_STOP_PCT} % ({li['stop']})"}
         return {**base, "state": "HOLD", "text": f"TRZYMAJ — top {li['entry']} przebity, czekamy na potwierdzony box; stop {LINE_STOP_PCT} % pod topem ({li['stop']})"}
+    # karta Darvasa jak w Momentum (darCardAnalyze / darvas_card_state): łańcuch kolejnych, coraz wyższych boxów (każdy wcześniejszy wybity w górę)
+    chain = [last]
+    for b in reversed(bx[:-1]):
+        if b["top"] < chain[0]["top"] and not b.get("cancelled") and b["outcome"] == "up":
+            chain.insert(0, b)
+        else:
+            break
+    shown = [b for b in bx if b["end"] >= lr - CARD_WEEKS + 1]
     bottom, top = last["bottom"], last["top"]
-    zone_from = _r2(bottom)
-    stop = _r2(bottom * (1 - zone_pct / 100))
-    base = {"top": _r2(top), "bottom": zone_from, "zone_from": zone_from, "stop": stop}
-    tracked = last["outcome"] == "up" and not last.get("cancelled") and last["end"] >= lr    # wybity box nadal obowiązuje
+    zone_low = bottom * (1 - zone_pct / 100)
+    zone_from, stop = _r2(bottom), _r2(zone_low)
+    base = {"top": _r2(top), "bottom": zone_from, "zone_from": zone_from, "stop": stop, "n_up": 0}
+    max_top = max([b["top"] for b in shown if b is not last], default=-math.inf)
+    step_down = top < max_top and px <= max_top           # karta spadająca: ostatni box niżej niż wcześniejszy, cena nie wyżej od niego
+    two_up = len(chain) >= 2 and not step_down            # punkt kupna = wybicie z drugiego z dwóch kolejnych rosnących boxów (s. 139–140)
+    live = not step_down and not last.get("cancelled") and last["outcome"] != "down"
+    base["n_up"] = len(chain) if live else 0
+    warn = []
+    ml, md = macd_cross_low(c, lows) if lows else (None, None)
     nl = ln[-1] if ln else None
-    if nl and nl["i0"] > last["i0"] and not nl["open"] and nl["i1"] == lr and not last.get("cancelled"):   # wybity top nowego, jeszcze niepotwierdzonego boxa
+    if live and nl and nl["i0"] > last["i0"] and not nl["open"] and nl["i1"] == lr:   # wybity top nowego, jeszcze niepotwierdzonego boxa
         li = line_info(nl["top"])
         return _buy(c, lr, nl["top"], vol, vol_bars, pure, max_ext_pct, {**base, "top": li["entry"]}, li["stop"], f"sam top bez potwierdzonego dołu, stop {LINE_STOP_PCT} % pod topem ({li['stop']})")
-    if last["outcome"] == "up" and (last["i1"] == lr or (tracked and px > top and prev_px is not None and prev_px <= top)):   # próba przebicia: pierwsza albo kolejna
-        return _buy(c, lr, top, vol, vol_bars, pure, max_ext_pct, base, _r2(top * (1 - START_STOP_PCT / 100)),
-                    f"stop początkowy ok. {START_STOP_PCT} % pod wejściem ({_r2(top * (1 - START_STOP_PCT / 100))}), potem pod dnem kolejnych boxów")
-    if last["outcome"] == "down" or last.get("cancelled") or (last["outcome"] == "up" and not tracked):
-        if px < bottom:
-            return {**base, "state": "SELL", "text": f"SPRZEDAJ — box {zone_from}–{_r2(top)} anulowany (cena pod jego dnem, strefa zagrożenia {stop}–{zone_from}); szukamy nowego boxa"}
-        return {**base, "state": "WAIT", "text": f"CZEKAJ — box {zone_from}–{_r2(top)} anulowany, czekamy na nowy"}
-    if tracked:
-        where = "nad górą boxa" if px > top else "w boxie"
-        return {**base, "state": "HOLD", "text": f"TRZYMAJ — cena {where} {zone_from}–{_r2(top)}; box obowiązuje do utworzenia nowego wyżej, anuluje go zejście pod dno {zone_from} (strefa zagrożenia {stop}–{zone_from})"}
-    had_up = len(bx) > 1 and bx[-2]["outcome"] == "up"
-    if had_up:
-        return {**base, "state": "HOLD", "text": f"TRZYMAJ — cena w nowym boxie {zone_from}–{_r2(top)}; stop pod strefą zagrożenia {stop}"}
-    return {**base, "state": "WAIT", "text": f"CZEKAJ — box {zone_from}–{_r2(top)}; kup po zamknięciu {unit} nad {_r2(top)}"}
+    if step_down:
+        return {**base, "state": "OUT", "text": f"POZA NAJWYŻSZYM BOXEM — ostatni box {zone_from}–{_r2(top)} leży niżej niż wcześniejszy ({_r2(max_top)}); karta spadająca: nie kupuj ani nie trzymaj"}
+    if (last["outcome"] == "down" or last.get("cancelled")) and px >= bottom:
+        return {**base, "state": "OUT", "text": f"POZA BOXEM — box {zone_from}–{_r2(top)} {'anulowany' if last.get('cancelled') else 'złamany w dół'}; powrót ceny go nie wskrzesza, czekamy na nowy box"}
+    if px > top:
+        if prev_px is not None and prev_px <= top:   # wybicie w tym tygodniu (pierwsze albo kolejne po powrocie do boxa)
+            entry_stop = _r2(px * (1 - START_STOP_PCT / 100))
+            if not two_up:
+                warn.append("pierwszy box — książka (s. 139–140) kupuje po dwóch kolejnych rosnących boxach")
+            if ml is not None:
+                warn.append("tygodniowy MACD pod linią sygnału")
+            res = _buy(c, lr, top, vol, vol_bars, pure, max_ext_pct, base, entry_stop,
+                       f"{'po dwóch kolejnych rosnących boxach; ' if two_up else ''}stop {START_STOP_PCT} % pod wejściem ({entry_stop}), dalej nad strefą zagrożenia {stop}")
+            return _warn(res, warn)
+        txt = f"TRZYMAJ — cena nad górą boxa {_r2(top)}, czekamy na nowy wyższy box; ignoruj wahania, stop pod strefą zagrożenia {stop}"
+        if (px / top - 1) * 100 > max_ext_pct:
+            warn.append(f"cena {(px / top - 1) * 100:.1f} % nad górą — nie goń")
+        return _warn({**base, "state": "HOLD", "text": txt}, _macd_warn(warn, ml, md))
+    if px >= bottom:
+        if last["outcome"] == "up":
+            return _warn({**base, "state": "HOLD", "text": f"TRZYMAJ — cena w najwyższym boxie {zone_from}–{_r2(top)} (próba przebicia za nami, box obowiązuje); ignoruj wahania, stop pod strefą zagrożenia {stop}"},
+                         _macd_warn(warn, ml, md))
+        buy_stop = _r2(top * (1 - START_STOP_PCT / 100))
+        if two_up:
+            return {**base, "state": "READY", "stop": buy_stop,
+                    "text": f"GOTOWY DO KUPNA — dwa kolejne rosnące boxy, cena w najwyższym {zone_from}–{_r2(top)}; kup po zamknięciu {unit} nad {_r2(top)}, stop {START_STOP_PCT} % ({buy_stop}); jeśli masz akcję — TRZYMAJ"}
+        return {**base, "state": "WAIT", "stop": buy_stop,
+                "text": f"CZEKAJ — pierwszy box {zone_from}–{_r2(top)}; punkt kupna pojawia się po dwóch kolejnych rosnących boxach; zamknięcie {unit} nad {_r2(top)} = wybicie"}
+    if two_up or last["outcome"] == "up":
+        where = "w strefie zagrożenia" if px >= zone_low else "pod strefą zagrożenia"
+        return {**base, "state": "SELL", "text": f"SPRZEDAJ — {'po nowym, wyższym boxie ' if two_up else 'po wybiciu '}cena spadła pod dół boxa {zone_from} ({where} {stop}–{zone_from}); box anulowany, szukamy nowego"}
+    return {**base, "state": "OUT", "text": f"POZA BOXEM — cena {_r2(px)} pod dołem {zone_from} (odwrócony box); nie kupuj ani nie trzymaj, szukamy nowego boxa"}
+
+
+def _warn(res, warn):
+    if warn:
+        res = {**res, "warnings": list(warn), "text": res["text"] + "  ⚠ " + "; ".join(warn)}
+    return res
+
+
+def _macd_warn(warn, low, date_i):
+    """Wyjście po MACD (jak Momentum): tygodniowy MACD pod sygnałem → podnieś stop pod dołek świecy, w której przeciął sygnał w dół."""
+    if low is not None:
+        warn = warn + [f"tygodniowy MACD pod sygnałem — podnieś stop do {low} (dołek świecy przecięcia)"]
+    return warn
+
+
+def _ema_tv(values, n):
+    """EMA jak w TradingView (ziarno = SMA z pierwszych n wartości); None przed ziarnem."""
+    out, k, prev, seed = [None] * len(values), 2 / (n + 1), None, []
+    for i, v in enumerate(values):
+        if v is None:
+            continue
+        if prev is None:
+            seed.append(v)
+            if len(seed) == n:
+                prev = sum(seed) / n
+                out[i] = prev
+        else:
+            prev = v * k + prev * (1 - k)
+            out[i] = prev
+    return out
+
+
+def macd_cross_low(c, lows, fast=12, slow=26, sig=9):
+    """Jeśli tygodniowy MACD (12, 26, 9) jest TERAZ pod sygnałem: (dołek świecy, w której przeciął sygnał w dół, jej indeks); inaczej (None, None).
+    Kopia macd_cross_low z Momentum (przesuwanie stopu po MACD)."""
+    vals = [float(v) if _ok(v) else None for v in c]
+    first = next((i for i, v in enumerate(vals) if v is not None), None)
+    if first is None:
+        return None, None
+    seg = vals[first:last_real(vals) + 1]
+    if any(v is None for v in seg):
+        return None, None
+    f, sl = _ema_tv(seg, fast), _ema_tv(seg, slow)
+    m = [a - b if a is not None and b is not None else None for a, b in zip(f, sl)]
+    sg = _ema_tv(m, sig)
+    hist = [a - b if a is not None and b is not None else None for a, b in zip(m, sg)]
+    last = len(hist) - 1
+    if last < 1 or hist[last] is None or hist[last] >= 0:
+        return None, None
+    for i in range(last, 0, -1):
+        if hist[i - 1] is None:
+            return None, None
+        if hist[i] < 0 <= hist[i - 1]:
+            j = first + i
+            low = lows[j] if j < len(lows) else None
+            return (_r2(float(low)) if _ok(low) else None), j
+    return None, None
 
 
 def pin_status(box, price, zone_pct=STOP_PCT):
@@ -229,7 +320,7 @@ def overview(items, weeks, pinned=None, new_weeks=NEW_WEEKS, params=None):
     """Podział spółek na sekcje: pinned, fresh, buy, check, hold, sell, wait.
     items = [{ticker, price, c, v}]; zwraca {sekcja: [{ticker, price, state, text, box}]}."""
     pinned = pinned or {}
-    out = {k: [] for k in ("pinned", "fresh", "buy", "check", "hold", "sell", "wait")}
+    out = {k: [] for k in ("pinned", "fresh", "buy", "ready", "check", "hold", "sell", "wait")}
     for it in items:
         c = it.get("c") or []
         lr = last_real(c)
@@ -241,7 +332,7 @@ def overview(items, weeks, pinned=None, new_weeks=NEW_WEEKS, params=None):
             if st["state"] != "NONE":
                 out["pinned"].append({"ticker": it["ticker"], "price": it.get("price"), "state": st["state"], "rank": st["rank"],
                                       "text": st["text"], "box": dict(pin)})
-        ds = status(c, it.get("v"), **(params or {}))
+        ds = status(c, it.get("v"), lows=it.get("l"), **(params or {}))
         conf = (params or {}).get("confirm") or CONFIRM
         bx = boxes(c, conf)
         last = bx[-1] if bx else None
@@ -250,7 +341,7 @@ def overview(items, weeks, pinned=None, new_weeks=NEW_WEEKS, params=None):
         box = {"top": _r2(last["top"]), "bottom": _r2(last["bottom"]), "start": (weeks[last["i0"]] if weeks and last["i0"] < len(weeks) else ""),
                "i0": last["i0"], "i1": last["i1"]}
         row = {"ticker": it["ticker"], "price": it.get("price"), "state": ds["state"], "text": ds["text"], "box": box}
-        sect = {"BUY": "buy", "NOVOL": "check", "LATE": "check", "HOLD": "hold", "SELL": "sell", "OUT": "sell", "WAIT": "wait"}.get(ds["state"])
+        sect = {"BUY": "buy", "READY": "ready", "NOVOL": "check", "LATE": "check", "HOLD": "hold", "SELL": "sell", "WAIT": "wait"}.get(ds["state"])
         if sect:
             out[sect].append(row)
         # nowe boxy: góra potwierdzona (i0 + potwierdzenie) w ostatnich `new_weeks` tygodniach
@@ -261,7 +352,7 @@ def overview(items, weeks, pinned=None, new_weeks=NEW_WEEKS, params=None):
             wk = weeks[f["i0"]] if weeks and f["i0"] < len(weeks) else "?"
             out["fresh"].append({"ticker": it["ticker"], "price": it.get("price"), "state": st,
                                  "text": f"box {_r2(f['bottom'])}–{_r2(f['top'])} od {wk}", "box": {**box, "top": _r2(f["top"]), "bottom": _r2(f["bottom"]), "i0": f["i0"], "i1": f["i1"], "start": wk}})
-    for k in ("fresh", "buy", "check", "hold", "sell", "wait"):
+    for k in ("fresh", "buy", "ready", "check", "hold", "sell", "wait"):
         out[k].sort(key=lambda r: r["ticker"])
     out["pinned"].sort(key=lambda r: (r["rank"], r["ticker"]))
     return out

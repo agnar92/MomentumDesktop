@@ -30,7 +30,7 @@ DEFS = {
     "low_ratio_1m": ("Cena/min 1M", 96, "e", "n2"), "low_ratio_3m": ("Cena/min 3M", 96, "e", "n2"), "low_ratio_6m": ("Cena/min 6M", 96, "e", "n2"),
     "qm_windows": ("Okna QM", 84, "w", "text"), "qm_max_ratio": ("Max cena/min", 104, "e", "n2"), "merge_src": ("Źródła", 170, "w", "text"),
     "glb_state": ("GLB", 96, "w", "glb"), "glb_dist_pct": ("Do linii %", 90, "e", "n1"), "glb_level": ("Zielona linia", 104, "e", "price"),
-    "glb_months": ("Mies. linii", 86, "e", "int"),
+    "glb_months": ("Mies. linii", 86, "e", "int"), "glb_stop": ("Stop GLB", 86, "e", "price"),
     "rs_line_state": ("Linia RS", 90, "w", "text"), "vol_surge_5d": ("Skok wol. 5d ×", 100, "e", "n2"),
 }
 DEFAULT_COLUMNS = ["ticker", "flag", "company", "price", "rs_rating", "eps_rating", "composite_rating", "cs", "cs_letters", "pct_from_high_52w", "base",

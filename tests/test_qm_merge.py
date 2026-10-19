@@ -213,25 +213,26 @@ def test_watchlist_takes_top_percent_of_each_window_separately_and_canslim_rule(
 # ---------- Wish: Green Line Breakout (miesięczne zamknięcia) ----------
 def test_glb_analyze_states():
     from desktop import glb
-    base = [10, 12, 14, 16, 18, 20]   # rosnące szczyty do 20
-    # szczyt 20, potem 4 miesiące bez pobicia, ostatni miesiąc nad linią → WYBICIE
-    r = glb.analyze(base + [18, 17, 18, 19, 21])
-    assert r["glb_state"] == "BREAK" and r["glb_level"] == 20 and r["glb_dist_pct"] < 0 and r["glb_months"] == 0
-    # ten sam układ, cena nadal pod linią → CZEKA (potwierdzona linia, odległość do niej)
-    r = glb.analyze(base + [18, 17, 18, 19, 19])
-    assert r["glb_state"] == "WAIT" and r["glb_level"] == 20 and abs(r["glb_dist_pct"] - 5.26) < 0.01 and r["glb_months"] == 5
-    # wybicie dwa miesiące temu, cena +5 % nad linią → po wybiciu; +30 % → za późno
-    assert glb.analyze(base + [18, 17, 18, 19, 21, 21, 21])["glb_state"] == "AFTER"
-    assert glb.analyze(base + [18, 17, 18, 19, 21, 26, 26])["glb_state"] == "LATE"
-    # po wybiciu cena wróciła pod linię → czeka na ponowne przebicie
-    assert glb.analyze(base + [18, 17, 18, 19, 21, 19, 19])["glb_state"] == "WAIT"
-    # ciągłe nowe szczyty (brak 3-miesięcznej przerwy) i za mało danych → brak linii
-    assert glb.analyze([10, 11, 12, 13, 14, 15, 16, 17])["glb_state"] == "NONE"
-    assert glb.analyze([10, 11])["glb_state"] == "NONE"
-    # za krótka przerwa (2 miesiące) nie tworzy linii: 20, 18, 19, 21
-    assert glb.analyze(base + [18, 19, 21])["glb_state"] != "BREAK"
-    # parametry z konfiguracji: 2 miesiące wystarczą
-    assert glb.analyze(base + [18, 19, 21], {"confirm_months": 2})["glb_state"] == "BREAK"
+    m = [10, 12, 14, 16, 18, 20, 18, 17, 18, 19]   # rekord 20, potem 4 zamknięte miesiące bez pobicia → linia 20
+    assert glb.line(m) == (20, 5)
+    r = glb.analyze(m, weekly=[19, 21])              # ten tydzień zamknął się nad linią, poprzedni pod nią
+    assert r["glb_state"] == "BREAK" and r["glb_level"] == 20 and r["glb_dist_pct"] < 0 and r["glb_stop"] == 19.8 and r["glb_months"] == 4
+    r = glb.analyze(m, weekly=[19, 19])
+    assert r["glb_state"] == "WAIT" and abs(r["glb_dist_pct"] - 5.26) < 0.01
+    assert glb.analyze(m, weekly=[21, 20.5])["glb_state"] == "AFTER"      # nad linią ≤ 5 % — nadal do kupna
+    assert glb.analyze(m, weekly=[21, 22])["glb_state"] == "LATE"         # +10 % nad linią — nie gonimy
+    # nowy rekord (23) jeszcze nie stoi 3 miesięcy: obowiązuje stara linia 20
+    assert glb.line(m + [22, 23])[0] == 20
+    # nowy rekord 22 przestał 3 miesiące → nowa linia
+    assert glb.line(m + [22, 21, 20, 21])[0] == 22
+    # ciągłe nowe szczyty i za mało danych → brak linii
+    assert glb.analyze([10, 11, 12, 13, 14, 15, 16, 17], weekly=[17, 18])["glb_state"] == "NONE"
+    assert glb.analyze([10, 11], weekly=[11, 12])["glb_state"] == "NONE"
+    # za krótka przerwa (2 miesiące) nie tworzy linii, chyba że w konfiguracji 2 miesiące
+    assert glb.line([10, 12, 14, 16, 18, 20, 18, 19])[0] is None
+    assert glb.line([10, 12, 14, 16, 18, 20, 18, 19], 2)[0] == 20
+    # bez tygodniowych: cena wobec ostatniego zamkniętego miesiąca
+    assert glb.analyze(m, price=21)["glb_state"] == "BREAK" and glb.analyze(m, price=19.5)["glb_state"] == "WAIT"
     assert glb.normalize({"confirm_months": "abc", "late_pct": -1}) == glb.DEFAULTS
 
 
@@ -242,9 +243,9 @@ def test_glb_apply_writes_fields_and_rule_selects(tmp_path):
     d = tmp_path
     wl = {"stocks": [{"ticker": "AAA"}, {"ticker": "BBB"}, {"ticker": "CCC"}, {"ticker": "DDD"}]}
     (d / "watchlist.json").write_text(json.dumps(wl))
-    base = [10, 12, 14, 16, 18, 20]
-    monthly = {"AAA": {"d": [], "c": base + [18, 17, 18, 19, 21]}, "BBB": {"d": [], "c": base + [18, 17, 18, 19, 19]},
-               "CCC": {"d": [], "c": base + [18, 17, 18, 19, 15]}, "DDD": {"d": [], "c": [10, 11, 12, 13, 14, 15, 16, 17]}}
+    m = [10, 12, 14, 16, 18, 20, 18, 17, 18, 19]
+    monthly = {t: {"d": [], "c": m} for t in ("AAA", "BBB", "CCC")} | {"DDD": {"d": [], "c": [10, 11, 12, 13, 14, 15, 16, 17]}}
+    (d / "charts.json").write_text(json.dumps({"stocks": {"AAA": {"c": [19, 21]}, "BBB": {"c": [19, 19]}, "CCC": {"c": [16, 15]}, "DDD": {"c": [17, 18]}}}))
     n = glb.apply(d, {}, lambda *_: None, fetch=lambda tickers, log: monthly)
     out = {s["ticker"]: s for s in json.loads((d / "watchlist.json").read_text())["stocks"]}
     assert n == 1 and out["AAA"]["glb_state"] == "BREAK" and out["BBB"]["glb_state"] == "WAIT" and out["DDD"]["glb_state"] == "NONE"

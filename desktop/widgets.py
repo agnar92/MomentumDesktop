@@ -8,7 +8,7 @@ from . import flags as flags_mod
 from . import store
 from .theme import BG, FG, apply_dark, fit_window
 
-STATE_COLORS = {"BUY": "#3ddc84", "SELL": "#ff5c5c", "OUT": "#ff9f43", "NOVOL": "#ffd166", "LATE": "#ffd166", "HOLD": FG, "WAIT": "#6ea8ff"}
+STATE_COLORS = {"BUY": "#3ddc84", "SELL": "#ff5c5c", "OUT": "#ff9f43", "NOVOL": "#ffd166", "LATE": "#ffd166", "HOLD": FG, "WAIT": "#6ea8ff", "READY": "#2ee6c5"}
 
 
 class StockTable(tk.Frame):

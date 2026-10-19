@@ -778,3 +778,32 @@ def test_measure_profit_while_dragging_disappears_on_release(app):
     ch.meas_press(c, ch.cv_card)
     ch.meas_release(c, ch.cv_card)                           # zwykłe kliknięcie na karcie zaznacza box
     assert ch.selected is not None
+
+
+def test_krok_po_kroku_steps_and_watchlist_from_selection(app):
+    import json
+
+    from desktop import merge, overview, scanners
+    weeks = [f"2024-{m:02d}-{d:02d}" for m in range(1, 13) for d in (1, 15)] * 5   # 120 tygodni (daty tylko do podpisów)
+    up = [100 * 1.01 ** i for i in range(120)]
+    items = {t: up for t, _ in overview.INDEXES} | {t: [v * (1 + k * 0.001 * i) for i, v in enumerate(up)] for k, (t, _, _) in enumerate(overview.SECTOR_ETFS)}
+    (app.data_root / overview.FILE).write_text(json.dumps({"fetched": "2999-01-01T00:00:00Z", "weeks": weeks, "items": items}))
+    app.open_krok()
+    k = app.krok_win
+    k.update()
+    assert k.step_var.get() == "rynek"
+    k.go(1)
+    k.update()
+    assert k.step_var.get() == "sektory" and k.sectors                    # domyślnie zaznaczone najsilniejsze sektory
+    k.sectors = []                                                       # wszystkie sektory
+    k.go(1)
+    k.update()
+    ids = list(k.tree.get_children())
+    mrs = [r["mrs"] for r in k.rows["rows"] if r["mrs"] is not None]
+    assert ids and mrs == sorted(mrs, reverse=True)                      # od najwyższego Mansfield RS
+    saved = k.make_watchlist(ids[:3], name="Test krok")
+    sc = scanners.get(app.data_root, saved["id"])
+    assert sc["kind"] == scanners.KIND_WATCHLIST and sc["sources"][0]["rule"]["tickers"] == ids[:3]
+    merge.build(app.data_root, sc, log=lambda s: None)
+    got = json.loads((scanners.scanner_dir(app.data_root, sc["id"]) / "watchlist.json").read_text())
+    assert sorted(s["ticker"] for s in got["stocks"]) == sorted(ids[:3])

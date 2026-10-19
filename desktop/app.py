@@ -551,7 +551,7 @@ class App:
                       ("Sync fundamentów (EPS, estymaty — raz w tygodniu)\tShift+F5", lambda: v().start_sync(sync.FUNDAMENTALS)),
                       ("Ceny tylko z yfinance (bez Finviz)", lambda: v().start_sync(sync.PRICES, skip_finviz=True)),
                       ("Wczytaj dane z dysku", lambda: v().reload()), None, ("Zakończ", self.quit_app)]),
-            ("Skanery", [("Szybkie okno skanerów", self.open_launcher), ("📌 Przypięte boxy (wszystkie skanery)", self.open_pinned), ("Moje skanery…", self.open_manager), ("Nowy skaner Finviz…", self.new_scanner),
+            ("Skanery", [("🧭 Krok po kroku (rynek → sektory → akcje)…", self.open_krok), ("Szybkie okno skanerów", self.open_launcher), ("📌 Przypięte boxy (wszystkie skanery)", self.open_pinned), ("Moje skanery…", self.open_manager), ("Nowy skaner Finviz…", self.new_scanner),
                          ("Nowy skan Qullamaggie (dane do watchlisty)…", lambda: self.new_scanner(scanners.KIND_QM)),
                          ("Nowy skan Wish (Green Line Breakout)…", lambda: self.new_scanner(preset="wish")),
                          ("Nowa watchlista (lista tickerów z kilku skanów)…", lambda: self.new_scanner(scanners.KIND_WATCHLIST)),
@@ -597,6 +597,12 @@ class App:
             return self.view
         w = self.windows.get(sid)
         return w.view if w is not None and w.winfo_exists() else None
+
+    def open_krok(self):
+        from .krok import KrokWindow
+        if getattr(self, "krok_win", None) is None or not self.krok_win.winfo_exists():
+            self.krok_win = KrokWindow(self)
+        self.krok_win.lift()
 
     def open_pinned(self):
         if getattr(self, "pinned_win", None) is None or not self.pinned_win.winfo_exists():

@@ -34,6 +34,7 @@ class LauncherWindow(tk.Toplevel):
         new["menu"] = menu
         bar.add(new)
         bar.add(tk.Button(bar, text="☰ Zarządzaj", command=app.open_manager, relief="flat"))
+        bar.add(tk.Button(bar, text="🧭 Krok po kroku", command=app.open_krok, relief="flat"))
         bar.add(tk.Button(bar, text="📌 Przypięte boxy", command=app.open_pinned, relief="flat"))
         self.bind("<Escape>", lambda e: self.destroy())
         self.refresh()

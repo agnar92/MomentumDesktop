@@ -4,6 +4,7 @@ import math
 from tkinter import font as tkfont
 
 from . import darvas
+from . import glb as glb_mod
 from .daily import sma as _sma
 
 BG, GRID, PAPER = "#0b0d10", "#1a1f26", "#161b21"
@@ -710,3 +711,188 @@ def draw_tooltip(cv, x, y, lines, tag="cross"):
         cv.coords(item, bx + 7, by + 5 + n * lh)
         cv.addtag_withtag(tag, item)
         cv.tag_raise(item, box)
+
+
+# ---------- oficjalna karta Darvasa i karta GLB (jak w książce / Momentum: darCardSvg, glbCardSvg) ----------
+
+CARD_PAPER, CARD_RULE, CARD_TICK, CARD_INK = "#e9e4d2", "#b9b49f", "#8b8670", "#2b2a24"
+CARD_FONT, CARD_FONT_B = ("Consolas", 9), ("Consolas", 9, "bold")
+STATE_LINE = {"BUY": ("#0a8f3c", "Kup — wybicie"), "SELL": ("#c0262d", "Sprzedaj"), "HOLD": ("#1b5fbf", "Trzymaj"),
+              "READY": ("#0a8f3c", "Gotowy do kupna"), "NOVOL": ("#1b5fbf", "Wybicie bez wolumenu"), "LATE": ("#1b5fbf", "Za daleko nad górą")}
+
+
+def _card_paper(cv, W, H, L, lo, hi, title):
+    """Kartka w linie (skala log), oś cen po lewej i tytuł w lewym górnym rogu."""
+    cv.create_rectangle(0, 0, W, H, fill=CARD_PAPER, outline="")
+    y = make_scale(lo, hi, L["top"], H - L["bottom"], True)
+    q = math.exp(math.log(hi / lo) / 70)
+    v = lo * q
+    while v < hi:
+        cv.create_line(L["left"], y(v), W - L["right"], y(v), fill=CARD_RULE)
+        v *= q
+    for t in price_ticks(lo, hi, 8, True):
+        cv.create_line(L["left"], y(t), W - L["right"], y(t), fill=CARD_TICK)
+        cv.create_text(L["left"] - 4, y(t), text=f"{t:g}", fill="#3a3730", font=CARD_FONT, anchor="e")
+    cv.create_text(L["left"] + 2, 22, text=title, fill="#1b1a16", font=("Georgia", 22, "bold"), anchor="w")
+    return y
+
+
+def _card_dot(cv, x, y, px, W):
+    cv.create_oval(x - 6, y - 6, x + 6, y + 6, fill="#ffd54a", outline="#111", width=2)
+    left = x > W * 0.6
+    cv.create_text(x - 10 if left else x + 10, y, text=f"{px:.2f}", fill=CARD_INK, font=CARD_FONT_B, anchor="e" if left else "w")
+
+
+def draw_card(cv, full, weeks, opts=None):
+    """Karta Darvasa jak w książce: boxy z ostatnich 2 lat OBOK SIEBIE od najstarszego (nie w skali czasu), biały box z czarną ramką
+    i pasek strefy zagrożenia pod dołem, linia punktu kupna tuż nad najwyższym boxem, kolejne rosnące boxy podpisane ↑1, ↑2…,
+    żółta kropka = ostatnie zamknięcie, u dołu spółka, okno dat i „Past Price Range”. opts: pinned, selected, title."""
+    opts = opts or {}
+    cv.delete("all")
+    W, H = cv.winfo_width(), cv.winfo_height()
+    if not full or W < 120 or H < 160:
+        return {}
+    c = full["c"]
+    a = darvas.card(c, full.get("v"), full.get("l"))
+    lr = darvas.last_real(c)
+    if not a["boxes"] or lr < 0:
+        cv.create_rectangle(0, 0, W, H, fill=CARD_PAPER, outline="")
+        cv.create_text(20, 30, text="Brak boxów do narysowania na karcie Darvasa.", fill=CARD_INK, font=CARD_FONT, anchor="w")
+        return {"kind": "kcard", "hits": []}
+    px, st = c[lr], a["status"]
+    rng = darvas.past_range(weeks, c)
+    table_h = 14 * (len(rng) + 4) + 10
+    L = {"left": 48, "right": 8, "top": 44, "bottom": table_h + 30}
+    bxs = a["boxes"]
+    lo0 = min([px] + [b["bottom"] * (1 - darvas.STOP_PCT / 100) for b in bxs])
+    hi0 = max([px] + [b["top"] for b in bxs])
+    span = math.log(hi0 / lo0) or 0.1
+    lo, hi = lo0 * math.exp(-0.3 * span), hi0 * math.exp(0.3 * span)   # luźna skala jak w książce
+    y = _card_paper(cv, W, H, L, lo, hi, "Dar•Card©")
+    pw = W - L["left"] - L["right"]
+    n = len(bxs)
+    slot = pw / max(n, 3)
+    bw = slot * 0.72
+    pin = opts.get("pinned")
+    hits = []
+    for k, b in enumerate(bxs):
+        x0 = L["left"] + slot * k + (slot - bw) / 2
+        yt, yb, yz = y(b["top"]), y(b["bottom"]), y(b["bottom"] * (1 - darvas.STOP_PCT / 100))
+        pinned = bool(pin and not pin.get("line") and abs(pin["top"] - b["top"]) < 0.005 and abs(pin["bottom"] - b["bottom"]) < 0.005)
+        cv.create_rectangle(x0, yt, x0 + bw, max(yb, yt + 2), fill="#ffffff", outline="#d4a017" if pinned else "#111", width=3 if pinned else 2)
+        hatch(cv, x0, yb, x0 + bw, yb + max(2, min(yz - yb, 9)), "#333333", gap=4)
+        cv.create_rectangle(x0, yb, x0 + bw, yb + max(2, min(yz - yb, 9)), outline="#333")
+        if b.get("rank"):   # kolejne rosnące boxy (łańcuch) — ↑1, ↑2… nad boxem
+            cv.create_text(x0 + 4, yt + 3, text=f"↑{b['rank']}", fill="#0a8f3c", font=("Consolas", 10, "bold"), anchor="nw")
+        if pinned:
+            cv.create_text(x0 + bw - 3, yt + 10, text="📌", anchor="e")
+        hits.append({"rect": (x0, yt, x0 + bw, yb + 9), "box": {"top": b["top"], "bottom": b["bottom"], "i0": b["i0"], "i1": b["i1"], "kind": "darvas",
+                                                               "outcome": b["outcome"], "confirmed": True, "start": weeks[b["i0"]] if b["i0"] < len(weeks) else ""}})
+        if k == a["topmost"] and st["state"] not in ("OUT", "NONE", "WAIT"):
+            col, lbl = STATE_LINE.get(st["state"], ("#1b5fbf", "Kup nad górą"))
+            yb_ = y(b["top"] * 1.007)
+            cv.create_line(x0 + bw / 2, yb_, W - L["right"], yb_, fill=col, width=2)
+            cv.create_oval(x0 + bw / 2 - 3, yb_ - 3, x0 + bw / 2 + 3, yb_ + 3, fill=col, outline="")
+            cv.create_text(W - L["right"] - 2, yb_ - 8, text=lbl, fill=col, font=("Consolas", 10, "bold"), anchor="e")
+        elif k == a["topmost"] and st["state"] == "WAIT":
+            yb_ = y(b["top"] * 1.007)
+            cv.create_line(x0 + bw / 2, yb_, W - L["right"], yb_, fill="#1b5fbf", width=1, dash=(4, 3))
+            cv.create_text(W - L["right"] - 2, yb_ - 8, text="Kup nad górą (pierwszy box)", fill="#1b5fbf", font=CARD_FONT_B, anchor="e")
+    _card_dot(cv, L["left"] + slot * (n - 1) + slot / 2, y(px), px, W)
+    head = {"READY": "dwa rosnące boxy — gotowy do kupna", "BUY": "wybicie", "HOLD": "trzymaj", "SELL": "sprzedaj", "OUT": "poza boxem",
+            "WAIT": "pierwszy box — czekaj", "NOVOL": "wybicie bez wolumenu", "LATE": "za daleko nad górą"}.get(st["state"], "")
+    cv.create_text(W - L["right"] - 2, 22, text=f"Boxy ↑ {a['n_up']}  ·  {head}", fill=CARD_INK, font=("Consolas", 11, "bold"), anchor="e")
+    # dół karty: spółka, okno dat, Past Price Range
+    ty, tx = H - table_h - 4, L["left"] + 6
+    d_end = weeks[lr] if lr < len(weeks) else ""
+    d_beg = weeks[max(0, lr - darvas.CARD_WEEKS + 1)] if weeks else ""
+    cv.create_text(tx, ty - 6, text=opts.get("title", ""), fill=CARD_INK, font=("Consolas", 10, "bold"), anchor="w")
+    cv.create_text(tx, ty + 10, text=f"{d_beg} – {d_end}" if d_beg and d_end else "", fill=CARD_INK, font=CARD_FONT_B, anchor="w")
+    ry = ty + 28
+    cv.create_text(tx, ry, text="Past Price Range", fill=CARD_INK, font=CARD_FONT_B, anchor="w")
+    cv.create_text(tx + 80, ry + 14, text="High", fill=CARD_INK, font=CARD_FONT, anchor="w")
+    cv.create_text(tx + 150, ry + 14, text="Low", fill=CARD_INK, font=CARD_FONT, anchor="w")
+    for i, (yr, h_, l_) in enumerate(rng):
+        yy = ry + 14 * (i + 2)
+        cv.create_text(tx, yy, text=yr, fill=CARD_INK, font=CARD_FONT, anchor="w")
+        cv.create_text(tx + 80, yy, text=f"{h_:g}", fill=CARD_INK, font=CARD_FONT, anchor="w")
+        cv.create_text(tx + 150, yy, text=f"{l_:g}", fill=CARD_INK, font=CARD_FONT, anchor="w")
+    sel = opts.get("selected")
+    if sel is not None and 0 <= sel < len(hits):
+        x0, y0, x1, y1 = hits[sel]["rect"]
+        cv.create_rectangle(x0 - 2, y0 - 2, x1 + 2, y1 + 2, outline="#d4a017", width=2, dash=(4, 2))
+    return {"kind": "kcard", "W": W, "H": H, "hits": hits, "status": st, "n_up": a["n_up"]}
+
+
+GLB_COLORS = {"BREAK": "#0a8f3c", "AFTER": "#5c7a3a", "LATE": "#5c7a3a", "WAIT": "#0f8a3a"}
+
+
+def draw_glb_card(cv, g, opts=None):
+    """Karta GLB jak w Momentum: zamknięcia miesięczne (krótka kreska na miesiąc + cienka linia), gruba zielona green line od miesiąca rekordu
+    do przebicia (dalej przerywana), stan w prawym górnym rogu, żółta kropka = cena, u dołu tabelka Rekord / Green line / Stop / Do linii."""
+    opts = opts or {}
+    cv.delete("all")
+    W, H = cv.winfo_width(), cv.winfo_height()
+    if W < 120 or H < 160:
+        return {}
+    if not g or not g.get("c"):
+        cv.create_rectangle(0, 0, W, H, fill=CARD_PAPER, outline="")
+        cv.create_text(20, 30, text="Brak danych miesięcznych do karty GLB.", fill=CARD_INK, font=CARD_FONT, anchor="w")
+        return {"kind": "glb", "hits": []}
+    table_h = 14 * 6 + 10
+    L = {"left": 48, "right": 8, "top": 44, "bottom": table_h + 46}
+    cs, px, lv = g["c"], g["px"], g.get("line")
+    vals = [v for v in cs if v] + [px] + ([lv * 1.02, lv * (1 - glb_mod.STOP_PCT / 100)] if lv else [])
+    lo0, hi0 = min(vals), max(vals)
+    span = math.log(hi0 / lo0) or 0.1
+    lo, hi = lo0 * math.exp(-0.12 * span), hi0 * math.exp(0.12 * span)
+    y = _card_paper(cv, W, H, L, lo, hi, "GLB•Card")
+    n = len(cs)
+    pw, ph = W - L["left"] - L["right"], H - L["top"] - L["bottom"]
+    slot = pw / (n + 1)
+    def x(i):
+        return L["left"] + slot * (i + 0.5)
+    for i, m in enumerate(g["m"]):   # lata pod osią: przerywana kreska na styczniu
+        if m.endswith("-01"):
+            cv.create_line(x(i) - slot / 2, L["top"], x(i) - slot / 2, L["top"] + ph, fill="#a9a48e", dash=(2, 3))
+            cv.create_text(x(i) - slot / 2 + 3, L["top"] + ph + 10, text=m[:4], fill="#3a3730", font=CARD_FONT, anchor="w")
+    state = g.get("glb_state", "NONE")
+    col = GLB_COLORS.get(state, "#0f8a3a")
+    if lv:
+        lm = g.get("lm")
+        in_card = lm is not None and lm >= 0
+        i_r = lm if in_card else 0
+        i_b = next((i for i in range(i_r + 1, n) if cs[i] >= lv), n)
+        yt = y(lv)
+        xe = x(i_b) - slot * 0.5 if i_b < n else W - L["right"]
+        cv.create_line(x(i_r) if in_card else L["left"], yt, xe, yt, fill=col, width=3)
+        if i_b < n:   # przebita: obowiązuje do potwierdzenia nowego rekordu
+            cv.create_line(xe, yt, W - L["right"], yt, fill=col, width=2, dash=(6, 4))
+        if in_card:
+            cv.create_oval(x(i_r) - 4, yt - 4, x(i_r) + 4, yt + 4, fill=col, outline="#111")
+        else:
+            cv.create_text(L["left"] + 4, yt - 8, text=f"rekord z {g.get('lm_label') or '?'} (poza kartą)", fill=CARD_INK, font=CARD_FONT, anchor="w")
+        lbl = {"WAIT": f"Kup > {lv:.2f}", "BREAK": "Kup — wybicie", "AFTER": "Nad green line (≤ 5 %)", "LATE": "Za daleko nad linią"}.get(state, "")
+        cv.create_text(W - L["right"] - 2, 22, text=lbl, fill=col, font=("Consolas", 12, "bold"), anchor="e")
+    pts = [v for i, v in enumerate(cs) for v in (x(i), y(v))]
+    if len(pts) >= 4:
+        cv.create_line(*pts, fill="#8a8574")
+    for i, v in enumerate(cs):
+        partial = g.get("partial") and i == n - 1
+        cv.create_line(x(i) - slot * 0.32, y(v), x(i) + slot * 0.32, y(v), fill="#111", width=1 if partial else 2, dash=(2, 2) if partial else ())
+    _card_dot(cv, x(n - 1), y(px), px, W)
+    ty, tx = H - table_h - 4, L["left"] + 6
+    cv.create_text(tx, ty - 6, text=opts.get("title", ""), fill=CARD_INK, font=("Consolas", 10, "bold"), anchor="w")
+    cv.create_text(tx, ty + 10, text=f"{g['m'][0]} – {g['m'][-1]} · zamknięcia miesięczne", fill=CARD_INK, font=CARD_FONT_B, anchor="w")
+    ath = g.get("ath")
+    rows = [("Rekord wszech czasów", f"{ath[0]:.2f} ({ath[1]})" + ("" if g.get("full") else " ¹") if ath else "—"),
+            ("Green line", f"{lv:.2f} ({g.get('lm_label')})" if lv else "brak (rekord < 3 mies.)"),
+            ("Stop (1 % pod linią)", f"{lv * (1 - glb_mod.STOP_PCT / 100):.2f}" if lv else "—"),
+            ("Do linii", f"{g['glb_dist_pct']:+.1f} %" if lv and g.get("glb_dist_pct") is not None else "—")]
+    for i, (k, v) in enumerate(rows):
+        yy = ty + 30 + 14 * i
+        cv.create_text(tx, yy, text=k, fill=CARD_INK, font=CARD_FONT, anchor="w")
+        cv.create_text(tx + 190, yy, text=v, fill=CARD_INK, font=CARD_FONT_B, anchor="w")
+    if not g.get("full"):
+        cv.create_text(tx, ty + 30 + 14 * 4, text="¹ z ostatnich lat tygodniowych — pełna historia miesięczna po Sync skanu Wish", fill="#5a564a", font=("Consolas", 8), anchor="w")
+    return {"kind": "glb", "hits": []}

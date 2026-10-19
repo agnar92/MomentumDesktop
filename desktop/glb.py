@@ -66,6 +66,48 @@ def analyze(closes, cfg=None, weekly=None, price=None):
             "glb_stop": round(level * (1 - STOP_PCT / 100), 4), "glb_rank": STATE_RANK[state]}
 
 
+def monthly_from_weekly(weeks, c):
+    """Zamknięcia miesięczne z tygodniowych (ostatni tydzień miesiąca): ([YYYY-MM], [zamknięcia]); ostatni miesiąc jest trwający."""
+    ms, cs = [], []
+    for d, v in zip(weeks or [], c or []):
+        if not d or not isinstance(v, (int, float)) or v != v:
+            continue
+        if ms and ms[-1] == d[:7]:
+            cs[-1] = v
+        else:
+            ms.append(d[:7])
+            cs.append(v)
+    return ms, cs
+
+
+def card_data(cache_entry, weeks, c, cfg=None, months_shown=60):
+    """Dane karty GLB (jak glbCardSvg w Momentum): zamknięte miesiące z pamięci podręcznej (pełna historia) albo z tygodniowych (ostatnie lata),
+    plus trwający miesiąc z ostatniego zamknięcia tygodnia. -> {m: [YYYY-MM], c: [zamknięcia], partial, line, lm (indeks miesiąca linii), ath, full, state…}."""
+    wm, wc = monthly_from_weekly(weeks, c)
+    if not wm:
+        return None
+    cur_m, px = wm[-1], wc[-1]
+    if cache_entry and cache_entry.get("c"):
+        md = [d[:7] for d in (cache_entry.get("d") or [])]
+        mc = list(cache_entry["c"])
+        if len(md) != len(mc):
+            md = []
+        done_m = [m for m in md if m < cur_m] if md else []
+        done_c = mc[:len(done_m)] if md else mc
+        full = True
+    else:
+        done_m, done_c, full = wm[:-1], wc[:-1], False
+    res = analyze(done_c, cfg, weekly=[v for v in c if isinstance(v, (int, float))])
+    level, at = line(done_c, normalize(cfg)["confirm_months"])
+    allm = (done_m or [""] * len(done_c)) + [cur_m]
+    allc = done_c + [px]
+    k0 = max(0, len(allc) - months_shown)
+    ath_i = max(range(len(done_c)), key=lambda i: done_c[i]) if done_c else None
+    return {"m": allm[k0:], "c": allc[k0:], "partial": True, "line": level, "lm": (at - k0) if at is not None else None,
+            "lm_label": allm[at] if at is not None else None, "ath": (done_c[ath_i], allm[ath_i]) if ath_i is not None else None,
+            "full": full, "px": px, **res}
+
+
 CHART_URL = "https://query1.finance.yahoo.com/v8/finance/chart/{}"
 WORKERS = 16
 

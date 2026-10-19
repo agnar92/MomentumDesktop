@@ -41,6 +41,14 @@ def test_windows_open_and_select_box(app):
     assert ch.focus_box and ch.mode.get() == "bars"
     ch.clear_focus()
     assert ch.mode.get() == "darcard"
+    ch.toggle_mode()                       # spacja: Dar-Card → 🃏 Karta → 🟩 GLB → Słupkowy
+    assert ch.mode.get() == "karta"
+    ch.redraw()
+    assert ch.geoms["card"].get("kind") == "kcard"
+    ch.toggle_mode()
+    assert ch.mode.get() == "glb"
+    ch.redraw()
+    assert ch.geoms["card"].get("kind") == "glb"
     ch.toggle_mode()
     assert ch.mode.get() == "bars"
     ch.update()

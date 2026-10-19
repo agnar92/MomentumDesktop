@@ -323,8 +323,7 @@ def run_sync(data_dir, log=print, mode=FUNDAMENTALS, skip_finviz=False, max_tick
                     shutil.rmtree(data_dir / "raw", ignore_errors=True)   # migawka całego zbioru jest duża, a desktop jej nie potrzebuje
                 else:
                     build_daily_json(data_dir, log)
-                if glb_cfg:
-                    glb.apply(data_dir, glb_cfg, log)
+                glb.apply(data_dir, glb_cfg or {}, log)   # GLB w każdym skanerze: poziom z miesięcznych zamknięć całej historii (yfinance, interwał 1mo, max)
         if not code:
             st = prev_state
             st["prices"] = now_iso()

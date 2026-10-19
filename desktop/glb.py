@@ -80,6 +80,9 @@ def monthly_from_weekly(weeks, c):
     return ms, cs
 
 
+WEEKS_SHOWN = 156      # karta GLB rysuje ostatnie 3 lata TYGODNIOWYCH zamknięć (poziom linii z miesięcznych)
+
+
 def card_data(cache_entry, weeks, c, cfg=None, months_shown=60):
     """Dane karty GLB (jak glbCardSvg w Momentum): zamknięte miesiące z pamięci podręcznej (pełna historia) albo z tygodniowych (ostatnie lata),
     plus trwający miesiąc z ostatniego zamknięcia tygodnia. -> {m: [YYYY-MM], c: [zamknięcia], partial, line, lm (indeks miesiąca linii), ath, full, state…}."""
@@ -103,19 +106,27 @@ def card_data(cache_entry, weeks, c, cfg=None, months_shown=60):
     allc = done_c + [px]
     k0 = max(0, len(allc) - months_shown)
     ath_i = max(range(len(done_c)), key=lambda i: done_c[i]) if done_c else None
-    return {"m": allm[k0:], "c": allc[k0:], "partial": True, "line": level, "lm": (at - k0) if at is not None else None,
+    wk0 = max(0, len(weeks) - WEEKS_SHOWN)
+    wk, wcs = list(weeks[wk0:]), list(c[wk0:len(weeks)])
+    lm_label = allm[at] if at is not None else None
+    lw = next((i for i, d in enumerate(wk) if d and lm_label and d[:7] >= lm_label), None) if lm_label and wk and wk[0][:7] <= lm_label else None
+    return {"wk": wk, "wc": wcs, "lw": lw,
+            "m": allm[k0:], "c": allc[k0:], "partial": True, "line": level, "lm": (at - k0) if at is not None else None,
             "lm_label": allm[at] if at is not None else None, "ath": (done_c[ath_i], allm[ath_i]) if ath_i is not None else None,
             "full": full, "px": px, **res}
 
 
 CHART_URL = "https://query1.finance.yahoo.com/v8/finance/chart/{}"
+CACHE_VERSION = 2   # 2 = prawdziwe świece miesięczne (period1/period2 zamiast range=max)
 WORKERS = 16
 
 
 def _fetch_one(session, ticker):
     """Miesięczne zamknięcia (skorygowane) jednej spółki prosto z API wykresów Yahoo: (daty, zamknięcia) albo None."""
     for attempt in (1, 2):
-        r = session.get(CHART_URL.format(ticker), params={"range": "max", "interval": "1mo", "includeAdjustedClose": "true"}, timeout=15)
+        # UWAGA: range=max zwraca dla długich historii świece KWARTALNE (dataGranularity 3mo) — jawny zakres dat daje prawdziwe miesiące
+        r = session.get(CHART_URL.format(ticker), params={"period1": "0", "period2": str(int(time.time())), "interval": "1mo", "includeAdjustedClose": "true"},
+                        timeout=15)
         if r.status_code == 429 and attempt == 1:   # limit zapytań: jedna krótka pauza i ponowna próba
             time.sleep(1.0)
             continue
@@ -186,7 +197,7 @@ def _fetch_yfinance(tickers, log=print, batch=50):
     for i in range(0, len(tickers), batch):
         part = tickers[i:i + batch]
         try:
-            df = yf.download(part, period="max", interval="1mo", auto_adjust=True, group_by="ticker", progress=False, threads=True)
+            df = yf.download(part, start="1970-01-02", interval="1mo", auto_adjust=True, group_by="ticker", progress=False, threads=True)
             for t in part:
                 try:
                     s = (df[t] if len(part) > 1 else df)["Close"].dropna()
@@ -223,13 +234,14 @@ def apply(data_dir, cfg, log=print, fetch=fetch_monthly, today=None):
         return not isinstance(d, (int, float)) or d >= -cfgn["max_from_high_pct"]
     cand = [s for s in stocks if near_high(s)]
     log(f"Green Line Breakout: {len(cand)} z {len(stocks)} spółek jest nie dalej niż {cfgn['max_from_high_pct']:g} % pod szczytem 52 tygodni — tylko one są analizowane.")
-    need = [s["ticker"] for s in cand if s["ticker"] not in cache or (cache[s["ticker"]].get("through") or "") < prev]
+    need = [s["ticker"] for s in cand if s["ticker"] not in cache or (cache[s["ticker"]].get("through") or "") < prev
+            or cache[s["ticker"]].get("v") != CACHE_VERSION]   # stary wpis (np. świece kwartalne z range=max) — pobieramy od nowa
     if need:
         log(f"Green Line Breakout: pobieram miesięczne zamknięcia z całej historii dla {len(need)} spółek (reszta z pamięci podręcznej; limit czasu {BUDGET_S} s)…")
         for t, m in fetch(need, log).items():
             d, c = m.get("d") or [], m.get("c") or []
             keep = [i for i, x in enumerate(d) if x[:7] < cur] if d else list(range(len(c)))   # bez trwającego miesiąca — jego cenę dajemy z Sync
-            cache[t] = {"d": [d[i] for i in keep] if d else [], "c": [c[i] for i in keep], "through": (d[keep[-1]][:7] if d and keep else "9999-99")}
+            cache[t] = {"d": [d[i] for i in keep] if d else [], "c": [c[i] for i in keep], "through": (d[keep[-1]][:7] if d and keep else "9999-99"), "v": CACHE_VERSION}
     else:
         log("Green Line Breakout: dane miesięczne w pamięci podręcznej są aktualne — liczę bez pobierania.")
     weekly = (store.read_json(data_dir / "charts.json", {}) or {}).get("stocks") or {}   # stan liczymy na zamknięciach TYGODNIOWYCH

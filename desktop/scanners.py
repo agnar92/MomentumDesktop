@@ -39,6 +39,8 @@ def load_config(directory):
         out["glb"] = glb.normalize(cfg["glb"])
     if isinstance(cfg.get("qm"), dict):   # skaner Qullamaggie: progi w tym samym pliku (czyta je też proces synchronizacji)
         out["qm"] = qm.normalize(cfg["qm"])
+    if isinstance(cfg.get("tickers"), list):   # stała lista spółek (🧭 Krok po kroku): Sync nie pyta Finviz
+        out["tickers"] = [r for r in cfg["tickers"] if isinstance(r, dict) and r.get("ticker")]
     return out
 
 

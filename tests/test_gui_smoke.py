@@ -780,30 +780,42 @@ def test_measure_profit_while_dragging_disappears_on_release(app):
     assert ch.selected is not None
 
 
-def test_krok_po_kroku_steps_and_watchlist_from_selection(app):
+def test_krok_po_kroku_steps_and_watchlist_from_selection(app, monkeypatch):
     import json
 
-    from desktop import merge, overview, scanners
+    from desktop import overview, scanners
     weeks = [f"2024-{m:02d}-{d:02d}" for m in range(1, 13) for d in (1, 15)] * 5   # 120 tygodni (daty tylko do podpisów)
     up = [100 * 1.01 ** i for i in range(120)]
     items = {t: up for t, _ in overview.INDEXES} | {t: [v * (1 + k * 0.001 * i) for i, v in enumerate(up)] for k, (t, _, _) in enumerate(overview.SECTOR_ETFS)}
     (app.data_root / overview.FILE).write_text(json.dumps({"fetched": "2999-01-01T00:00:00Z", "weeks": weeks, "items": items}))
+    rows = [{"ticker": f"T{i}", "company": f"Spółka {i}", "sector": "Energy", "industry": "Oil"} for i in range(6)]
+    closes = {f"T{i}": [v * (1 + i * 0.002 * j) for j, v in enumerate(up)] for i in range(6)}
+    u = {"fetched": "2999-01-01T00:00:00Z", "key": overview.universe_key(["Energy"], ""), "sectors": ["Energy"], "extra": "", "weeks": weeks,
+         "etf": {"XLE": up, "^GSPC": up}, "rows": rows, "closes": closes}
+    (app.data_root / overview.UNIVERSE_FILE).write_text(json.dumps(u))
     app.open_krok()
     k = app.krok_win
     k.update()
     assert k.step_var.get() == "rynek"
     k.go(1)
     k.update()
-    assert k.step_var.get() == "sektory" and k.sectors                    # domyślnie zaznaczone najsilniejsze sektory
-    k.sectors = []                                                       # wszystkie sektory
+    assert k.step_var.get() == "sektory" and k.sectors                    # domyślnie zaznaczone sektory z dodatnim RS
+    k.sectors = ["Energy"]
+    k.app.session.setdefault("krok", {})["extra"] = ""
     k.go(1)
     k.update()
     ids = list(k.tree.get_children())
+    assert ids[0] == "T5"                                                 # najsilniejsza względem ETF sektora na górze
     mrs = [r["mrs"] for r in k.rows["rows"] if r["mrs"] is not None]
-    assert ids and mrs == sorted(mrs, reverse=True)                      # od najwyższego Mansfield RS
-    saved = k.make_watchlist(ids[:3], name="Test krok")
-    sc = scanners.get(app.data_root, saved["id"])
-    assert sc["kind"] == scanners.KIND_WATCHLIST and sc["sources"][0]["rule"]["tickers"] == ids[:3]
-    merge.build(app.data_root, sc, log=lambda s: None)
-    got = json.loads((scanners.scanner_dir(app.data_root, sc["id"]) / "watchlist.json").read_text())
-    assert sorted(s["ticker"] for s in got["stocks"]) == sorted(ids[:3])
+    assert mrs == sorted(mrs, reverse=True)
+    ev = lambda iid: type("E", (), {"y": k.tree.bbox(iid)[1] + 3})()   # noqa: E731
+    k.tree.see(ids[0])
+    k.update()
+    k.toggle(ev(ids[0]))
+    k.toggle(ev(ids[1]))
+    k.toggle(ev(ids[1]))                                                  # drugie kliknięcie odznacza
+    assert k.rows["checked"] == {ids[0]} and k.tree.item(ids[0], "text").startswith("☑")
+    monkeypatch.setattr(app, "scanner_saved", lambda sc, then_sync=None: None)
+    saved = k.make_watchlist([k.rows["by"][ids[0]]], name="Test krok")
+    cfg = scanners.load_config(scanners.scanner_dir(app.data_root, saved["id"]))
+    assert saved["kind"] == scanners.KIND_FINVIZ and [r["ticker"] for r in cfg["tickers"]] == [ids[0]] and "glb" in cfg

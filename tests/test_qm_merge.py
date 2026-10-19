@@ -324,3 +324,22 @@ def test_glb_prefilter_skips_far_from_high_and_fetch_respects_budget(tmp_path, m
     logs, t0 = [], time.time()
     res = glb.fetch_monthly([f"T{i}" for i in range(300)], logs.append, workers=4, budget=1)
     assert res == {} and time.time() - t0 < 4.5 and any("limit czasu" in x for x in logs)   # budżet 1 s, zapytania śpią po 6 s — nie czekamy na nie
+
+
+def test_glb_monthly_fetch_uses_explicit_dates_not_range_max():
+    # range=max zwraca z Yahoo świece kwartalne dla długich historii — pytamy o jawny zakres dat (prawdziwe miesiące)
+    from desktop import glb
+    seen = {}
+
+    class R:
+        status_code = 200
+
+        def json(self):
+            return {"chart": {"result": [{"timestamp": [0, 2678400], "indicators": {"adjclose": [{"adjclose": [1.0, 2.0]}]}}]}}
+
+    class S:
+        def get(self, url, params=None, timeout=None):
+            seen.update(params)
+            return R()
+    d, c = glb._fetch_one(S(), "KO")
+    assert "range" not in seen and seen["period1"] == "0" and seen["interval"] == "1mo" and c == [1.0, 2.0]

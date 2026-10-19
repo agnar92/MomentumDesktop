@@ -1,14 +1,14 @@
 """🧭 Krok po kroku — jedna informacja na ekran (jak krok.html w Momentum):
 1 · Rynek — S&P 500, Nasdaq 100 i Dow Jones na tygodniowych wykresach 10:30 (cena, SMA 10, SMA 30) + werdykt;
 2 · Sektory — 11 ETF SPDR od najwyższego Mansfield RS względem S&P 500 (zaznacz sektory, z których szukasz akcji);
-3 · Akcje — spółki z wybranego skanu / watchlisty z tych sektorów, od najwyższego Mansfield RS; zaznaczone → nowa watchlista."""
+3 · Akcje — WSZYSTKIE spółki tych sektorów z Finviz, od najwyższego Mansfield RS względem ETF ich sektora; zaznaczone (klik ☑) → nowy skan z GLB i boxami."""
 import queue
 import threading
 import tkinter as tk
 from datetime import date
 from tkinter import messagebox, simpledialog, ttk
 
-from . import charts, overview, scanners, store, sync
+from . import charts, glb, overview, scanners, store, sync
 from .theme import BG, PANEL, Flow, apply_dark, fit_window
 from .widgets import STATE_COLORS
 
@@ -171,7 +171,7 @@ class KrokWindow(tk.Toplevel):
             tree.insert("", "end", iid=r["ticker"], text=r["ticker"], values=(r["name"], _f(r["mrs"]), overview.TREND_LABELS[r["trend"]], _f(r["q"]), _f(r["y"])),
                         tags=("pos" if (r["mrs"] or 0) > 0 else "neg",))
         tree.pack(fill="x")
-        pick = [r["ticker"] for r in rows if r["sector"] in self.sectors] or [r["ticker"] for r in strong[:3]]
+        pick = [r["ticker"] for r in rows if r["sector"] in self.sectors] or [r["ticker"] for r in strong]   # domyślnie wszystkie sektory z dodatnim RS
         if pick:
             tree.selection_set(pick)
         holder = tk.Frame(self.body, bg=BG)
@@ -192,120 +192,165 @@ class KrokWindow(tk.Toplevel):
 
     # --- krok 3: akcje
     def show_stocks(self):
-        secs = ", ".join(self.sectors) if self.sectors else "wszystkie"
-        self._header("Które akcje kupić?", f"Spółki z wybranego skanu / watchlisty z sektorów: {secs} (zmień w kroku 2), od najwyższego Mansfield RS względem S&P 500. "
-                     "Zaznacz spółki (Ctrl / Shift + klik) i utwórz z nich watchlistę. Dwuklik = pełny wykres.")
+        secs = ", ".join(self.sectors) if self.sectors else "(brak — zaznacz w kroku 2)"
+        self._header("Które akcje kupić?", f"WSZYSTKIE spółki z sektorów: {secs} (prosto z Finviz, filtr sec_*), od najwyższego Mansfield RS względem ETF ich sektora "
+                     "— najsilniejsze spółki w sektorze. Kliknięcie wiersza zaznacza ☑, drugie kliknięcie odznacza; zaznaczone → watchlista z GLB i boxami.")
         bar = Flow(self.body)
         bar.pack(fill="x", padx=12)
-        srcs = [s for s in scanners.load(self.app.data_root) if (scanners.scanner_dir(self.app.data_root, s["id"]) / "watchlist.json").exists()]
-        names = {s["name"]: s["id"] for s in srcs}
-        cur = next((s["name"] for s in srcs if s["id"] == self.source), srcs[0]["name"] if srcs else "")
-        src_var, all_var = tk.StringVar(value=cur), tk.BooleanVar(value=not self.sectors)
-        bar.add(tk.Label(bar, text="Skąd:", bg=PANEL))
-        cb = ttk.Combobox(bar, textvariable=src_var, values=list(names), state="readonly", width=34)
-        bar.add(cb)
-        bar.add(tk.Checkbutton(bar, text="wszystkie sektory", variable=all_var, bg=PANEL))
+        extra_var = tk.StringVar(value=self.app.session.get("krok", {}).get("extra", ""))
+        bar.add(tk.Label(bar, text="Dodatkowe filtry Finviz (opcjonalnie, np. sh_avgvol_o300):", bg=PANEL))
+        bar.add(tk.Entry(bar, textvariable=extra_var, width=28))
+        bar.add(tk.Button(bar, text="⟳ Pobierz z Finviz", command=lambda: fetch(force=True)))
         count = tk.Label(bar, text="", bg=PANEL, fg="#8b95a3")
         frame = tk.Frame(self.body, bg=BG)
         frame.pack(fill="both", expand=True, padx=12, pady=(4, 0))
-        cols = (("company", "Spółka", 220, "w"), ("sector", "Sektor", 150, "w"), ("mrs", "Mansfield RS", 100, "e"), ("trend", "10:30", 110, "w"),
-                ("q", "3 mies.", 80, "e"), ("darvas", "Darvas", 110, "w"), ("glb", "GLB", 80, "w"), ("rs", "RS", 50, "e"))
-        tree = ttk.Treeview(frame, columns=[c[0] for c in cols], show="tree headings", selectmode="extended", height=12)
-        tree.heading("#0", text="Ticker")
-        tree.column("#0", width=80)
+        cols = (("company", "Spółka", 230, "w"), ("sector", "Sektor", 140, "w"), ("industry", "Branża", 170, "w"), ("mrs", "Mansfield RS", 120, "e"),
+                ("trend", "10:30", 110, "w"), ("q", "3 mies.", 80, "e"), ("darvas", "Darvas", 100, "w"))
+        tree = ttk.Treeview(frame, columns=[c[0] for c in cols], show="tree headings", selectmode="none", height=12)
+        tree.heading("#0", text="☑ Ticker")
+        tree.column("#0", width=100)
         for key, text, w, anchor in cols:
             tree.heading(key, text=text)
             tree.column(key, width=w, anchor=anchor)
         for st, col in STATE_COLORS.items():
             tree.tag_configure(st, foreground=col)
+        tree.tag_configure("checked", background="#1f3a5f")
         sb = ttk.Scrollbar(frame, orient="vertical", command=tree.yview)
         tree.configure(yscrollcommand=sb.set)
         tree.pack(side="left", fill="both", expand=True)
         sb.pack(side="left", fill="y")
-        holder = tk.Frame(self.body, bg=BG, height=240)
+        holder = tk.Frame(self.body, bg=BG, height=250)
         holder.pack(fill="x")
         holder.pack_propagate(False)
-        state = {"rows": [], "dir": None}
+        state = {"rows": [], "by": {}, "checked": set(), "u": None}
+        self.rows = state
+        btn = tk.Button(bar, text="📌 Utwórz watchlistę z zaznaczonych (0)", command=lambda: self.make_watchlist(
+            [state["by"][t] for t in tree.get_children() if t in state["checked"]]))
 
-        def load(_e=None):
-            sid = names.get(src_var.get())
-            if not sid:
-                return
-            self.source = sid
-            self.save_state()
-            d = scanners.scanner_dir(self.app.data_root, sid)
-            state["rows"], state["dir"] = overview.stock_rows(d, None if all_var.get() else self.sectors), d
+        def label(t):
+            return ("☑ " if t in state["checked"] else "☐ ") + t
+
+        def refresh_btn():
+            btn.config(text=f"📌 Utwórz watchlistę z zaznaczonych ({len(state['checked'])})")
+
+        def fill(u):
+            state["u"] = u
+            state["rows"] = overview.universe_rows(u)
+            state["by"] = {r["ticker"]: r for r in state["rows"]}
+            state["checked"] &= set(state["by"])
             tree.delete(*tree.get_children())
             for r in state["rows"]:
-                tree.insert("", "end", iid=r["ticker"], text=r["ticker"],
-                            values=(r["company"][:34], r["sector"], _f(r["mrs"]), overview.TREND_LABELS[r["trend"]], _f(r["q"]),
-                                    store.STATE_LABELS.get(r["darvas"], ""), r["glb"], r["rs"] if r["rs"] is not None else ""), tags=(r["darvas"],))
-            count.config(text=f"{len(state['rows'])} spółek")
-        self.rows = state
+                tree.insert("", "end", iid=r["ticker"], text=label(r["ticker"]),
+                            values=((r.get("company") or "")[:36], r.get("sector") or "", (r.get("industry") or "")[:26], _f(r["mrs"]),
+                                    overview.TREND_LABELS[r["trend"]], _f(r["q"]), store.STATE_LABELS.get(r["darvas"], "")),
+                            tags=(r["darvas"],) + (("checked",) if r["ticker"] in state["checked"] else ()))
+            count.config(text=f"{len(state['rows'])} spółek · dane z {u.get('fetched', '')[:16].replace('T', ' ')} UTC")
+            refresh_btn()
 
-        def on_sel(_e=None):
-            sel = tree.selection()
-            btn.config(text=f"📌 Utwórz watchlistę z zaznaczonych ({len(sel)})")
-            focus = tree.focus() or (sel[0] if sel else None)
+        def show_chart(t):
             for w in holder.winfo_children():
                 w.destroy()
-            if not focus or not state["dir"]:
+            u, r = state["u"], state["by"].get(t)
+            c = (u or {}).get("closes", {}).get(t)
+            if c and r:
+                bench = u["etf"].get(overview.SECTOR_ETF.get(r.get("sector")))
+                st = self._stats(c)
+                st.append((f"Mansfield RS (vs {overview.SECTOR_ETF.get(r.get('sector'), 'ETF')})", charts.pct_txt(overview.mansfield(c, bench)),
+                           charts.pct_col(overview.mansfield(c, bench))))
+                self._chart(holder, c, u["weeks"], f"{t} — {r.get('company') or ''}", st)
+
+        def toggle(e):
+            t = tree.identify_row(e.y)
+            if not t:
                 return
-            ch = store.read_json(state["dir"] / "charts.json", {}) or {}
-            d = (ch.get("stocks") or {}).get(focus) or {}
-            if d.get("c"):
-                self._chart(holder, d["c"], ch.get("weeks") or [], focus, self._stats(d["c"], ch.get("spx") or []))
+            state["checked"].symmetric_difference_update({t})
+            tree.item(t, text=label(t), tags=(state["by"][t]["darvas"],) + (("checked",) if t in state["checked"] else ()))
+            tree.focus(t)
+            refresh_btn()
+            show_chart(t)
 
         def top10():
-            ids = tree.get_children()[:10]
-            tree.selection_set(ids)
+            state["checked"] |= set(tree.get_children()[:10])
+            fill(state["u"])
 
-        def open_chart(_e=None):
-            t = tree.focus()
-            if t:
-                self.host.use(scanners.get(self.app.data_root, self.source))
-                self.host.open_chart(t)
-        btn = tk.Button(bar, text="📌 Utwórz watchlistę z zaznaczonych (0)", command=lambda: self.make_watchlist(list(tree.selection())))
+        def clear():
+            state["checked"].clear()
+            fill(state["u"])
+
+        def fetch(force=False):
+            sectors = list(self.sectors)
+            extra = extra_var.get().strip()
+            ses = self.app.session.setdefault("krok", {})
+            ses["extra"] = extra
+            self.app.save_session()
+            if not sectors:
+                count.config(text="Zaznacz sektory w kroku 2.")
+                return
+            u = overview.load_universe(self.app.data_root)
+            if not force and u.get("key") == overview.universe_key(sectors, extra) and not overview.stale(u):
+                fill(u)
+                return
+            count.config(text="⏳ pobieram spółki z Finviz i notowania z yfinance (duże sektory ~1 min)…")
+            q = queue.Queue()
+
+            def work():
+                try:
+                    q.put(("ok", overview.fetch_universe(self.app.data_root, sectors, extra, log=lambda m: q.put(("log", m)))))
+                except Exception as e:   # noqa: BLE001 — blokada Finviz / brak sieci: komunikat zamiast zamknięcia okna
+                    q.put(("err", str(e)))
+
+            def poll():
+                if not tree.winfo_exists():
+                    return
+                try:
+                    while True:
+                        kind, val = q.get_nowait()
+                        if kind == "log":
+                            count.config(text=f"⏳ {val}")
+                        elif kind == "ok":
+                            fill(val)
+                            return
+                        else:
+                            count.config(text=f"⚠️ nie udało się pobrać: {val[:100]}")
+                            return
+                except queue.Empty:
+                    self.after(300, poll)
+            threading.Thread(target=work, daemon=True).start()
+            self.after(300, poll)
+
         bar.add(tk.Button(bar, text="Zaznacz 10 najlepszych", command=top10))
+        bar.add(tk.Button(bar, text="Odznacz wszystkie", command=clear))
         bar.add(btn)
         bar.add(count)
-        cb.bind("<<ComboboxSelected>>", load)
-        all_var.trace_add("write", lambda *_: load())
-        tree.bind("<<TreeviewSelect>>", on_sel)
-        tree.bind("<Double-1>", open_chart)
-        tree.bind("<Return>", open_chart)
+        tree.bind("<ButtonRelease-1>", toggle)
         self.tree = tree
-        load()
+        self.toggle = toggle
+        fetch()
 
-    def make_watchlist(self, tickers, name=None):
-        """Nowa watchlista z zaznaczonych spółek (reguła „wybrane tickery” na skanie źródłowym) — od razu złożona i otwarta."""
-        if not tickers:
-            messagebox.showinfo("Watchlista", "Zaznacz najpierw spółki na liście (Ctrl / Shift + klik albo „Zaznacz 10 najlepszych”).", parent=self)
+    def make_watchlist(self, rows, name=None):
+        """Nowy skan z zaznaczonych spółek (stała lista tickerów, bez zapytań do Finviz): Sync pobiera ceny, boxy Darvasa i miesięczne
+        zamknięcia z całej historii (GLB) — od razu po utworzeniu."""
+        if not rows:
+            messagebox.showinfo("Watchlista", "Zaznacz najpierw spółki kliknięciem (☑) albo „Zaznacz 10 najlepszych”.", parent=self)
             return None
         if name is None:
             secs = "+".join(self.sectors[:3]) if self.sectors else "wszystkie"
-            name = simpledialog.askstring("Nowa watchlista", f"Nazwa watchlisty ({len(tickers)} spółek):", initialvalue=f"Krok {date.today():%d.%m} — {secs}", parent=self)
+            name = simpledialog.askstring("Nowa watchlista", f"Nazwa watchlisty ({len(rows)} spółek):", initialvalue=f"Krok {date.today():%d.%m} — {secs}", parent=self)
             if not name:
                 return None
-        sc = {"name": name.strip() or "Krok po kroku", "kind": scanners.KIND_WATCHLIST, "columns": None, "extra": [], "filter": "",
-              "sources": [{"id": self.source, "rule": {"type": scanners.RULE_TICKERS, "tickers": list(tickers)}}]}
-        saved = scanners.upsert(self.app.data_root, sc)
+        sc = {"name": name.strip() or "Krok po kroku", "kind": scanners.KIND_FINVIZ, "columns": None, "extra": [], "filter": "", "sources": []}
+        saved = scanners.upsert(self.app.data_root, sc, "", max(len(rows), 1), None, glb.DEFAULTS)
+        d = scanners.scanner_dir(self.app.data_root, saved["id"])
+        cfg = store.read_json(d / "finviz_screen.json", {}) or {}
+        cfg["tickers"] = [{k: r.get(k) for k in ("ticker", "company", "sector", "industry", "market_cap", "pe")} for r in rows]
+        store.write_json(d / "finviz_screen.json", cfg)
         self.app.scanner_saved(saved, sync.PRICES)
         return saved
 
     # --- wymagane przez ChartHost (↑/↓ w oknie wykresu, odświeżenie po przypięciu)
     def step(self, delta):
-        tree = getattr(self, "tree", None)
-        if tree is None or not tree.winfo_exists():
-            return
-        ids = list(tree.get_children())
-        if not ids:
-            return
-        cur = tree.focus()
-        i = max(0, min(len(ids) - 1, (ids.index(cur) + delta) if cur in ids else 0))
-        tree.focus(ids[i])
-        tree.see(ids[i])
-        self.host.open_chart(ids[i])
+        """↑/↓ z okna wykresu — w kroku 3 lista nie otwiera pełnego wykresu (spółki spoza skanów), więc nic nie robimy."""
+        return
 
     def refresh(self, keep=False):
         pass

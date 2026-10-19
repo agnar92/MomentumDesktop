@@ -156,3 +156,99 @@ def fetch(root, log=print, period="4y"):
     store.write_json(root / FILE, ov)
     log(f"Rynek i sektory: {len(items)}/{len(tickers)} serii tygodniowych w {time.time() - t0:.0f} s")
     return ov
+
+
+# ---------- krok 3: cały sektor z Finviz, Mansfield RS akcji względem ETF jej sektora ----------
+
+SECTOR_CODES = {"Technology": "sec_technology", "Financial": "sec_financial", "Healthcare": "sec_healthcare", "Energy": "sec_energy",
+                "Industrials": "sec_industrials", "Consumer Cyclical": "sec_consumercyclical", "Consumer Defensive": "sec_consumerdefensive",
+                "Utilities": "sec_utilities", "Basic Materials": "sec_basicmaterials", "Real Estate": "sec_realestate",
+                "Communication Services": "sec_communicationservices"}
+SECTOR_ETF = {sec: t for t, _, sec in SECTOR_ETFS}
+UNIVERSE_FILE = "krok_universe.json"
+YF_BATCH = 200
+
+
+def _finviz():
+    from . import sync
+    sync._engine_path()
+    import finviz
+    return finviz
+
+
+def universe_key(sectors, extra):
+    return "|".join(sorted(sectors or [])) + "#" + (extra or "").strip()
+
+
+def fetch_universe(root, sectors, extra="", log=print):
+    """Wszystkie spółki wybranych sektorów z Finviz (filtr sec_*, opcjonalnie + dodatkowe filtry) i ich tygodniowe zamknięcia z yfinance (2 lata)
+    razem z ETF sektorów -> krok_universe.json. Zwraca zapisany słownik."""
+    import yfinance as yf
+    fv = _finviz()
+    rows, seen = [], set()
+    for sec in sectors:
+        code = SECTOR_CODES.get(sec)
+        if not code:
+            continue
+        f = ",".join(x for x in [code] + [c.strip() for c in (extra or "").split(",")] if x)
+        log(f"Finviz: {sec} ({f})…")
+        got, total = fv.fetch_view("111", f, 5000, pause_s=0.5)
+        log(f"Finviz: {sec} — {len(got)} spółek")
+        for r in got:
+            if r["ticker"] not in seen:
+                seen.add(r["ticker"])
+                rows.append({k: r.get(k) for k in ("ticker", "company", "sector", "industry", "market_cap", "pe")})
+    etfs = sorted({SECTOR_ETF[s] for s in sectors if s in SECTOR_ETF} | {"^GSPC"})
+    tickers = [r["ticker"] for r in rows]
+    ref = yf.download(etfs, period="2y", interval="1wk", auto_adjust=True, group_by="ticker", progress=False, threads=True)
+    weeks = [d.strftime("%Y-%m-%d") for d in ref.index]
+    pos = {w: i for i, w in enumerate(weeks)}
+
+    def closes(df, t):
+        try:
+            ser = (df[t] if getattr(df.columns, "nlevels", 1) > 1 else df)["Close"]
+        except KeyError:
+            return None
+        out = [None] * len(weeks)
+        for d, v in ser.items():
+            i = pos.get(d.strftime("%Y-%m-%d"))
+            if i is not None and v == v:
+                out[i] = round(float(v), 4)
+        return out if any(v is not None for v in out) else None
+    etf = {t: closes(ref, t) for t in etfs}
+    cl = {}
+    for i in range(0, len(tickers), YF_BATCH):
+        part = tickers[i:i + YF_BATCH]
+        log(f"yfinance: tygodniowe zamknięcia {i + len(part)}/{len(tickers)}…")
+        try:
+            df = yf.download(part, period="2y", interval="1wk", auto_adjust=True, group_by="ticker", progress=False, threads=True)
+        except Exception as e:   # noqa: BLE001 — jedna zła paczka nie zatrzymuje reszty
+            log(f"⚠️  paczka {i // YF_BATCH + 1}: {e}")
+            continue
+        for t in part:
+            c = closes(df, t)
+            if c:
+                cl[t] = c
+    u = {"fetched": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"), "key": universe_key(sectors, extra), "sectors": list(sectors),
+         "extra": extra, "weeks": weeks, "etf": etf, "rows": [r for r in rows if r["ticker"] in cl], "closes": cl}
+    store.write_json(root / UNIVERSE_FILE, u)
+    log(f"✅ {len(u['rows'])} spółek z danymi ({len(rows) - len(u['rows'])} bez notowań)")
+    return u
+
+
+def universe_rows(u):
+    """Wiersze kroku 3: Mansfield RS akcji względem ETF JEJ sektora (najsilniejsze w sektorze), trend 10:30, 3 mies., stan Darvasa — od najwyższego RS."""
+    out = []
+    etf, cl = u.get("etf") or {}, u.get("closes") or {}
+    for r in u.get("rows") or []:
+        c = cl.get(r["ticker"]) or []
+        bench = etf.get(SECTOR_ETF.get(r.get("sector")))
+        p = perf(c)
+        out.append({**r, "mrs": mansfield(c, bench), "trend": trend1030(c)["state"], "q": p.get("q"), "price": c[_last(c)] if _last(c) >= 0 else None,
+                    "darvas": darvas.status(c, pure=True)["state"] if c else "NONE"})
+    out.sort(key=lambda r: -(r["mrs"] if r["mrs"] is not None else -1e9))
+    return out
+
+
+def load_universe(root):
+    return store.read_json(root / UNIVERSE_FILE, {}) or {}

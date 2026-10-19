@@ -828,21 +828,24 @@ GLB_COLORS = {"BREAK": "#0a8f3c", "AFTER": "#5c7a3a", "LATE": "#5c7a3a", "WAIT":
 
 
 def draw_glb_card(cv, g, opts=None):
-    """Karta GLB jak w Momentum: zamknięcia miesięczne (krótka kreska na miesiąc + cienka linia), gruba zielona green line od miesiąca rekordu
-    do przebicia (dalej przerywana), stan w prawym górnym rogu, żółta kropka = cena, u dołu tabelka Rekord / Green line / Stop / Do linii."""
+    """Karta GLB: poziom green line wyznaczony z MIESIĘCZNYCH zamknięć całej historii (rekord wszech czasów stojący ≥ 3 zamknięte miesiące),
+    rysowany na TYGODNIOWYCH zamknięciach (ostatnie 3 lata): kreska na każdy tydzień + cienka linia, gruba zielona linia od miesiąca rekordu
+    do pierwszego zamknięcia tygodnia nad nią (dalej przerywana), stan w rogu, żółta kropka = cena, tabelka Rekord / Green line / Stop / Do linii."""
     opts = opts or {}
     cv.delete("all")
     W, H = cv.winfo_width(), cv.winfo_height()
     if W < 120 or H < 160:
         return {}
-    if not g or not g.get("c"):
+    cs = [v for v in ((g or {}).get("wc") or [])]
+    if not g or not any(isinstance(v, (int, float)) for v in cs):
         cv.create_rectangle(0, 0, W, H, fill=CARD_PAPER, outline="")
-        cv.create_text(20, 30, text="Brak danych miesięcznych do karty GLB.", fill=CARD_INK, font=CARD_FONT, anchor="w")
+        cv.create_text(20, 30, text="Brak danych do karty GLB.", fill=CARD_INK, font=CARD_FONT, anchor="w")
         return {"kind": "glb", "hits": []}
+    weeks = g.get("wk") or []
     table_h = 14 * 6 + 10
     L = {"left": 48, "right": 8, "top": 44, "bottom": table_h + 46}
-    cs, px, lv = g["c"], g["px"], g.get("line")
-    vals = [v for v in cs if v] + [px] + ([lv * 1.02, lv * (1 - glb_mod.STOP_PCT / 100)] if lv else [])
+    px, lv = g["px"], g.get("line")
+    vals = [v for v in cs if isinstance(v, (int, float)) and v > 0] + [px] + ([lv * 1.02, lv * (1 - glb_mod.STOP_PCT / 100)] if lv else [])
     lo0, hi0 = min(vals), max(vals)
     span = math.log(hi0 / lo0) or 0.1
     lo, hi = lo0 * math.exp(-0.12 * span), hi0 * math.exp(0.12 * span)
@@ -852,49 +855,49 @@ def draw_glb_card(cv, g, opts=None):
     slot = pw / (n + 1)
     def x(i):
         return L["left"] + slot * (i + 0.5)
-    for i, m in enumerate(g["m"]):   # lata pod osią: przerywana kreska na styczniu
-        if m.endswith("-01"):
+    for i, d in enumerate(weeks):   # lata pod osią: przerywana kreska na pierwszym tygodniu stycznia
+        if d and d[5:7] == "01" and (i == 0 or weeks[i - 1][:4] != d[:4]):
             cv.create_line(x(i) - slot / 2, L["top"], x(i) - slot / 2, L["top"] + ph, fill="#a9a48e", dash=(2, 3))
-            cv.create_text(x(i) - slot / 2 + 3, L["top"] + ph + 10, text=m[:4], fill="#3a3730", font=CARD_FONT, anchor="w")
+            cv.create_text(x(i) - slot / 2 + 3, L["top"] + ph + 10, text=d[:4], fill="#3a3730", font=CARD_FONT, anchor="w")
     state = g.get("glb_state", "NONE")
     col = GLB_COLORS.get(state, "#0f8a3a")
     if lv:
-        lm = g.get("lm")
-        in_card = lm is not None and lm >= 0
-        i_r = lm if in_card else 0
-        i_b = next((i for i in range(i_r + 1, n) if cs[i] >= lv), n)
+        lw = g.get("lw")
+        i_r = lw if lw is not None else 0
+        i_b = next((i for i in range(i_r + 1, n) if isinstance(cs[i], (int, float)) and cs[i] >= lv), n)
         yt = y(lv)
         xe = x(i_b) - slot * 0.5 if i_b < n else W - L["right"]
-        cv.create_line(x(i_r) if in_card else L["left"], yt, xe, yt, fill=col, width=3)
+        cv.create_line(x(i_r) if lw is not None else L["left"], yt, xe, yt, fill=col, width=3)
         if i_b < n:   # przebita: obowiązuje do potwierdzenia nowego rekordu
             cv.create_line(xe, yt, W - L["right"], yt, fill=col, width=2, dash=(6, 4))
-        if in_card:
+        if lw is not None:
             cv.create_oval(x(i_r) - 4, yt - 4, x(i_r) + 4, yt + 4, fill=col, outline="#111")
         else:
-            cv.create_text(L["left"] + 4, yt - 8, text=f"rekord z {g.get('lm_label') or '?'} (poza kartą)", fill=CARD_INK, font=CARD_FONT, anchor="w")
+            cv.create_text(L["left"] + 4, yt - 8, text=f"rekord z {g.get('lm_label') or '?'} (przed kartą)", fill=CARD_INK, font=CARD_FONT, anchor="w")
         lbl = {"WAIT": f"Kup > {lv:.2f}", "BREAK": "Kup — wybicie", "AFTER": "Nad green line (≤ 5 %)", "LATE": "Za daleko nad linią"}.get(state, "")
         cv.create_text(W - L["right"] - 2, 22, text=lbl, fill=col, font=("Consolas", 12, "bold"), anchor="e")
-    pts = [v for i, v in enumerate(cs) for v in (x(i), y(v))]
+    pts = [v for i, c in enumerate(cs) if isinstance(c, (int, float)) for v in (x(i), y(c))]
     if len(pts) >= 4:
         cv.create_line(*pts, fill="#8a8574")
     for i, v in enumerate(cs):
-        partial = g.get("partial") and i == n - 1
-        cv.create_line(x(i) - slot * 0.32, y(v), x(i) + slot * 0.32, y(v), fill="#111", width=1 if partial else 2, dash=(2, 2) if partial else ())
+        if isinstance(v, (int, float)):
+            cv.create_line(x(i) - max(1, slot * 0.35), y(v), x(i) + max(1, slot * 0.35), y(v), fill="#111", width=2)
     _card_dot(cv, x(n - 1), y(px), px, W)
     ty, tx = H - table_h - 4, L["left"] + 6
     cv.create_text(tx, ty - 6, text=opts.get("title", ""), fill=CARD_INK, font=("Consolas", 10, "bold"), anchor="w")
-    cv.create_text(tx, ty + 10, text=f"{g['m'][0]} – {g['m'][-1]} · zamknięcia miesięczne", fill=CARD_INK, font=CARD_FONT_B, anchor="w")
+    cv.create_text(tx, ty + 10, text=f"{weeks[0] if weeks else ''} – {weeks[-1] if weeks else ''} · zamknięcia tygodniowe, green line z miesięcznych",
+                   fill=CARD_INK, font=CARD_FONT_B, anchor="w")
     ath = g.get("ath")
-    rows = [("Rekord wszech czasów", f"{ath[0]:.2f} ({ath[1]})" + ("" if g.get("full") else " ¹") if ath else "—"),
+    rows = [("Rekord wszech czasów (mies.)", f"{ath[0]:.2f} ({ath[1]})" + ("" if g.get("full") else " ¹") if ath else "—"),
             ("Green line", f"{lv:.2f} ({g.get('lm_label')})" if lv else "brak (rekord < 3 mies.)"),
             ("Stop (1 % pod linią)", f"{lv * (1 - glb_mod.STOP_PCT / 100):.2f}" if lv else "—"),
             ("Do linii", f"{g['glb_dist_pct']:+.1f} %" if lv and g.get("glb_dist_pct") is not None else "—")]
     for i, (k, v) in enumerate(rows):
         yy = ty + 30 + 14 * i
         cv.create_text(tx, yy, text=k, fill=CARD_INK, font=CARD_FONT, anchor="w")
-        cv.create_text(tx + 190, yy, text=v, fill=CARD_INK, font=CARD_FONT_B, anchor="w")
+        cv.create_text(tx + 250, yy, text=v, fill=CARD_INK, font=CARD_FONT_B, anchor="w")
     if not g.get("full"):
-        cv.create_text(tx, ty + 30 + 14 * 4, text="¹ z ostatnich lat tygodniowych — pełna historia miesięczna po Sync skanu Wish", fill="#5a564a", font=("Consolas", 8), anchor="w")
+        cv.create_text(tx, ty + 30 + 14 * 4, text="¹ bez pełnej historii miesięcznej (zrób Sync skanera) — miesiące z danych tygodniowych", fill="#5a564a", font=("Consolas", 8), anchor="w")
     return {"kind": "glb", "hits": []}
 
 
@@ -954,8 +957,8 @@ def draw_1030(cv, c, weeks, opts=None):
     if stats_w:   # kolumna statystyk po prawej
         sx, sy = W - stats_w + 12, L["top"]
         for k, (lbl, val, col) in enumerate(opts["stats"]):
-            cv.create_text(sx, sy + k * 30, text=lbl, fill=DIM, font=FONT, anchor="nw")
-            cv.create_text(sx, sy + k * 30 + 13, text=val, fill=col or TEXT, font=("Consolas", 11, "bold"), anchor="nw")
+            cv.create_text(sx, sy + k * 27, text=lbl, fill=DIM, font=FONT, anchor="nw")
+            cv.create_text(sx, sy + k * 27 + 12, text=val, fill=col or TEXT, font=("Consolas", 11, "bold"), anchor="nw")
     return {"kind": "1030", "trend": tr}
 
 

@@ -9,7 +9,7 @@ from pathlib import Path
 from . import canslim, changes, darvas, daily
 
 STATE_LABELS = {"BUY": "KUP", "NOVOL": "bez wolumenu", "LATE": "za późno", "HOLD": "trzymaj", "SELL": "SPRZEDAJ",
-                "OUT": "poza", "WAIT": "czekaj", "NONE": ""}
+                "OUT": "poza boxem", "READY": "gotowy", "WAIT": "czekaj", "NONE": ""}
 BASE_LABELS = {"cup": "cup", "double_bottom": "double bottom", "flat": "flat", "square_box": "square box", "ascending": "ascending",
                "htf": "high tight flag", "ipo": "ipo", "correction": "korekta", "deep": "głęboka"}
 BUYABLE_BASES = {"cup", "double_bottom", "flat", "square_box", "ascending", "htf", "ipo"}
@@ -71,7 +71,7 @@ def darvas_state(full, tf):
     c = (full or {}).get("c") or []
     if not c:
         return {"state": "NONE", "text": ""}
-    return darvas.status(c, full.get("v"), **(darvas.DAILY if tf == "D" else {}))
+    return darvas.status(c, full.get("v"), lows=full.get("l"), **(darvas.DAILY if tf == "D" else {}))
 
 
 MARKET_WARN = "  ⚠ rynek w korekcie (EMA10 < EMA20 tyg.) — tylko informacja"
@@ -229,7 +229,7 @@ class Store:
         daily_on = self.tf == "D"
         src = (self.charts_d.get("stocks") or {}) if daily_on else self.stocks_full
         items = [{"ticker": r["ticker"], "price": r.get("price"), "c": src.get(r["ticker"], {}).get("c"),
-                  "v": src.get(r["ticker"], {}).get("v")} for r in self.rows]
+                  "v": src.get(r["ticker"], {}).get("v"), "l": src.get(r["ticker"], {}).get("l")} for r in self.rows]
         return darvas.overview(items, self.charts_d.get("dates", []) if daily_on else self.weeks, self.pinned, params=darvas.DAILY if daily_on else None)
 
     def finviz_config(self):

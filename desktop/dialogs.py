@@ -10,7 +10,7 @@ from .theme import BG, FG, MONO, PANEL, SEL, Flow, apply_dark, autowrap, fit_win
 from .widgets import STATE_COLORS, StockTable
 
 SECTIONS = [("pinned", "📌 Monitorowane (przypięte)"), ("fresh", "🆕 Nowe boxy"), ("buy", "🟢 KUP — wybicie na wolumenie"),
-            ("check", "🟡 Do sprawdzenia (bez wolumenu / za późno)"), ("hold", "Trzymaj"), ("sell", "🔴 Sprzedaj / poza"), ("wait", "Czekaj na wybicie")]
+            ("ready", "🟩 Gotowe do kupna (dwa rosnące boxy)"), ("check", "🟡 Do sprawdzenia (bez wolumenu / za późno)"), ("hold", "Trzymaj"), ("sell", "🔴 Sprzedaj"), ("wait", "Czekaj na wybicie")]
 
 
 class FilterWindow(tk.Toplevel):
@@ -38,7 +38,7 @@ class FilterWindow(tk.Toplevel):
         sf = Flow(form)   # wiersze zawijają się w wąskim oknie
         sf.grid(row=3, column=0, columnspan=6, sticky="we", padx=4)
         sf.add(tk.Label(sf, text="Darvas:", bg=PANEL))
-        for st in ("BUY", "NOVOL", "LATE", "HOLD", "WAIT", "SELL"):
+        for st in ("BUY", "READY", "NOVOL", "LATE", "HOLD", "WAIT", "SELL", "OUT"):
             v = tk.BooleanVar()
             self.state_vars[st] = v
             sf.add(tk.Checkbutton(sf, text=store.STATE_LABELS[st], variable=v, bg=PANEL, command=self.run))

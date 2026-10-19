@@ -1,15 +1,17 @@
-"""Green Line Breakout (dr Eric Wish) na wykresie MIESIĘCZNYM, na zamknięciach — w uproszczeniu to „top Darvasa” z wykresu miesięcznego.
-Zielona linia = najwyższe zamknięcie miesięczne w całej historii (ATH), którego przez co najmniej `confirm_months` kolejnych miesięcy nikt nie pobił.
-Wybicie = zamknięcie miesiąca (liczone też bieżący, jeszcze trwający miesiąc) powyżej tej linii, czyli nowy szczyt wszech czasów po konsolidacji.
-Progi (3 miesiące, „za późno” +10 %) to moje przybliżenie reguł Wisha, trzymane w jednym miejscu (DEFAULTS) i zmieniane w edytorze skanu."""
+"""Green Line Breakout (dr Eric Wish) — logika jak w Momentum (watchlist.py: glb_line / glb_state, po backteście na S&P 500 2015–2026).
+Zielona linia = rekord wszech czasów na ZAMKNIĘTYCH miesiącach, który stoi ≥ `confirm_months` (3) zamknięte miesiące. Po nowym rekordzie
+obowiązuje stara (przebita) linia, dopóki nowy rekord nie przestoi 3 miesięcy — ponowne przebicie starej linii to ponowne wejście.
+Wejście i wyjście są TYGODNIOWE: stan liczymy na zamknięciu tygodnia (kupno stop na linii, stop 1 % pod linią na zamknięciu tygodnia,
+potem przesuwanie stopu po tygodniowym MACD). Kupujemy, gdy tydzień zamknął się nad linią najwyżej `late_pct` (5 %) nad nią."""
 import time
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from datetime import datetime, timezone
 
 from . import store
 
-DEFAULTS = {"confirm_months": 3, "late_pct": 10.0, "recent_months": 6, "max_from_high_pct": 35.0}
-STATE_LABELS = {"BREAK": "WYBICIE", "AFTER": "po wybiciu", "LATE": "za późno", "WAIT": "czeka", "NONE": ""}
+DEFAULTS = {"confirm_months": 3, "late_pct": 5.0, "recent_months": 6, "max_from_high_pct": 35.0}   # recent_months: już nieużywane (zgodność zapisanych skanów)
+STOP_PCT = 1.0          # stop 1 % pod linią (sprawdzany na zamknięciu tygodnia)
+STATE_LABELS = {"BREAK": "WYBICIE", "AFTER": "nad linią", "LATE": "za daleko", "WAIT": "czeka", "NONE": ""}
 STATE_RANK = {"BREAK": 0, "AFTER": 1, "WAIT": 2, "LATE": 3, "NONE": 9}
 
 
@@ -26,46 +28,42 @@ def normalize(cfg):
     return out
 
 
-def _argmax(values):
-    """Indeks największej wartości (przy remisie — najpóźniejszy)."""
-    return max(range(len(values)), key=lambda i: (values[i], i))
+def line(months, confirm=DEFAULTS["confirm_months"]):
+    """Green line z ZAMKNIĘTYCH miesięcy (lista zamknięć, kolejne miesiące): (poziom, indeks miesiąca rekordu) albo (None, None).
+    Rekord wszech czasów staje się linią, gdy przestoi `confirm` miesięcy; nowszy rekord zastępuje ją dopiero po swoich `confirm` miesiącach."""
+    level = at = None
+    mx, mi = float("-inf"), None
+    for i, c in enumerate(months):
+        if c > mx:
+            mx, mi = c, i
+        if i - mi >= confirm:
+            level, at = mx, mi
+    return level, at
 
 
-def analyze(closes, cfg=None):
-    """Zielona linia i stan ostatniego miesiąca: {glb_state, glb_level, glb_dist_pct (linia / cena − 1, minus = cena nad linią), glb_months, glb_rank}.
-    BREAK = wybicie w tym miesiącu, AFTER = wybicie w ostatnich miesiącach i cena nadal nad linią, LATE = jak AFTER, ale > late_pct nad linią,
-    WAIT = linia jest potwierdzona, cena pod nią (albo wróciła pod nią), NONE = brak linii (ciągłe nowe szczyty albo za mało danych)."""
+def analyze(closes, cfg=None, weekly=None, price=None):
+    """closes = ZAMKNIĘTE miesiące (bez trwającego); weekly = zamknięcia tygodniowe (ostatnie = bieżący tydzień), price = cena, gdy brak tygodniowych.
+    -> {glb_state, glb_level, glb_dist_pct (linia / cena − 1, minus = cena nad linią), glb_months (ile miesięcy stoi linia), glb_stop, glb_rank}.
+    WAIT = cena pod linią (zlecenie kupna stop na linii), BREAK = ten tydzień zamknął się nad linią (poprzedni nie), AFTER = nad linią
+    ≤ late_pct, LATE = dalej niż late_pct nad linią (nie gonimy), NONE = brak linii."""
     cfg = normalize(cfg)
-    confirm, late, recent = cfg["confirm_months"], cfg["late_pct"], cfg["recent_months"]
     c = [float(x) for x in closes if isinstance(x, (int, float)) and x == x and x > 0]
-    n = len(c)
-    none = {"glb_state": "NONE", "glb_level": None, "glb_dist_pct": None, "glb_months": None, "glb_rank": STATE_RANK["NONE"]}
-    if n < confirm + 2:
+    none = {"glb_state": "NONE", "glb_level": None, "glb_dist_pct": None, "glb_months": None, "glb_stop": None, "glb_rank": STATE_RANK["NONE"]}
+    level, at = line(c, cfg["confirm_months"])
+    w = [float(x) for x in (weekly or []) if isinstance(x, (int, float)) and x == x and x > 0]
+    if not w and isinstance(price, (int, float)) and price > 0:
+        w = ([c[-1]] if c else []) + [float(price)]   # bez tygodniowych: poprzednim punktem jest ostatni zamknięty miesiąc
+    if level is None or not w:
         return none
-    last = c[-1]
-    state = level = months = None
-    for j in range(n - 1, max(0, n - 1 - recent) - 1, -1):   # najświeższe wybicie z ostatnich miesięcy
-        prev = c[:j]
-        if not prev:
-            break
-        p = _argmax(prev)
-        if c[j] > prev[p] and j - p - 1 >= confirm:   # nowy szczyt po ≥ confirm miesiącach, w których poprzedni nie został pobity
-            level, months = prev[p], n - 1 - j
-            if j == n - 1:
-                state = "BREAK"
-            elif last > level:
-                state = "LATE" if (last / level - 1) * 100 > late else "AFTER"
-            else:
-                state = "WAIT"   # po wybiciu cena wróciła pod linię
-            break
-    if state is None:
-        p = _argmax(c)
-        if n - 1 - p >= confirm:   # szczyt wszech czasów sprzed ≥ confirm miesięcy: linia potwierdzona, czekamy na jej przebicie
-            state, level, months = "WAIT", c[p], n - 1 - p
-        else:
-            return none
-    return {"glb_state": state, "glb_level": round(level, 4), "glb_dist_pct": round((level / last - 1) * 100, 2), "glb_months": months,
-            "glb_rank": STATE_RANK[state]}
+    px, prev = w[-1], (w[-2] if len(w) > 1 else None)
+    if px < level:
+        state = "WAIT"
+    elif prev is not None and prev <= level:
+        state = "BREAK"
+    else:
+        state = "LATE" if (px / level - 1) * 100 > cfg["late_pct"] else "AFTER"
+    return {"glb_state": state, "glb_level": round(level, 4), "glb_dist_pct": round((level / px - 1) * 100, 2), "glb_months": len(c) - 1 - at,
+            "glb_stop": round(level * (1 - STOP_PCT / 100), 4), "glb_rank": STATE_RANK[state]}
 
 
 CHART_URL = "https://query1.finance.yahoo.com/v8/finance/chart/{}"
@@ -166,7 +164,8 @@ def _prev_month(cur):
 
 def apply(data_dir, cfg, log=print, fetch=fetch_monthly, today=None):
     """Po Sync: dopisuje pola glb_* do watchlist.json. Historia miesięczna jest w pamięci podręcznej (monthly.json): zakończone miesiące się nie zmieniają,
-    więc pobieramy tylko nowe spółki i te, którym brakuje ostatniego zakończonego miesiąca (raz na miesiąc); bieżący miesiąc = aktualna cena z Sync."""
+    więc pobieramy tylko nowe spółki i te, którym brakuje ostatniego zakończonego miesiąca (raz na miesiąc). Linia = tylko zamknięte miesiące,
+    stan = tygodniowe zamknięcia z charts.json (bez nich: cena z Sync wobec ostatniego zamkniętego miesiąca)."""
     path = data_dir / "watchlist.json"
     wl = store.read_json(path, {}) or {}
     stocks = wl.get("stocks") or []
@@ -191,12 +190,12 @@ def apply(data_dir, cfg, log=print, fetch=fetch_monthly, today=None):
             cache[t] = {"d": [d[i] for i in keep] if d else [], "c": [c[i] for i in keep], "through": (d[keep[-1]][:7] if d and keep else "9999-99")}
     else:
         log("Green Line Breakout: dane miesięczne w pamięci podręcznej są aktualne — liczę bez pobierania.")
+    weekly = (store.read_json(data_dir / "charts.json", {}) or {}).get("stocks") or {}   # stan liczymy na zamknięciach TYGODNIOWYCH
     n, counts = 0, {}
     for s in stocks:
         m = cache.get(s["ticker"]) if near_high(s) else None
-        price = s.get("price")
-        closes = (m["c"] + ([price] if isinstance(price, (int, float)) and price > 0 else [])) if m else []
-        res = analyze(closes, cfg) if closes else {"glb_state": "NONE", "glb_level": None, "glb_dist_pct": None, "glb_months": None, "glb_rank": 9}
+        wk = (weekly.get(s["ticker"]) or {}).get("c")
+        res = analyze(m["c"], cfg, weekly=wk, price=s.get("price")) if m else analyze([], cfg)
         s.update(res)
         n += res["glb_state"] in ("BREAK", "AFTER", "LATE")
         counts[res["glb_state"]] = counts.get(res["glb_state"], 0) + 1

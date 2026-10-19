@@ -30,7 +30,7 @@ def test_breakout_attempt_keeps_box_until_price_falls_into_its_zone():
     up = S + [13.5]
     assert darvas.boxes(up)[0]["outcome"] == "up" and darvas.status(up)["state"] == "BUY"
     back = darvas.status(up + [12.8, 12.0])                                 # powrót do boxa: nadal obowiązuje
-    assert back["state"] == "HOLD" and "w boxie" in back["text"]
+    assert back["state"] == "HOLD" and "w najwyższym boxie" in back["text"]
     bx = darvas.boxes(up + [12.8, 12.0, 11.5])                              # zejście pod dno 11,8 = strefa zagrożenia: anulowany
     assert bx[0]["cancelled"] and bx[0]["end"] == len(up) + 2
     assert darvas.status(up + [12.8, 12.0, 11.5])["state"] == "SELL"
@@ -54,8 +54,8 @@ def test_box_broken_below_without_breakout_is_inverted_and_new_search_starts():
     c = S + [11.5]
     bx = darvas.boxes(c)
     assert bx[0]["outcome"] == "down" and bx[0]["i1"] == len(S)
-    assert darvas.status(c)["state"] == "SELL"
-    assert darvas.status(S + [11.5, 12.9])["state"] == "WAIT"               # cena wróciła nad dno, box i tak anulowany — czekamy na nowy
+    assert darvas.status(c)["state"] == "OUT"                                # odwrócony box bez wcześniejszego wybicia: poza boxem (jak karta w Momentum)
+    assert darvas.status(S + [11.5, 12.9])["state"] == "OUT"                # powrót nad dno nie wskrzesza boxa — czekamy na nowy
 
 
 def test_falling_knife_makes_no_box():
@@ -116,3 +116,37 @@ def test_pinned_top_line_has_8_pct_stop_and_no_danger_zone():
     assert darvas.pin_status(pin, 12.0)["state"] == "INSIDE"                # nie ma strefy zagrożenia: poniżej stopu od razu EXIT
     st = darvas.pin_status(pin, 11.9)
     assert st["state"] == "EXIT" and "11.96" in st["text"]
+
+
+
+TWO_UP = S + [13.5, 14, 14.5, 14.2, 14.0, 14.1, 14.3, 14.2]   # box 11,8–13 wybity, nad nim box 14–14,5 (dwa kolejne rosnące boxy)
+
+
+def test_two_rising_boxes_give_ready_and_breakout_from_second_is_plain_buy():
+    st = darvas.status(TWO_UP)
+    assert st["state"] == "READY" and st["n_up"] == 2 and st["stop"] == darvas._r2(14.5 * 0.9)
+    buy = darvas.status(TWO_UP + [14.8])
+    assert buy["state"] == "BUY" and "pierwszy box" not in buy["text"] and buy["stop"] == darvas._r2(14.8 * 0.9)
+    first = darvas.status(S + [13.5])                                       # wybicie z pierwszego boxa: KUP z ostrzeżeniem
+    assert first["state"] == "BUY" and "pierwszy box" in first["text"]
+    assert darvas.status(S)["state"] == "WAIT"
+
+
+def test_falling_card_is_out():
+    # wysoki box 20–22, potem spadek i niższy box 15–16: karta spadająca
+    c = [18, 20, 22, 21.5, 21, 20, 20.5, 20.8, 20.6, 19, 17, 16, 15.5, 15, 15.4, 15.6, 15.5, 15.2]
+    bx = darvas.boxes(c)
+    assert len(bx) >= 2 and bx[-1]["top"] < bx[0]["top"]
+    st = darvas.status(c)
+    assert st["state"] == "OUT" and "karta spadająca" in st["text"]
+
+
+def test_macd_cross_low_gives_low_of_cross_candle_when_macd_below_signal():
+    up = [10 * 1.03 ** i for i in range(60)]
+    down = up + [up[-1] * (1 - 0.04 * i) for i in range(1, 8)]
+    lows = [v - 0.3 for v in down]
+    low, i = darvas.macd_cross_low(down, lows)
+    assert i is not None and low == darvas._r2(lows[i]) and i > 59
+    assert darvas.macd_cross_low(up, [v - 0.3 for v in up]) == (None, None)    # MACD nad sygnałem — nic
+    hold = darvas.status(TWO_UP + [14.8, 14.6], lows=[v - 0.1 for v in TWO_UP + [14.8, 14.6]])
+    assert hold["state"] == "HOLD"

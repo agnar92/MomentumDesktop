@@ -19,7 +19,7 @@ class ChartWindow(tk.Toplevel):
         apply_dark(self)
         # ustawienia okna są pamiętane globalnie (nie per spółka / box / skaner): skala czasu, widok, log, MACD, długość okna czasu, rozmiar okna
         pr = self.prefs()
-        self.free_mode = pr.get("mode") if pr.get("mode") in self.MODES else "darcard"
+        self.free_mode = pr.get("mode") if pr.get("mode") in self.MODES else "karta"   # stary zapisany widok „darcard” → Karta
         self.mode = tk.StringVar(value=self.free_mode)
         self.tf = tk.StringVar(value=pr.get("tf") if pr.get("tf") in ("W", "D") else view.store.tf)   # „W” tygodniowy / „D” dzienny
         self.n_show, self.end = self.default_n(), None
@@ -37,7 +37,7 @@ class ChartWindow(tk.Toplevel):
         head.add(tk.Checkbutton(head, text="MACD", variable=self.macd_on, command=self.on_toggle, bg=PANEL))
         for text, val in (("Tydz.", "W"), ("Dzień", "D")):
             head.add(tk.Radiobutton(head, text=text, value=val, variable=self.tf, command=self.change_tf, bg=PANEL, indicatoron=False, padx=8))
-        for text, val in (("Dar-Card", "darcard"), ("🃏 Karta", "karta"), ("🟩 GLB", "glb"), ("Słupkowy", "bars")):
+        for text, val in (("🃏 Karta", "karta"), ("🟩 GLB", "glb"), ("Słupkowy", "bars")):
             head.add(tk.Radiobutton(head, text=text, value=val, variable=self.mode, command=self.on_mode, bg=PANEL, indicatoron=False, padx=8))
         self.status_lbl = autowrap(tk.Label(self, text="", bg=PANEL), pad=16)
         self.status_lbl.pack(fill="x", padx=8)
@@ -95,7 +95,7 @@ class ChartWindow(tk.Toplevel):
         self._size_job = None
         self.bind("<Configure>", self._on_resize, add="+")
 
-    MODES = ("darcard", "karta", "glb", "bars")   # Dar-Card w skali czasu, oficjalna karta Darvasa (boxy obok siebie), karta GLB, wykres słupkowy
+    MODES = ("karta", "glb", "bars")   # oficjalna karta Darvasa (boxy obok siebie), karta GLB, wykres słupkowy (Dar-Card w skali czasu usunięty — zastępuje go Karta)
     CARD_MODES = ("darcard", "karta", "glb")       # rysowane na płótnie cv_card
 
     # --- pamięć ustawień okna
@@ -409,7 +409,7 @@ class ChartWindow(tk.Toplevel):
         self.btn_close.pack(side="left", padx=4)
 
     def toggle_mode(self):
-        self.mode.set(self.MODES[(self.MODES.index(self.mode.get()) + 1) % len(self.MODES)] if self.mode.get() in self.MODES else "darcard")
+        self.mode.set(self.MODES[(self.MODES.index(self.mode.get()) + 1) % len(self.MODES)] if self.mode.get() in self.MODES else "karta")
         self.on_mode()
 
     def zoom_selected(self):

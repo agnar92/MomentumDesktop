@@ -25,6 +25,11 @@ Prosta, „retro” aplikacja okienkowa (Python + Tkinter, styl TC2000) oparta n
   (linie łączone `and`), albo `and` / `or` i nawiasy: `adr_pct >= 4`, `"Cena/min 3M" > 1.5 and price < 100`, `glb_state == WYBICIE`, `rs_rating != brak`. Operatory `> < >= <= == !=`; kolumna = klucz
   (`adr_pct`) albo etykieta w cudzysłowie; tekst bez rozróżniania wielkości liter, także w postaci wyświetlanej (`darvas == KUP`). Lewa lista pokazuje dostępne kolumny (dwuklik wstawia nazwę), a podgląd na
   żywo mówi, ile spółek pasuje albo gdzie jest błąd. Filtr zapisuje się razem z watchlistą; błędny skrypt nie ukrywa listy, tylko pokazuje komunikat w pasku statusu.
+- **🧭 Krok po kroku** (*Skanery → 🧭 Krok po kroku…* albo przycisk w szybkim oknie skanerów) — jedna informacja na ekran, jak strona krok.html w Momentum:
+  **1 · Rynek** — S&P 500, Nasdaq 100 i Dow Jones na tygodniowych wykresach **10:30** (szara cena, SMA 10 i SMA 30 tyg.) ze statystykami i werdyktem
+  (wszystkie w trendzie = rynek rośnie); **2 · Sektory** — 11 ETF SPDR od najwyższego **Mansfield RS** względem S&P 500 (RS / jego średnia 52 tyg. − 1),
+  zaznaczasz sektory; **3 · Akcje** — spółki z wybranego skanu / watchlisty z tych sektorów (albo wszystkich) od najwyższego Mansfield RS, z trendem 10:30,
+  stanem Darvasa i GLB; zaznaczone spółki → **📌 nowa watchlista** (reguła „wybrane tickery”). Dane indeksów i ETF pobierane z yfinance (`overview.json`, co ≥ 12 h).
 - **Skan Wish — Green Line Breakout** (*Skanery → Nowy skan Wish (Green Line Breakout)…*): zwykły skan Finviz (domyślnie tylko `ind_stocksonly,sh_avgvol_o300,sh_price_o1` — Finviz odsiewa śmieci, a szczyty wszech czasów i zieloną linię liczy aplikacja sama, bez filtra ATH z Finviz), a po Sync aplikacja pobiera **miesięczne zamknięcia z całej historii** (yfinance, ok. 120 liczb na 10 lat) i liczy **zieloną linię** jak Momentum: rekord wszech czasów na ZAMKNIĘTYCH miesiącach, który stoi ≥ 3 zamknięte miesiące; po nowym rekordzie obowiązuje
   stara (przebita) linia, dopóki nowy nie przestoi 3 miesięcy. Stan liczony na zamknięciu TYGODNIA: *WYBICIE* (ten tydzień zamknął się nad linią, poprzedni nie), *nad linią*
   (≤ 5 % nad nią — nadal do kupna), *za daleko* (> 5 %), *czeka* (pod linią; kolumna „Do linii %”). Stop 1 % pod linią na zamknięciu tygodnia (kolumna „Stop GLB”), dalej

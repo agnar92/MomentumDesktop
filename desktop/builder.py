@@ -358,7 +358,7 @@ class WatchlistEditor(tk.Toplevel):
     1M, 3M, 6M wśród płynnych) / CANSLIM ≥ n/7 / Wish: Green Line Breakout. Nic nie jest pobierane — watchlista składa się z już pobranych skanów."""
 
     RULES = {"pomiń": None, "wszystkie spółki skanu": scanners.RULE_ALL, "Qullamaggie: górne X % w oknach": scanners.RULE_QM, "CANSLIM ≥ n/7": scanners.RULE_CANSLIM,
-             "Wish: Green Line Breakout": scanners.RULE_GLB}
+             "Wish: Green Line Breakout": scanners.RULE_GLB, "wybrane tickery (🧭 Krok po kroku)": scanners.RULE_TICKERS}
 
     def __init__(self, app, scanner=None):
         super().__init__(app.root)
@@ -416,7 +416,7 @@ class WatchlistEditor(tk.Toplevel):
             tk.Label(cf, text="CANSLIM ≥ n/7:", bg=PANEL).pack(side="left", padx=(10, 2))
             tk.Entry(cf, textvariable=vars_["cs_min"], width=4).pack(side="left")
             tk.Checkbutton(cf, text="C i A obowiązkowe", variable=core, bg=PANEL).pack(side="left", padx=6)
-            self.rows[sc["id"]] = {"sc": sc, "kind": kind, "vars": vars_, "wv": wv, "core": core, "default": default, "qf": qf, "cf": cf, "gf": gf, "gv": gv}
+            self.rows[sc["id"]] = {"sc": sc, "rule": rule, "kind": kind, "vars": vars_, "wv": wv, "core": core, "default": default, "qf": qf, "cf": cf, "gf": gf, "gv": gv}
             if t is None and not self.scanner and sc["kind"] == scanners.KIND_QM:
                 kind.set("Qullamaggie: górne X % w oknach")
             cb.bind("<<ComboboxSelected>>", lambda e, sid=sc["id"]: self.show_params(sid))
@@ -446,6 +446,8 @@ class WatchlistEditor(tk.Toplevel):
             if t is None:
                 continue
             rule = {"type": t}
+            if t == scanners.RULE_TICKERS:   # lista z kreatora — zostaje bez zmian
+                rule["tickers"] = list(((r.get("rule") or {}).get("tickers")) or [])
             if t == scanners.RULE_QM:
                 rule.update({k: r["vars"][k].get() for k in ("min_dollar_mln", "min_adr", "top_pct")})
                 rule["windows"] = [w for w, v in r["wv"].items() if v.get()]

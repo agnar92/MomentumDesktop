@@ -35,6 +35,9 @@ def select_source(root, sc, rule):
     elif kind == scanners.RULE_GLB:
         ok = {r["ticker"] for r in glb.select(stocks, rule)}
         stocks = [s for s in stocks if s["ticker"] in ok]
+    elif kind == scanners.RULE_TICKERS:   # spółki wybrane ręcznie (🧭 Krok po kroku)
+        ok = set(rule.get("tickers") or [])
+        stocks = [s for s in stocks if s["ticker"] in ok]
     elif kind == scanners.RULE_CANSLIM:
         rows = store.Store(d, seed=False).rows
         ok = {r["ticker"] for r in store.scan(rows, {"cs_min": int(rule.get("cs_min") or 5), "cs_core": bool(rule.get("cs_core"))})}

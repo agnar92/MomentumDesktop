@@ -34,18 +34,14 @@ def test_windows_open_and_select_box(app):
     assert g["hits"]
     x0, y0, x1, y1 = g["hits"][-1]["rect"]
     ev = type("E", (), {"x": (x0 + x1) / 2, "y": (y0 + y1) / 2})()
-    assert ch.mode.get() == "darcard"
+    assert ch.mode.get() == "karta"
     ch.on_click(ev)
     assert ch.selected is not None and ch.selected_box()
     ch.zoom_selected()
     assert ch.focus_box and ch.mode.get() == "bars"
     ch.clear_focus()
-    assert ch.mode.get() == "darcard"
-    ch.toggle_mode()                       # spacja: Dar-Card → 🃏 Karta → 🟩 GLB → Słupkowy
     assert ch.mode.get() == "karta"
-    ch.redraw()
-    assert ch.geoms["card"].get("kind") == "kcard"
-    ch.toggle_mode()
+    ch.toggle_mode()                       # spacja: 🃏 Karta → 🟩 GLB → Słupkowy
     assert ch.mode.get() == "glb"
     ch.redraw()
     assert ch.geoms["card"].get("kind") == "glb"
@@ -286,14 +282,6 @@ def test_hover_tooltip_and_sma_detection(app):
     ch.on_motion(e, ch.cv_bars)
     texts = [ch.cv_bars.itemcget(it, "text") for it in ch.cv_bars.find_withtag("cross") if ch.cv_bars.type(it) == "text"]
     assert any(t.startswith("SMA 50 (dzienna)") for t in texts) and any("do szczytu 52t" in t for t in texts)
-    ch.mode.set("darcard")
-    ch.redraw()
-    ch.update()
-    gc = ch.geoms["card"]
-    e.x, e.y = gc["xf"](gc["i1"] - 3), gc["H"] // 2
-    ch.on_motion(e, ch.cv_card)
-    texts = [ch.cv_card.itemcget(it, "text") for it in ch.cv_card.find_withtag("cross") if ch.cv_card.type(it) == "text"]
-    assert any(t.startswith("zamknięcie") for t in texts)
     ch.log.set(False)                                         # przełącznik skali log -> liniowa przerysowuje się bez błędu
     ch.macd_on.set(False)
     ch.mode.set("bars")
@@ -764,25 +752,58 @@ def test_measure_profit_while_dragging_disappears_on_release(app):
     app.root.update()
     v.open_chart("NVDA")
     ch = v.chart
+    ch.mode.set("bars")                                    # pomiar działa na wykresie słupkowym (karty nie mają osi czasu)
     ch.update()
     ch.redraw()
     ch.update()
-    g = ch.geoms["card"]
+    g = ch.geoms["bars"]
     ev = lambda x, y: type("E", (), {"x": x, "y": y})()   # noqa: E731
     xa, xb = g["xf"](g["i0"] + 10), g["xf"](g["i0"] + 18)
     ya, yb = g["p_top"] + 200, g["p_top"] + 100            # drugi punkt wyżej = zysk
     m = charts.measure(g, (xa, ya), (xb, yb))
     assert m["bars"] == 8 and m["pct"] > 0 and m["price1"] > m["price0"]
     assert charts.measure(g, (xb, yb), (xa, ya))["pct"] < 0
-    cv = ch.cv_card
+    cv = ch.cv_bars
     ch.meas_press(ev(xa, ya), cv)
     ch.meas_drag(ev(xb, yb), cv)
     ch.update()
     assert cv.find_withtag("measure") and "tyg." in " ".join(str(cv.itemcget(i, "text")) for i in cv.find_withtag("measure") if cv.type(i) == "text")
     ch.meas_release(ev(xb, yb), cv)
     assert not cv.find_withtag("measure") and ch.selected is None    # puszczenie kasuje pomiar, przeciągnięcie nie zaznacza boxa
-    x0, y0, x1, y1 = g["hits"][-1]["rect"]
+    ch.mode.set("karta")
+    ch.redraw()
+    ch.update()
+    x0, y0, x1, y1 = ch.geoms["card"]["hits"][-1]["rect"]
     c = ev((x0 + x1) / 2, (y0 + y1) / 2)
-    ch.meas_press(c, cv)
-    ch.meas_release(c, cv)                                   # zwykłe kliknięcie nadal zaznacza box
+    ch.meas_press(c, ch.cv_card)
+    ch.meas_release(c, ch.cv_card)                           # zwykłe kliknięcie na karcie zaznacza box
     assert ch.selected is not None
+
+
+def test_krok_po_kroku_steps_and_watchlist_from_selection(app):
+    import json
+
+    from desktop import merge, overview, scanners
+    weeks = [f"2024-{m:02d}-{d:02d}" for m in range(1, 13) for d in (1, 15)] * 5   # 120 tygodni (daty tylko do podpisów)
+    up = [100 * 1.01 ** i for i in range(120)]
+    items = {t: up for t, _ in overview.INDEXES} | {t: [v * (1 + k * 0.001 * i) for i, v in enumerate(up)] for k, (t, _, _) in enumerate(overview.SECTOR_ETFS)}
+    (app.data_root / overview.FILE).write_text(json.dumps({"fetched": "2999-01-01T00:00:00Z", "weeks": weeks, "items": items}))
+    app.open_krok()
+    k = app.krok_win
+    k.update()
+    assert k.step_var.get() == "rynek"
+    k.go(1)
+    k.update()
+    assert k.step_var.get() == "sektory" and k.sectors                    # domyślnie zaznaczone najsilniejsze sektory
+    k.sectors = []                                                       # wszystkie sektory
+    k.go(1)
+    k.update()
+    ids = list(k.tree.get_children())
+    mrs = [r["mrs"] for r in k.rows["rows"] if r["mrs"] is not None]
+    assert ids and mrs == sorted(mrs, reverse=True)                      # od najwyższego Mansfield RS
+    saved = k.make_watchlist(ids[:3], name="Test krok")
+    sc = scanners.get(app.data_root, saved["id"])
+    assert sc["kind"] == scanners.KIND_WATCHLIST and sc["sources"][0]["rule"]["tickers"] == ids[:3]
+    merge.build(app.data_root, sc, log=lambda s: None)
+    got = json.loads((scanners.scanner_dir(app.data_root, sc["id"]) / "watchlist.json").read_text())
+    assert sorted(s["ticker"] for s in got["stocks"]) == sorted(ids[:3])

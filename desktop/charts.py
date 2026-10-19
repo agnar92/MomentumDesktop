@@ -896,3 +896,72 @@ def draw_glb_card(cv, g, opts=None):
     if not g.get("full"):
         cv.create_text(tx, ty + 30 + 14 * 4, text="¹ z ostatnich lat tygodniowych — pełna historia miesięczna po Sync skanu Wish", fill="#5a564a", font=("Consolas", 8), anchor="w")
     return {"kind": "glb", "hits": []}
+
+
+# ---------- wykres 10:30 (krok po kroku: rynek, sektory, akcje) ----------
+
+C1030 = {"price": "#b4bac4", "s10": "#4fc3f7", "s30": "#f0b429", "up": "#4ee08a", "down": "#ff6b6b", "flat": "#c9d1d9", "na": "#6b7684"}
+
+
+def draw_1030(cv, c, weeks, opts=None):
+    """Tygodniowy wykres 10:30: szara linia ceny, SMA 10 (niebieska) i SMA 30 (żółta), ostatnie `show` tygodni (2 lata), skala log, oś po prawej.
+    opts: title, show, stats = [(etykieta, wartość, kolor)] — kolumna statystyk po prawej stronie wykresu."""
+    from . import overview
+    opts = opts or {}
+    cv.delete("all")
+    W, H = cv.winfo_width(), cv.winfo_height()
+    cv.configure(bg=BG)
+    if W < 200 or H < 80 or not c:
+        return {}
+    stats_w = 210 if opts.get("stats") else 0
+    L = {"left": 8, "right": 58 + stats_w, "top": 26, "bottom": 18}
+    n_all = len(c)
+    i1 = overview._last(c) + 1
+    i0 = max(0, i1 - int(opts.get("show", 104)))
+    s10, s30 = overview.sma(c, 10), overview.sma(c, 30)
+    vals = [v for arr in (c, s10, s30) for v in arr[i0:i1] if v is not None and v > 0]
+    if not vals or i1 <= i0:
+        return {}
+    lo, hi = min(vals), max(vals)
+    pad = math.log(hi / lo) * 0.06 + 0.002
+    lo, hi = math.exp(math.log(lo) - pad), math.exp(math.log(hi) + pad)
+    y = make_scale(lo, hi, L["top"], H - L["bottom"], True)
+    n = i1 - i0
+    step = (W - L["left"] - L["right"]) / max(1, n)
+    def x(i):
+        return L["left"] + (i - i0 + 0.5) * step
+    cv.create_rectangle(L["left"], L["top"], W - L["right"], H - L["bottom"], fill=PAPER, outline=GRID)
+    for t in price_ticks(lo, hi, max(3, (H - L["top"] - L["bottom"]) // 40), True):
+        cv.create_line(L["left"], y(t), W - L["right"], y(t), fill=GRID)
+        cv.create_text(W - L["right"] + 4, y(t), text=fmt_price(t), fill=DIM, font=FONT, anchor="w")
+    for i in range(i0, min(i1, len(weeks))):   # styczeń = podpis roku
+        if weeks[i][5:7] == "01" and (i == 0 or weeks[i - 1][:4] != weeks[i][:4]):
+            cv.create_line(x(i), L["top"], x(i), H - L["bottom"], fill=GRID, dash=(2, 3))
+            cv.create_text(x(i) + 3, H - L["bottom"] + 2, text=weeks[i][:4], fill=DIM, font=FONT, anchor="nw")
+    for arr, col, w in ((c, C1030["price"], 2), (s30, C1030["s30"], 2), (s10, C1030["s10"], 1)):
+        pts = [v for i in range(i0, min(i1, n_all)) if arr[i] is not None and arr[i] > 0 for v in (x(i), y(arr[i]))]
+        if len(pts) >= 4:
+            cv.create_line(*pts, fill=col, width=w)
+    tr = overview.trend1030(c)
+    cv.create_text(L["left"] + 4, 4, text=opts.get("title", ""), fill=WHITE, font=("Consolas", 11, "bold"), anchor="nw")
+    cv.create_text(W - L["right"] - 4, 6, text=f"10:30 {overview.TREND_LABELS[tr['state']]}", fill=C1030[tr["state"]], font=("Consolas", 10, "bold"), anchor="ne")
+    cv.create_text(L["left"] + 4, L["top"] + 4, text="— cena", fill=C1030["price"], font=FONT, anchor="nw")
+    cv.create_text(L["left"] + 72, L["top"] + 4, text="— SMA 10 tyg.", fill=C1030["s10"], font=FONT, anchor="nw")
+    cv.create_text(L["left"] + 192, L["top"] + 4, text="— SMA 30 tyg.", fill=C1030["s30"], font=FONT, anchor="nw")
+    li = i1 - 1
+    _price_dot(cv, x(li), y(c[li]), 4)
+    _tag(cv, W - L["right"] + 2, y(c[li]), fmt_price(c[li]), GOLD)
+    if stats_w:   # kolumna statystyk po prawej
+        sx, sy = W - stats_w + 12, L["top"]
+        for k, (lbl, val, col) in enumerate(opts["stats"]):
+            cv.create_text(sx, sy + k * 30, text=lbl, fill=DIM, font=FONT, anchor="nw")
+            cv.create_text(sx, sy + k * 30 + 13, text=val, fill=col or TEXT, font=("Consolas", 11, "bold"), anchor="nw")
+    return {"kind": "1030", "trend": tr}
+
+
+def pct_txt(v):
+    return "—" if v is None else f"{v:+.1f} %"
+
+
+def pct_col(v):
+    return DIM if v is None else C1030["up"] if v > 0 else C1030["down"] if v < 0 else TEXT

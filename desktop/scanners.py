@@ -15,7 +15,7 @@ DEFAULT_NAME = "CANSLIM (domyślny)"
 KIND_FINVIZ, KIND_QM, KIND_WATCHLIST = "finviz", "qm", "watchlist"
 # skan Finviz / skan Qullamaggie (cena × ADR × cena/min Low: tylko pobiera dane, pełne okno z filtrami) / watchlista (małe okno z tickerami
 # złożonymi z kilku skanów wg kryteriów; nic nie pobiera)
-RULE_ALL, RULE_QM, RULE_CANSLIM, RULE_GLB = "all", "qm", "canslim", "glb"
+RULE_ALL, RULE_QM, RULE_CANSLIM, RULE_GLB, RULE_TICKERS = "all", "qm", "canslim", "glb", "tickers"   # tickers = wybrane ręcznie (🧭 Krok po kroku)
 
 
 def norm_source(s):
@@ -23,7 +23,7 @@ def norm_source(s):
     if isinstance(s, str):
         return {"id": s, "rule": {"type": RULE_ALL}}
     rule = dict((s or {}).get("rule") or {})
-    rule["type"] = rule.get("type") if rule.get("type") in (RULE_ALL, RULE_QM, RULE_CANSLIM, RULE_GLB) else RULE_ALL
+    rule["type"] = rule.get("type") if rule.get("type") in (RULE_ALL, RULE_QM, RULE_CANSLIM, RULE_GLB, RULE_TICKERS) else RULE_ALL
     return {"id": (s or {}).get("id"), "rule": rule}
 
 

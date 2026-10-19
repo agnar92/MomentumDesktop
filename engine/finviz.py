@@ -27,7 +27,7 @@ DEFAULT_FILTERS = "cap_smallover,fa_epsqoq_high,fa_epsyoy_high,fa_epsyoy1_high,f
 DEFAULT_MAX_TICKERS = 300
 MIN_TICKERS = 15   # poniżej tego uznajemy odpowiedź za błędną (blokada/zmiana układu strony)
 PAGE_SIZE = 20     # darmowy Finviz zwraca 20 wierszy na stronę
-BASE_URL = "https://finviz.com/screener.ashx"
+BASE_URL = "https://finviz.com/screener/stocks"   # od października 2026 (stary screener.ashx przekierowuje tutaj)
 HEADERS = {"User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) "
                          "Chrome/124.0 Safari/537.36"}
 
@@ -42,6 +42,14 @@ VIEW_COLUMNS = {
             "Insider Own": "insider_own", "Debt/Eq": "debt_eq"},   # S: udział zarządu i zadłużenie
 }
 VIEW_PARAMS = {"152": {"c": "0,1,62,69,28,29,21,23,24,25,26,38"}}   # kolumny widoku własnego: 0 = No., 1 = Ticker, 62 = Analyst Recom., 69 = Target Price, 28 = Inst Own, 29 = Inst Trans, 21 = Sales Past 5Y, 23 = Sales Q/Q, 24 = Outstanding, 25 = Float, 26 = Insider Own, 38 = Debt/Eq
+# nowy układ strony Finviz (div.fv-table_row z komórkami data-column-id): id kolumny -> nasz klucz
+VIEW_COLUMN_IDS = {
+    "111": {"company": "company", "sector": "sector", "industry": "industry", "marketCap": "market_cap", "PE": "pe"},
+    "121": {"forwardPE": "forward_pe", "epsYoY": "eps_this_y", "epsYoY1": "eps_next_y", "eps5Years": "eps_past_5y", "estLTGrowth": "eps_next_5y"},
+    "161": {"roe": "roe", "earningsDate": "earnings"},
+    "152": {"recom": "recom", "targetPrice": "finviz_target", "instOwn": "inst_own", "instTrans": "inst_trans", "salesQoQ": "sales_qq",
+            "sales5Years": "sales_past_5y", "sharesFloat": "shs_float", "sharesOutstanding2": "shs_outstanding", "insiderOwn": "insider_own", "debtEq": "debt_eq"},
+}
 TEXT_KEYS = {"company", "sector", "industry", "earnings"}
 _SUFFIX = {"K": 1e3, "M": 1e6, "B": 1e9, "T": 1e12}
 
@@ -65,6 +73,23 @@ def parse_screener_page(page_html, view="111"):
     total_match = re.search(r"#\d+\s*/\s*(\d+)\s*Total", page_html)
     total = int(total_match.group(1)) if total_match else None
     tree = lxml_html.fromstring(page_html)
+    new_rows = tree.xpath("//div[contains(@class, 'fv-table_row') and @data-row-key]")
+    if new_rows:   # nowy układ: wiersze to <div>, kolumny rozpoznajemy po data-column-id
+        wanted_ids = VIEW_COLUMN_IDS.get(view, {})
+        rows = []
+        for tr in new_rows:
+            ticker = (tr.get("data-row-key") or "").strip()
+            if not ticker:
+                continue
+            row = {"ticker": ticker}
+            for cell in tr.xpath(".//div[@data-column-id]"):
+                key = wanted_ids.get(cell.get("data-column-id"))
+                if key is None:
+                    continue
+                text = cell.text_content().strip()
+                row[key] = (text or None) if key in TEXT_KEYS else parse_number(text)
+            rows.append(row)
+        return rows, total
     headers = [th.text_content().strip() for th in tree.xpath('//table[contains(@class, "screener_table")]//thead//th')]
     wanted = VIEW_COLUMNS.get(view, {})
     rows = []

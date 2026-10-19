@@ -824,7 +824,7 @@ def draw_card(cv, full, weeks, opts=None):
     return {"kind": "kcard", "W": W, "H": H, "hits": hits, "status": st, "n_up": a["n_up"]}
 
 
-GLB_COLORS = {"BREAK": "#0a8f3c", "AFTER": "#5c7a3a", "LATE": "#5c7a3a", "WAIT": "#0f8a3a"}
+GLB_COLORS = {"BREAK": "#0ea84a", "AFTER": "#0ea84a", "LATE": "#0ea84a", "WAIT": "#0ea84a"}   # jedna, wyraźna zieleń green line
 
 
 def draw_glb_card(cv, g, opts=None):
@@ -867,13 +867,21 @@ def draw_glb_card(cv, g, opts=None):
         i_b = next((i for i in range(i_r + 1, n) if isinstance(cs[i], (int, float)) and cs[i] >= lv), n)
         yt = y(lv)
         xe = x(i_b) - slot * 0.5 if i_b < n else W - L["right"]
-        cv.create_line(x(i_r) if lw is not None else L["left"], yt, xe, yt, fill=col, width=3)
+        x0 = x(i_r) if lw is not None else L["left"]
+        cv.create_line(x0, yt, xe, yt, fill="#0b3d1c", width=9)   # ciemna obwódka — linia odcina się od kartki i zamknięć
+        cv.create_line(x0, yt, xe, yt, fill=col, width=6)
         if i_b < n:   # przebita: obowiązuje do potwierdzenia nowego rekordu
-            cv.create_line(xe, yt, W - L["right"], yt, fill=col, width=2, dash=(6, 4))
+            cv.create_line(xe, yt, W - L["right"], yt, fill=col, width=4, dash=(12, 5))
+        ys = y(lv * (1 - glb_mod.STOP_PCT / 100))
+        cv.create_line(x0, ys, W - L["right"], ys, fill="#c0262d", width=1, dash=(3, 3))   # stop 1 % pod linią
         if lw is not None:
-            cv.create_oval(x(i_r) - 4, yt - 4, x(i_r) + 4, yt + 4, fill=col, outline="#111")
-        else:
-            cv.create_text(L["left"] + 4, yt - 8, text=f"rekord z {g.get('lm_label') or '?'} (przed kartą)", fill=CARD_INK, font=CARD_FONT, anchor="w")
+            cv.create_oval(x(i_r) - 6, yt - 6, x(i_r) + 6, yt + 6, fill=col, outline="#111", width=2)
+        tag = f" GREEN LINE {lv:.2f} " + (f"· rekord z {g.get('lm_label')} " if lw is None and g.get("lm_label") else "")
+        tx_ = max(L["left"] + 6, min(x0 + 8, W - L["right"] - 260))   # podpis przy początku linii
+        tid = cv.create_text(tx_, yt - 14, text=tag, fill="#ffffff", font=("Consolas", 10, "bold"), anchor="w")
+        bb = cv.bbox(tid)
+        cv.create_rectangle(bb[0] - 2, bb[1] - 1, bb[2] + 2, bb[3] + 1, fill="#0b6e30", outline="")
+        cv.tag_raise(tid)
         lbl = {"WAIT": f"Kup > {lv:.2f}", "BREAK": "Kup — wybicie", "AFTER": "Nad green line (≤ 5 %)", "LATE": "Za daleko nad linią"}.get(state, "")
         cv.create_text(W - L["right"] - 2, 22, text=lbl, fill=col, font=("Consolas", 12, "bold"), anchor="e")
     pts = [v for i, c in enumerate(cs) if isinstance(c, (int, float)) for v in (x(i), y(c))]

@@ -954,8 +954,8 @@ def draw_1030(cv, c, weeks, opts=None):
     if stats_w:   # kolumna statystyk po prawej
         sx, sy = W - stats_w + 12, L["top"]
         for k, (lbl, val, col) in enumerate(opts["stats"]):
-            cv.create_text(sx, sy + k * 30, text=lbl, fill=DIM, font=FONT, anchor="nw")
-            cv.create_text(sx, sy + k * 30 + 13, text=val, fill=col or TEXT, font=("Consolas", 11, "bold"), anchor="nw")
+            cv.create_text(sx, sy + k * 27, text=lbl, fill=DIM, font=FONT, anchor="nw")
+            cv.create_text(sx, sy + k * 27 + 12, text=val, fill=col or TEXT, font=("Consolas", 11, "bold"), anchor="nw")
     return {"kind": "1030", "trend": tr}
 
 

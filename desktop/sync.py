@@ -302,6 +302,12 @@ def run_sync(data_dir, log=print, mode=FUNDAMENTALS, skip_finviz=False, max_tick
         finviz.fetch_watchlist = fetch_with_extra
     elif orig_fw is not None:
         finviz.fetch_watchlist = base_fw
+    fixed = scanners.load_config(data_dir).get("tickers")   # stała lista spółek (🧭 Krok po kroku): bez zapytań do Finviz
+    orig_min = getattr(finviz, "MIN_TICKERS", 15)
+    if fixed:
+        log(f"Stała lista {len(fixed)} spółek (🧭 Krok po kroku) — bez Finviz; ceny, boxy i GLB z yfinance.")
+        finviz.fetch_watchlist = lambda filters, max_t=300, *a, **k: ([dict(r) for r in fixed], len(fixed))
+        finviz.MIN_TICKERS = 1
     out = _LogWriter(log)
     try:
         with contextlib.redirect_stdout(out), contextlib.redirect_stderr(out):
@@ -330,6 +336,7 @@ def run_sync(data_dir, log=print, mode=FUNDAMENTALS, skip_finviz=False, max_tick
         log("❌ Błąd synchronizacji:\n" + traceback.format_exc())
         return 1
     finally:
+        finviz.MIN_TICKERS = orig_min
         watchlist.update_eps_cache, watchlist.update_estimates = orig_eps, orig_est
         if orig_dl is not None:
             watchlist.download_prices = orig_dl

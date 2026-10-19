@@ -760,7 +760,9 @@ class App:
         win.log(f"Skaner: {name}")
         if mode == sync.PRICES and sid != scanners.DEFAULT_ID and not (view.store.dir / "sync_state.json").exists():
             win.log("Tylko ceny (zamknięcia, High, Low); EPS i estymaty bierzemy ze wspólnego cache — spółki bez nich dostaną dane po „Fundamenty”.")
-        if not skip_finviz:   # co dokładnie pobieramy z Finviz
+        if scanners.load_config(view.store.dir).get("tickers"):
+            win.log("Stała lista spółek z 🧭 Krok po kroku — bez Finviz.")
+        elif not skip_finviz:   # co dokładnie pobieramy z Finviz
             cfg = view.store.finviz_config()
             for line in finviz_codes.summary_lines(cfg.get("filters"), cfg.get("max_tickers")):
                 win.log(line)

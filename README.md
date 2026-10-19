@@ -30,7 +30,7 @@ Prosta, „retro” aplikacja okienkowa (Python + Tkinter, styl TC2000) oparta n
   (wszystkie w trendzie = rynek rośnie); **2 · Sektory** — 11 ETF SPDR od najwyższego **Mansfield RS** względem S&P 500 (RS / jego średnia 52 tyg. − 1),
   domyślnie zaznaczone wszystkie z dodatnim RS; **3 · Akcje** — WSZYSTKIE spółki tych sektorów prosto z Finviz (`sec_energy`, `sec_technology`…, opcjonalnie
   + własne filtry) z tygodniowymi zamknięciami z yfinance (`krok_universe.json`), od najwyższego **Mansfield RS względem ETF ich sektora** (najsilniejsze w sektorze),
-  z trendem 10:30 i stanem Darvasa; kliknięcie wiersza zaznacza ☑, drugie odznacza; **📌 Utwórz watchlistę z zaznaczonych** = nowy skan ze stałą listą
+  z trendem 10:30 i stanem Darvasa; kliknięcie w pole ☐ przy tickerze zaznacza, ponowne odznacza; **📌 Utwórz watchlistę z zaznaczonych** = nowy skan ze stałą listą
   tickerów (`tickers` w `finviz_screen.json`, Sync bez Finviz), który od razu pobiera ceny, liczy boxy Darvasa i GLB z miesięcznych zamknięć całej historii.
   Dane indeksów i ETF z yfinance (`overview.json`, co ≥ 12 h).
 - **Skan Wish — Green Line Breakout** (*Skanery → Nowy skan Wish (Green Line Breakout)…*): zwykły skan Finviz (domyślnie tylko `ind_stocksonly,sh_avgvol_o300,sh_price_o1` — Finviz odsiewa śmieci, a szczyty wszech czasów i zieloną linię liczy aplikacja sama, bez filtra ATH z Finviz), a po Sync (teraz w KAŻDYM skanerze) aplikacja pobiera **miesięczne zamknięcia z całej historii** (Yahoo, interwał 1mo z jawnym zakresem dat — `range=max` dawał świece kwartalne) i liczy **zieloną linię** jak Momentum: rekord wszech czasów na ZAMKNIĘTYCH miesiącach, który stoi ≥ 3 zamknięte miesiące; po nowym rekordzie obowiązuje

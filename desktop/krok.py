@@ -194,7 +194,7 @@ class KrokWindow(tk.Toplevel):
     def show_stocks(self):
         secs = ", ".join(self.sectors) if self.sectors else "(brak — zaznacz w kroku 2)"
         self._header("Które akcje kupić?", f"WSZYSTKIE spółki z sektorów: {secs} (prosto z Finviz, filtr sec_*), od najwyższego Mansfield RS względem ETF ich sektora "
-                     "— najsilniejsze spółki w sektorze. Kliknięcie wiersza zaznacza ☑, drugie kliknięcie odznacza; zaznaczone → watchlista z GLB i boxami.")
+                     "— najsilniejsze spółki w sektorze. Kliknięcie w pole ☐ przy tickerze zaznacza, ponowne odznacza (klik w resztę wiersza tylko pokazuje wykres); zaznaczone → watchlista z GLB i boxami.")
         bar = Flow(self.body)
         bar.pack(fill="x", padx=12)
         extra_var = tk.StringVar(value=self.app.session.get("krok", {}).get("extra", ""))
@@ -263,9 +263,11 @@ class KrokWindow(tk.Toplevel):
             t = tree.identify_row(e.y)
             if not t:
                 return
-            state["checked"].symmetric_difference_update({t})
-            tree.item(t, text=label(t), tags=(state["by"][t]["darvas"],) + (("checked",) if t in state["checked"] else ()))
-            tree.focus(t)
+            on_box = getattr(e, "x", None) is None or tree.identify_column(e.x) == "#0"   # ☑ zmienia tylko kliknięcie w kolumnę z polem wyboru
+            if on_box:
+                state["checked"].symmetric_difference_update({t})
+                tree.item(t, text=label(t), tags=(state["by"][t]["darvas"],) + (("checked",) if t in state["checked"] else ()))
+            tree.focus(t)   # kliknięcie w resztę wiersza tylko pokazuje wykres spółki
             refresh_btn()
             show_chart(t)
 

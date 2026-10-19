@@ -808,13 +808,15 @@ def test_krok_po_kroku_steps_and_watchlist_from_selection(app, monkeypatch):
     assert ids[0] == "T5"                                                 # najsilniejsza względem ETF sektora na górze
     mrs = [r["mrs"] for r in k.rows["rows"] if r["mrs"] is not None]
     assert mrs == sorted(mrs, reverse=True)
-    ev = lambda iid: type("E", (), {"y": k.tree.bbox(iid)[1] + 3})()   # noqa: E731
+    ev = lambda iid, x=10: type("E", (), {"y": k.tree.bbox(iid)[1] + 3, "x": x})()   # noqa: E731 — x=10: kolumna z polem ☐
     k.tree.see(ids[0])
     k.update()
     k.toggle(ev(ids[0]))
     k.toggle(ev(ids[1]))
     k.toggle(ev(ids[1]))                                                  # drugie kliknięcie odznacza
     assert k.rows["checked"] == {ids[0]} and k.tree.item(ids[0], "text").startswith("☑")
+    k.toggle(ev(ids[2], x=400))                                           # klik w resztę wiersza nie zaznacza
+    assert k.rows["checked"] == {ids[0]}
     monkeypatch.setattr(app, "scanner_saved", lambda sc, then_sync=None: None)
     saved = k.make_watchlist([k.rows["by"][ids[0]]], name="Test krok")
     cfg = scanners.load_config(scanners.scanner_dir(app.data_root, saved["id"]))

@@ -28,6 +28,8 @@ Heurystyka z backtestu (spółki z dzisiejszej listy, bez spółek wycofanych z 
   (przerywana) do ostatniego tygodnia, z wartością przy prawej krawędzi.
 - **🔔 Alerty** (pasek): zamknięcie tygodnia przecięło linię trendu oraz dla obserwowanych spółek (🔕 Obserwuj na wykresie): sygnał GLB, przecięcie MACD
   w dół, zamknięcie pod stopem MACD, spełnione warunki. Sprawdzane po starcie i po każdym Sync; zapis w `data/alerts.json`.
+- **Mocne** (kolumna, ciemniejsza zieleń): warunki strategii ze zmianą marży oper. r/r ≥ 10 pp — w teście wszystkich sygnałów GLB 2015–2026 +5,1 % na
+  transakcję (vs +2,9 %) i 22,7 % rocznie (vs 16,1 %). Takie spółki są na górze listy; liczy się poprawa marży, nie jej poziom.
 - **Potencjał ★ (0–5) i Hamuje ⚠** (kolumny): cechy fundamentów, które w badaniu 2021–2026 (ceny bez korekty) podnosiły szansę na duży ruch — przychody ≥ 25 %,
   dwa kwartały z rzędu, marża oper. ↑ ≥ 3 pp dwa kwartały, marża brutto ↑ ≥ 2 pp, marża oper. < 10 % — i ostrzeżenie o hamowaniu przychodów (≥ 10 pp, ⚠⚠ z marżą
   brutto w dół). **📖 Poradnik**: zasady z badań i lista kontrolna spółki. **📌 Pozycja** na wykresie: 📌 i pomarańczowy wiersz przy hamowaniu / pod stopem, alerty.

@@ -398,6 +398,7 @@ def fund_panel_lines(r, pos=None):
     def item(ok, txt):
         out.append((("✓ " if ok is True else "✗ " if ok is False else "— ") + txt, "ok" if ok is True else "no" if ok is False else "na"))
     item(bool(r.get("ok")), "warunki strategii (obrót ≥ 50 mln $, przychody ≥ 15 %, Δ marży oper. ≥ 3 pp)")
+    item(bool(r.get("strong")), "Mocne: Δ marży oper. ≥ 10 pp (+5,1 % vs +2,9 % na transakcję)")
     for (_, txt, p), ok in zip(calc.POTENTIAL, r.get("pot_ok") or [None] * len(calc.POTENTIAL)):
         item(ok, f"{txt} ({str(p).replace('.', ',')} %)")
     st = r.get("glb_state")

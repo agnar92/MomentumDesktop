@@ -11,6 +11,8 @@ ENTRY_MAX_PCT = 10.0    # wejście do 10 % nad linią
 MIN_TURNOVER = 50e6     # obrót dzienny ($)
 MIN_REV_GROWTH = 15.0   # przychody kw. r/r (%)
 MIN_DOPM = 3.0          # zmiana marży operacyjnej r/r (pp)
+MIN_DOPM_STRONG = 10.0  # „Mocne”: zmiana marży oper. r/r ≥ 10 pp przy pozostałych warunkach (badanie 2015–2026, wszystkie sygnały GLB 0–10 %:
+                        # +5,1 % na transakcję vs +2,9 %, portfel wszystkich 22,7 % vs 16,1 % rocznie; ok. połowa spółek)
 STOP_PCT = 10.0         # stop początkowy pod wejściem
 # Potencjał (badanie 2021–2026 na cenach bez korekty: wybicia z konsolidacji po +30–100 %, szansa na dalsze ≥ +100 % w 12 mies.; bez warunków 5,1 %).
 # Tylko cechy, które rzeczywiście podnosiły szansę; przyspieszenie przychodów, EPS, marża brutto (poziom), marża oper. > 0, ROE, RS — bez wpływu.
@@ -153,6 +155,7 @@ def build_row(base, weekly, months, fund):
     row.update(macd=m["state"], macd_stop=m["stop"])
     row.update({k: (fund or {}).get(k) for k in ("rev_rr", "rev_rr1", "accel", "dopm", "dopm1", "opm", "dgm", "quarter", "qs")})
     row["ok"] = passes(row)
+    row["strong"] = bool(row["ok"] and _ok(row.get("dopm")) and row["dopm"] >= MIN_DOPM_STRONG)
     pot = potential(row)
     row["pot"] = sum(1 for *_, v in pot if v)
     row["pot_ok"] = [v for *_, v in pot]

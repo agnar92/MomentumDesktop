@@ -17,13 +17,14 @@ COLUMNS = [  # (klucz, nagłówek, szerokość, format)
     ("glb", "Green Line", 90, "p"), ("glb_pct", "Do linii %", 85, "%"), ("glb_state", "GLB", 85, "s"), ("macd", "MACD", 60, "s"),
     ("macd_stop", "Stop MACD", 85, "p"), ("dopm", "Δ marża oper. pp", 120, "%"), ("rev_rr", "Przychody r/r %", 115, "%"),
     ("dgm", "Δ marża brutto pp", 125, "%"), ("quarter", "Kwartał", 105, "s"), ("turnover", "Obrót mln $", 95, "m"),
-    ("ok", "Warunki", 75, "b"), ("pot", "Potencjał", 85, "n"), ("slow", "Hamuje", 95, "w"),
+    ("ok", "Warunki", 75, "b"), ("strong", "Mocne", 65, "b"), ("pot", "Potencjał", 85, "n"), ("slow", "Hamuje", 95, "w"),
 ]
 SIGNAL = ("WYBICIE", "SYGNAŁ")
 # filtry listy (wszystkie naraz, ORAZ): {kolumna: {"in": [wartości]} | {"min", "max"}}; liczby w jednostkach tabeli (obrót w mln $)
-FILTER_CHOICES = {"glb_state": ["WYBICIE", "SYGNAŁ", "NAD", "POD", "BRAK"], "macd": ["nad", "pod"], "ok": ["tak", "nie"], "slow": ["HAMUJE", "HAMUJE+MB", "—"]}
+FILTER_CHOICES = {"glb_state": ["WYBICIE", "SYGNAŁ", "NAD", "POD", "BRAK"], "macd": ["nad", "pod"], "ok": ["tak", "nie"], "strong": ["tak", "nie"], "slow": ["HAMUJE", "HAMUJE+MB", "—"]}
 FILTER_SCALE = {"turnover": 1e6}
 FILTER_PRESETS = [
+    ("Mocne (Δ marży ≥ 10 pp) z sygnałem GLB", {"strong": {"in": ["tak"]}, "glb_state": {"in": ["WYBICIE", "SYGNAŁ"]}}),
     ("Potencjał ≥ 3 + nad GLB + MACD dodatni", {"pot": {"min": 3}, "glb_state": {"in": ["WYBICIE", "SYGNAŁ", "NAD"]}, "macd": {"in": ["nad"]}}),
     ("Sygnał kupna z potencjałem ≥ 3", {"pot": {"min": 3}, "glb_state": {"in": ["WYBICIE", "SYGNAŁ"]}}),
     ("Nad GLB + MACD dodatni", {"glb_state": {"in": ["WYBICIE", "SYGNAŁ", "NAD"]}, "macd": {"in": ["nad"]}}),
@@ -33,8 +34,8 @@ FILTER_PRESETS = [
 
 
 def filter_value(r, k):
-    if k == "ok":
-        return "tak" if r.get("ok") else "nie"
+    if k in ("ok", "strong"):
+        return "tak" if r.get(k) else "nie"
     return "—" if r.get(k) is None else str(r[k])
 
 
@@ -84,8 +85,11 @@ def progress_text(frac, stage, elapsed):
 
 
 def default_order(r):
-    """Najpierw spółki spełniające warunki z sygnałem GLB, potem spełniające warunki, w grupie od największej zmiany marży operacyjnej."""
-    return (not (r.get("ok") and r.get("glb_state") in SIGNAL), not r.get("ok"), -(r.get("dopm") if r.get("dopm") is not None else -1e9))
+    """Najpierw „Mocne” z sygnałem GLB, potem spełniające warunki z sygnałem, potem „Mocne”, potem spełniające warunki; w grupie od największej
+    zmiany marży operacyjnej."""
+    sig = r.get("glb_state") in SIGNAL
+    return (not (r.get("strong") and sig), not (r.get("ok") and sig), not r.get("strong"), not r.get("ok"),
+            -(r.get("dopm") if r.get("dopm") is not None else -1e9))
 
 
 class App:
@@ -130,6 +134,7 @@ class App:
         self.tree.pack(side="left", fill="both", expand=True)
         sb.pack(side="right", fill="y")
         self.tree.tag_configure("signal", background="#123a24")
+        self.tree.tag_configure("strongsig", background="#1c5a33")
         self.tree.tag_configure("dim", foreground="#6b7684")
         self.tree.tag_configure("poswarn", foreground="#ffb020")
         self.tree.bind("<Double-1>", lambda e: self.open_chart(self.current()))
@@ -181,7 +186,7 @@ class App:
         sel = self.current()
         self.tree.delete(*self.tree.get_children())
         for r in self.rows():
-            tag = "signal" if r.get("ok") and r.get("glb_state") in SIGNAL else "" if r.get("ok") else "dim"
+            tag = ("strongsig" if r.get("strong") else "signal") if r.get("ok") and r.get("glb_state") in SIGNAL else "" if r.get("ok") else "dim"
             held = r["ticker"] in self.store.alerts["pos"]
             if held and (r.get("slow") or (r.get("macd_stop") and (r.get("price") or 0) < r["macd_stop"])):
                 tag = "poswarn"
@@ -531,6 +536,11 @@ Wszystkie sygnały GLB 2015–2026, bez limitu kapitału: bez fundamentów GLB w
 Z warunkami strategii portfel wszystkich sygnałów GLB dał 16,1 % rocznie (losowe wejście z tymi samymi warunkami: 10,3 %, SPY 13,6 %).
 Warunki strategii (kolumna Warunki): obrót ≥ 50 mln $ dziennie, przychody kw. ≥ +15 % r/r, marża operacyjna ≥ +3 pp r/r.
 
+MOCNE (kolumna Mocne, ciemniejsza zieleń na liście): warunki strategii + zmiana marży oper. r/r ≥ 10 pp (zamiast ≥ 3 pp).
+Wszystkie sygnały GLB 0–10 % 2015–2026: +5,1 % na transakcję (obecne warunki +2,9 %), portfel wszystkich 22,7 % rocznie (16,1 %), maks. spadek −40 % (−34 %).
+Liczy się POPRAWA marży, nie jej poziom: top 5 % spółek wg samej marży dało +2,1 % na transakcję, wg zmiany marży r/r +8,7 %. Zmiana kw./kw. nie działa (+2,9 %).
+W konsolidacji po +30–100 % spółki z górnych 10 % rynku wg zmiany marży r/r robiły dalej ≥ +100 % w 10–12 % przypadków (dolna połowa: 4,8 %).
+
 2. POTENCJAŁ ★ — co podnosi szansę na bardzo duży ruch
 Wybicia z konsolidacji po pierwszym wzroście o 30–100 % (2021–2025, 7314 przypadków). Bez warunków tylko 5,1 % dało dalej ≥ +100 % w 12 mies. Gdy spełnione:
    przychody ≥ +25 % r/r i marża oper. ↑ ≥ +3 pp	9,6 %
@@ -551,7 +561,8 @@ Kupno: zamknięcie tygodnia 0–10 % nad Green Line. Stop 10 % pod wejściem; po
 ⚠⚠ z marżą brutto spadającą r/r — 50 %, średnio −1,8 % po 3 i 6 mies. Wtedy zacieśnij stop albo nie dokładaj.
 
 5. CZEGO NIE SZUKAĆ (nic nie wnosiło)
-ROE / ROI, ranking po RS, Blue Dot, samo przyspieszenie przychodów, poziom marży brutto, „marża oper. > 0”, sam EPS ponad przychody i marże.
+ROE / ROI, ranking po RS, Blue Dot, samo przyspieszenie przychodów, poziom marży brutto i operacyjnej, „marża oper. > 0”, sam EPS ponad przychody
+i marże, zmiana marży kwartał do kwartału.
 Wykres: S&P 500 nad ceną = kierunek rynku; słupki przychodów pod wolumenem — zielony ≥ +25 % r/r, żółty ≥ +15 %.
 
 Heurystyka z backtestu na spółkach notowanych dziś (bez wycofanych z giełdy), nie porada inwestycyjna."""
@@ -569,7 +580,8 @@ def checklist(row, pos=None):
     lines_ = [f"{r['ticker']} {r.get('company') or ''} — potencjał ★ {r.get('pot') or 0}/5" + (f" · 📌 pozycja od {pos['since']} ({pos['price']:.2f})" if pos and pos.get("price") else ""),
               f"Przychody {f(r.get('rev_rr'), ' %')} r/r (kwartał wcześniej {f(r.get('rev_rr1'), ' %')}), Δ marży oper. {f(r.get('dopm'), ' pp')} "
               f"(wcześniej {f(r.get('dopm1'), ' pp')}), marża oper. {f(r.get('opm'), ' %')} · kwartał {r.get('quarter') or '—'}", "",
-              f"{yes(r.get('ok'))} Warunki strategii (obrót ≥ 50 mln $, przychody ≥ +15 %, Δ marży oper. ≥ +3 pp)"]
+              f"{yes(r.get('ok'))} Warunki strategii (obrót ≥ 50 mln $, przychody ≥ +15 %, Δ marży oper. ≥ +3 pp)",
+              f"{yes(bool(r.get('strong')))} Mocne: Δ marży oper. ≥ +10 pp (+5,1 % vs +2,9 % na transakcję)"]
     for (txt, p), v in zip(POT_TEXT, r.get("pot_ok") or [None] * 5):
         lines_.append(f"{yes(v)} {txt}  (szansa {p:.1f} % vs 5,1 %)".replace(f"{p:.1f}", f"{p:.1f}".replace(".", ",")))
     st = r.get("glb_state")

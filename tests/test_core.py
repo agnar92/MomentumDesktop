@@ -209,3 +209,11 @@ def test_old_settings_filter_becomes_first_scanner(tmp_path):
 def test_monthly_highs_ignores_dividend_adjusted_entries():
     assert prices.monthly_highs({"h": [["2026-09", 5.0]], "upto": "2026-09"}) == []
     assert prices.monthly_highs({"h": [["2026-09", 5.0]], "upto": "2026-09", "raw": 1}) == [5.0]
+
+
+def test_strong_condition_and_default_order():
+    w = {"d": ["2026-01-05"] * 40, "o": [1] * 40, "h": [1] * 40, "l": [1] * 40, "c": [100.0] * 40, "v": [5e6] * 40}
+    weak = calc.build_row({"ticker": "W"}, w, [], {"rev_rr": 20, "dopm": 4})
+    strong = calc.build_row({"ticker": "S"}, w, [], {"rev_rr": 20, "dopm": 12})
+    assert weak["ok"] and not weak["strong"] and strong["ok"] and strong["strong"]
+    assert not calc.build_row({"ticker": "X"}, w, [], {"rev_rr": 5, "dopm": 30})["strong"]   # bez przychodów ≥ 15 % nie ma „Mocne”

@@ -50,3 +50,10 @@ def test_list_filters():
     assert [r["ticker"] for r in rows if pass_filters(r, {"turnover": {"min": 70}})] == ["A"]
     assert [r["ticker"] for r in rows if pass_filters(r, {"glb_pct": {"max": 12}, "ok": {"in": ["nie"]}})] == ["C"]
     assert active_filters({"a": {"in": []}, "b": {"min": 1}, "c": {}}) == 1
+
+
+def test_default_order_strong_signal_first():
+    from desktop.app import default_order
+    rows = [{"ticker": "A", "ok": True, "glb_state": "SYGNAŁ", "dopm": 5}, {"ticker": "B", "ok": True, "strong": True, "glb_state": "WYBICIE", "dopm": 11},
+            {"ticker": "C", "ok": True, "strong": True, "glb_state": "POD", "dopm": 30}, {"ticker": "D", "ok": False, "dopm": 50}]
+    assert [r["ticker"] for r in sorted(rows, key=default_order)] == ["B", "A", "C", "D"]

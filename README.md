@@ -35,7 +35,7 @@ Heurystyka z backtestu (spółki z dzisiejszej listy, bez spółek wycofanych z 
 - **⟳ Sync (F5)**: Finviz (lista) → yfinance **tygodniowe 3 lata** (wykres, średnie, MACD, obrót) → dla spółek z obrotem ≥ 50 mln $:
   yfinance **miesięczne High z całej historii** (Green Line) i **SEC** (fundamenty; odświeżane co 7 dni). Bez danych dziennych.
 - **Tylko nowe dane**: spółka już pobrana dostaje z yfinance tylko ostatnie tygodnie (doklejane do zapisanych), a historia miesięczna tylko nowe zamknięte
-  miesiące. Całość pobieramy dla nowej spółki, po przerwie dłuższej niż ~5 miesięcy albo gdy ceny wstecz się zmieniły (split / duża dywidenda).
+  miesiące. Całość pobieramy dla nowej spółki, po przerwie dłuższej niż ~5 miesięcy albo gdy ceny wstecz się zmieniły (split). Ceny są **nieskorygowane o dywidendy** (tylko o splity), jak na TradingView — inaczej dawne szczyty spółek z dużymi wypłatami (np. CLMT) wychodziły za nisko.
 - **Pasek postępu** na dole okna w trakcie Sync: etap (1/4 Finviz, 2/4 tygodniowe, 3/4 miesięczne, 4/4 SEC), procent, czas od startu i szacowany czas do końca.
 - Każdy skaner ma własną listę (Sync pobiera wybrany skaner); świece, historia miesięczna i fundamenty są wspólne, więc spółka z kilku skanerów pobiera się raz.
 - Pliki w `data/` obok programu: `scans/<skaner>.json` (listy), `weekly.json` (świece), `monthly.json`, `sec.json`, `settings.json` (skanery i ustawienia).

@@ -3,6 +3,9 @@
     (doklejane do zapisanych), pełne 3 lata pobieramy dla nowej spółki, po długiej przerwie albo gdy ceny wstecz się zmieniły (split / dywidenda),
   - miesięczne HIGH z całej historii (Green Line jak w oryginale Dr. Wisha): zamknięte miesiące się nie zmieniają, więc po zamknięciu
     kolejnego miesiąca dociągamy tylko ostatnie miesiące; całą historię tylko dla nowej spółki albo gdy ceny wstecz się zmieniły.
+Ceny NIESKORYGOWANE o dywidendy (tylko o splity, auto_adjust=False) — jak na TradingView. Z korektą o dywidendy dawne szczyty spółek
+z dużymi wypłatami (np. MLP: CLMT, szczyt 55,26 z 04.2007 -> ~20) spadały i Green Line wychodziła za nisko. Serie / wpisy bez znacznika
+"raw" (pobrane jeszcze ze skorygowanymi cenami) pobieramy raz od nowa w całości.
 `progress(zrobione, wszystkie)` (opcjonalnie) dostaje postęp po każdej paczce."""
 import datetime as dt
 import math
@@ -10,6 +13,7 @@ import math
 WEEKLY_PERIOD = "3y"
 KEEP_WEEKS = 157          # ~3 lata świec tygodniowych
 BATCH = 100
+AUTO_ADJUST = False       # True = ceny skorygowane o dywidendy (Yahoo „Adj”), False = tylko splity (jak TradingView)
 ADJ_TOL = 0.015           # różnica cen na wspólnej dacie > 1,5 % = ceny wstecz zmienione (split / dywidenda) -> pełne pobranie
 
 
@@ -39,7 +43,7 @@ def _clean(x):
 
 def _series(f):
     f = f.dropna(subset=["Close"])
-    return {"d": [d.strftime("%Y-%m-%d") for d in f.index], **{k: [_clean(x) for x in f[col]] for k, col in
+    return {"raw": 1, "d": [d.strftime("%Y-%m-%d") for d in f.index], **{k: [_clean(x) for x in f[col]] for k, col in
                                                               (("o", "Open"), ("h", "High"), ("l", "Low"), ("c", "Close"), ("v", "Volume"))}}
 
 
@@ -56,8 +60,7 @@ def merge_weekly(old, new, keep=KEEP_WEEKS):
     if first in old["d"] and not _same(old["c"][old["d"].index(first)], new["c"][0]):
         return None
     cut = next((i for i, d in enumerate(old["d"]) if d >= first), len(old["d"]))
-    out = {k: (old[k][:cut] + new[k])[-keep:] for k in ("d", "o", "h", "l", "c", "v")}
-    return out
+    return {"raw": 1, **{k: (old[k][:cut] + new[k])[-keep:] for k in ("d", "o", "h", "l", "c", "v")}}
 
 
 def _recent_period(last, today):
@@ -72,14 +75,14 @@ def weekly(tickers, log=print, period=WEEKLY_PERIOD, cache=None, today=None, pro
     cache, today = cache or {}, today or dt.date.today()
     update, full = {}, []
     for t in tickers:
-        old = cache.get(t)
+        old = cache.get(t) if (cache.get(t) or {}).get("raw") else None   # seria ze skorygowanymi cenami -> pełne pobranie
         p = _recent_period(old["d"][-1], today) if old and old.get("d") else None
         (update.setdefault(p, []) if p else full).append(t)
     total, done, out = len(tickers), 0, {}
 
     def fetch(part, per):
         nonlocal done
-        df = _yf().download(part, period=per, interval="1wk", auto_adjust=True, group_by="ticker", progress=False, threads=True)
+        df = _yf().download(part, period=per, interval="1wk", auto_adjust=AUTO_ADJUST, group_by="ticker", progress=False, threads=True)
         done += len(part)
         if progress:
             progress(done, total)
@@ -100,7 +103,7 @@ def weekly(tickers, log=print, period=WEEKLY_PERIOD, cache=None, today=None, pro
     for i in range(0, len(full), BATCH):
         for t, s in fetch(full[i:i + BATCH], period).items():
             if len(s["d"]) >= 10:
-                out[t] = {k: v[-KEEP_WEEKS:] for k, v in s.items()}
+                out[t] = {"raw": 1, **{k: s[k][-KEEP_WEEKS:] for k in ("d", "o", "h", "l", "c", "v")}}
     return out
 
 
@@ -128,28 +131,32 @@ def merge_monthly(old, new):
 def monthly(tickers, cache, log=print, today=None, progress=None):
     """Uzupełnia `cache` {ticker: {"h": [[YYYY-MM, high]...], "upto": YYYY-MM}} o miesięczne High z całej historii (tylko ZAMKNIĘTE miesiące).
     Spółka z zapisem sprzed ostatniego zamkniętego miesiąca dostaje tylko ostatnie miesiące; całą historię — nowa spółka albo zmienione ceny.
-    Stare wpisy z zamknięciami ("m") traktujemy jak brak (Green Line liczymy teraz z High). -> lista pobranych tickerów."""
+    Stare wpisy z zamknięciami ("m") albo bez "raw" (ceny skorygowane o dywidendy) traktujemy jak brak. -> lista pobranych tickerów."""
     need = last_closed_month(today)
-    todo = [t for t in tickers if (cache.get(t) or {}).get("upto") != need or "h" not in cache[t]]
-    update = [t for t in todo if (cache.get(t) or {}).get("h")]
+    def fresh(t):
+        e = cache.get(t) or {}
+        return "h" in e and e.get("raw")
+
+    todo = [t for t in tickers if not fresh(t) or cache[t].get("upto") != need]
+    update = [t for t in todo if fresh(t) and cache[t].get("h")]
     full = [t for t in todo if t not in update]
     total, done = len(todo), 0
 
     def step(part, per, label):
         nonlocal done
-        df = _yf().download(part, period=per, interval="1mo", auto_adjust=True, group_by="ticker", progress=False, threads=True)
+        df = _yf().download(part, period=per, interval="1mo", auto_adjust=AUTO_ADJUST, group_by="ticker", progress=False, threads=True)
         redo = []
         for t, f in _frames(df, part).items():
             rows = _months(f, need)
             if per == "max":
                 if rows:
-                    cache[t] = {"h": rows, "upto": need}
+                    cache[t] = {"h": rows, "upto": need, "raw": 1}
                 continue
             m = merge_monthly(cache[t]["h"], rows)
             if m is None:
                 redo.append(t)
             else:
-                cache[t] = {"h": m, "upto": need}
+                cache[t] = {"h": m, "upto": need, "raw": 1}
         done += len(part)
         if progress:
             progress(min(done, total), total)

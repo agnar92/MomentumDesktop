@@ -1,6 +1,6 @@
 """Dane programu w katalogu data/ obok programu (wersja portable): scans/<skaner>.json (lista spółek skanera), weekly.json (tygodniowe świece
 wszystkich skanerów — wspólne, aktualizowane tylko o nowe tygodnie), monthly.json i sec.json (pamięć podręczna), settings.json (skanery Finviz,
-wybrany skaner, User-Agent dla SEC, ostatnie symbole)."""
+wybrany skaner, User-Agent dla SEC, ostatnie symbole, filtry listy), alerts.json (linie trendu, obserwowane spółki, dziennik alertów)."""
 import json
 import os
 import re
@@ -84,6 +84,8 @@ class Store:
         if self.series is None:   # dane sprzed skanerów: świece ze starego scan.json
             self.series = read(self.dir / "scan.json", {}).get("series", {})
         self.extra = {}   # symbole otwarte przez Ctrl+K (tylko w pamięci): {ticker: (wiersz, świece)}
+        a = read(self.dir / "alerts.json", {})
+        self.alerts = {"lines": a.get("lines") or {}, "watch": a.get("watch") or {}, "log": a.get("log") or [], "seen": a.get("seen") or ""}
         self.reload()
 
     @property
@@ -115,6 +117,9 @@ class Store:
         self.series = {t: s for t, s in {**self.series, **series}.items() if t in keep}
         write(self.dir / "weekly.json", self.series)
         self.reload()
+
+    def save_alerts(self):
+        write(self.dir / "alerts.json", self.alerts)
 
     def save_settings(self):
         write(self.dir / "settings.json", self.settings)

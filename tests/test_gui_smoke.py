@@ -83,3 +83,40 @@ def test_scanner_switch_and_settings_dialog(app):
     d.save()
     assert app.store.settings["scanner"] == "Mój" and app.store.scanner["filters"] == "cap_largeover"
     assert "Mój" in app.scanner_box["values"] and app.tree.get_children() == ()
+
+
+def test_trend_line_draw_move_delete_and_filters(app):
+    from desktop import app as A
+    app.open_chart("AAA")
+    ch = app.chart
+    ch.update()
+    ch.redraw()
+    g = ch.geom["g"]
+    E = lambda x, y: type("E", (), {"x": x, "y": y})()   # noqa: E731
+    y = (g["price"][0] + g["price"][1]) / 2
+    ch.press(E(200, y))
+    ch.drag_line(E(260, y - 20))
+    ch.drag_line(E(500, y - 60))
+    ch.release(E(500, y - 60))
+    ls = app.store.alerts["lines"]["AAA"]
+    assert len(ls) == 1 and ls[0]["d1"] < ls[0]["d2"] and ch.sel == ls[0]["id"]
+    assert (app.store.dir / "alerts.json").exists()
+    p1 = ls[0]["p1"]
+    ch.redraw()
+    s = ch.geom["segs"][0]
+    mx, my = (s["x1"] + s["x2"]) / 2, (s["y1"] + s["y2"]) / 2
+    ch.press(E(mx, my))
+    ch.drag_line(E(mx, my + 30))
+    ch.release(E(mx, my + 30))
+    assert app.store.alerts["lines"]["AAA"][0]["p1"] < p1     # przesunięta w dół
+    ch.toggle_watch()
+    assert "AAA" in app.store.alerts["watch"]
+    ch.delete_selected()
+    assert "AAA" not in app.store.alerts["lines"]
+    app.only_ok.set(False)
+    d = A.FilterDialog(app)
+    d.preset({"dopm": {"min": 3}})
+    assert app.tree.get_children() == ("AAA",)
+    d.preset({})
+    assert set(app.tree.get_children()) == {"AAA", "BBB"}
+    A.AlertsDialog(app).destroy()

@@ -1,31 +1,25 @@
 """Obliczenia (czyste funkcje, bez sieci i GUI): Green Line z miesięcznych High (jak w oryginale Dr. Wisha), stan GLB na zamknięciu tygodnia, MACD tygodniowy,
 średnie, obrót i warunki strategii z backtestu (płynny rynek USA 2015–2026):
-  - obrót dzienny ≥ 50 mln $, przychody kw. ≥ +15 % r/r, marża operacyjna ≥ +3 pp r/r (z SEC),
+  - obrót dzienny ≥ 100 mln $, przychody kw. ≥ +15 % r/r, marża operacyjna ≥ +3 pp r/r (z SEC), P/S < 20,
+  - siła względna: akcja przez 52 tyg. ≥ 50 pp lepiej od S&P 500 (SPY),
   - wejście: zamknięcie tygodnia 0–10 % nad Green Line (rekord wszech czasów miesięcznego High, który stoi ≥ 3 zamknięte miesiące),
   - wyjście: tygodniowy MACD (12, 26, 9) — stop pod Low tygodnia, w którym MACD przeciął sygnał w dół, plus stop 10 % pod wejściem.
 Heurystyka z backtestu, nie porada inwestycyjna."""
+import bisect
 import math
 
 CONFIRM_MONTHS = 3      # rekord musi stać co najmniej tyle zamkniętych miesięcy
 ENTRY_MAX_PCT = 10.0    # wejście do 10 % nad linią
-MIN_TURNOVER = 50e6     # obrót dzienny ($)
-MIN_REV_GROWTH = 15.0   # przychody kw. r/r (%)
-MIN_DOPM = 3.0          # zmiana marży operacyjnej r/r (pp)
-MIN_REV_Q = 25e6        # zabezpieczenie: przychody kwartału ≥ 25 mln $ (przy symbolicznych przychodach zmiana marży w pp nic nie znaczy — RGTI)
-MIN_DOPM_STRONG = 10.0  # „Mocne”: zmiana marży oper. r/r ≥ 10 pp przy pozostałych warunkach (badanie 2015–2026, wszystkie sygnały GLB 0–10 %:
-                        # +5,1 % na transakcję vs +2,9 %, portfel wszystkich 22,7 % vs 16,1 % rocznie; ok. połowa spółek)
+# Warunki = tylko te, które w strategii (GLB 0–10 %, stop 10 % + MACD tyg., wszystkie sygnały 2015–2026, ceny bez korekty) mają największy wpływ.
+# Razem: +15,6 % na transakcję, portfel wszystkich 36,6 % rocznie (2015–20 43,9 / 2021–26 29,6; 2020–26 46,5 %), DD −55 %, mało sygnałów naraz.
+# Usunięte, bo przy tych warunkach nic nie zmieniały: przychody kw. ≥ 25 mln $, zysk oper. w $ ↑, „Mocne” (Δ marży ≥ 10 pp), rozwodnienie, Potencjał.
+MIN_TURNOVER = 100e6    # obrót dzienny ($) — odcina dziwne / małe spółki (sam blueprint: +5,6 % vs +4,0 % na transakcję przy 50 mln $)
+MIN_REV_GROWTH = 15.0   # przychody kw. r/r (%) — bez niego 34,9 % rocznie
+MIN_DOPM = 3.0          # zmiana marży operacyjnej r/r (pp) — bez niej 28,9 %
+MAX_PS = 20.0           # wycena P/S < 20 (kapitalizacja / przychody TTM) — bez niej 31,5 % (drogie spółki tracą); odcina też RGTI (P/S 200)
+MIN_RS = 50.0           # siła względna: zmiana ceny z 52 tyg. minus zmiana SPY ≥ 50 pp — bez niej 21,4 %; próg 40 pp: 31,3 %
+RS_WEEKS = 52
 STOP_PCT = 10.0         # stop początkowy pod wejściem
-MAX_PS = 20.0           # warunek konieczny: wycena P/S < 20 (kapitalizacja / przychody TTM). Test w strategii: +4,0 % vs +3,4 % na transakcję,
-                        # portfel wszystkich 19,4 % vs 17,0 % rocznie, płytszy spadek; drogie (P/S ≥ 20): −1,8 % na transakcję
-MAX_DIL_STRONG = 10.0   # „Mocne”: rozwodnienie (liczba akcji r/r) < 10 % — Mocne + P/S < 20 + rozwodn. < 10 %: +8,0 % na transakcję (oba okresy)
-# Potencjał (blueprint, październik 2026): tylko cechy sprawdzone w strategii GLB + MACD (wszystkie sygnały 2015–2026, ceny bez korekty) na spółkach,
-# które spełniają warunki. Średni wynik transakcji z cechą (bez niej: +4,0 %). Usunięte (nagradzały ryzyko, np. RGTI): marża oper. < 10 %,
-# przychody ≥ 25 % (dwa kwartały) — w grupie kontrolnej to głównie spółki spekulacyjne z ujemną medianą zwrotu.
-POTENTIAL = (  # (klucz, opis, średni wynik transakcji z cechą w %)
-    ("dopm10", "marża oper. ↑ ≥ +10 pp r/r", 6.2),
-    ("dgm", "marża brutto ↑ r/r", 5.0),
-    ("dil10", "rozwodnienie akcji < 10 % r/r (razem z Mocne: +8,0 %)", 8.0),
-)
 SLOW_ACCEL = -10.0      # hamowanie: tempo przychodów spadło o ≥ 10 pp względem kwartału wcześniej (cena 3 mies. −0,5 % vs +2,1 %, spadek ≥ 20 %: 44 % vs 33 %)
 
 
@@ -155,26 +149,29 @@ def turnover(closes, volumes, weeks=4):
     return sum(c * v for c, v in pairs) / len(pairs) / 5 if pairs else None
 
 
+def rel_strength(weekly, spy, weeks=RS_WEEKS):
+    """Siła względna (pp): zmiana zamknięcia z `weeks` tygodni minus zmiana SPY w tych samych tygodniach (SPY = {d, c}, daty dopasowane:
+    ostatni tydzień SPY nie późniejszy niż tydzień akcji). None, gdy za krótka historia albo brak SPY."""
+    d, c = (weekly or {}).get("d") or [], (weekly or {}).get("c") or []
+    sd, sc = (spy or {}).get("d") or [], (spy or {}).get("c") or []
+    if len(c) <= weeks or not sd or not (_ok(c[-1]) and _ok(c[-1 - weeks])) or c[-1 - weeks] <= 0:
+        return None
+
+    def at(day):
+        i = bisect.bisect_right(sd, day) - 1
+        return sc[i] if i >= 0 and _ok(sc[i]) and sc[i] > 0 else None
+    a, b = at(d[-1 - weeks]), at(d[-1])
+    if a is None or b is None:
+        return None
+    return ((c[-1] / c[-1 - weeks]) - (b / a)) * 100
+
+
 def passes(row):
-    """Warunek konieczny (blueprint): obrót ≥ 50 mln $, przychody kw. ≥ +15 % r/r i ≥ 25 mln $, marża oper. ≥ +3 pp r/r i zysk oper. w $ lepszy niż rok
-    wcześniej (przypadek RGTI: przychody 5 mln $, strata oper. większa o 41 %, a „Δ marży” +558 pp), wycena P/S < 20. Brak danych o zysku w $,
-    przychodach kwartału albo P/S (stary wpis SEC, brak kapitalizacji) nie blokuje."""
-    t, r, d, od, rq, ps = (row.get(k) for k in ("turnover", "rev_rr", "dopm", "op_d", "rev_q", "ps"))
-    guard = not (_ok(od) and od <= 0) and not (_ok(rq) and rq < MIN_REV_Q) and not (_ok(ps) and ps >= MAX_PS)
-    return _ok(t) and t >= MIN_TURNOVER and _ok(r) and r >= MIN_REV_GROWTH and _ok(d) and d >= MIN_DOPM and guard
-
-
-def strong(row):
-    """„Mocne”: warunek konieczny + zmiana marży oper. ≥ 10 pp + rozwodnienie < 10 % r/r (brak danych o akcjach nie blokuje)."""
-    d, dil = row.get("dopm"), row.get("dil")
-    return bool(row.get("ok") and _ok(d) and d >= MIN_DOPM_STRONG and not (_ok(dil) and dil >= MAX_DIL_STRONG))
-
-
-def potential(row):
-    """-> lista (klucz, opis, spełnione: True / False / None = brak danych) dla warunków POTENTIAL."""
-    d, g, dil = row.get("dopm"), row.get("dgm"), row.get("dil")
-    val = {"dopm10": d >= MIN_DOPM_STRONG if _ok(d) else None, "dgm": g > 0 if _ok(g) else None, "dil10": dil < MAX_DIL_STRONG if _ok(dil) else None}
-    return [(k, txt, val[k]) for k, txt, _ in POTENTIAL]
+    """Warunki strategii: obrót ≥ 100 mln $, przychody kw. ≥ +15 % r/r, marża oper. ≥ +3 pp r/r, P/S < 20 (brak P/S nie blokuje),
+    siła względna 52 tyg. ≥ 50 pp nad SPY (brak historii blokuje — tak było w backteście)."""
+    t, r, d, ps, rs = (row.get(k) for k in ("turnover", "rev_rr", "dopm", "ps", "rs"))
+    return (_ok(t) and t >= MIN_TURNOVER and _ok(r) and r >= MIN_REV_GROWTH and _ok(d) and d >= MIN_DOPM
+            and not (_ok(ps) and ps >= MAX_PS) and _ok(rs) and rs >= MIN_RS)
 
 
 def slowdown(row):
@@ -186,8 +183,8 @@ def slowdown(row):
     return "HAMUJE+MB" if _ok(g) and g < 0 else "HAMUJE"
 
 
-def build_row(base, weekly, months, fund):
-    """Wiersz listy: base (z Finviz), weekly {d, o, h, l, c, v}, months (High zamkniętych miesięcy), fund (z SEC albo None)."""
+def build_row(base, weekly, months, fund, spy=None):
+    """Wiersz listy: base (z Finviz), weekly {d, o, h, l, c, v}, months (High zamkniętych miesięcy), fund (z SEC albo None), spy (tygodniowe {d, c})."""
     c, lo, v = weekly.get("c") or [], weekly.get("l") or [], weekly.get("v") or []
     row = dict(base)
     price = c[-1] if c else None
@@ -202,10 +199,7 @@ def build_row(base, weekly, months, fund):
     f = fund or {}
     mcap = row.get("market_cap") or (price * f["shares"] if _ok(price) and _ok(f.get("shares")) else None)
     row["ps"] = mcap / f["ttm_rev"] if _ok(mcap) and _ok(f.get("ttm_rev")) and f["ttm_rev"] > 0 else None
+    row["rs"] = rel_strength(weekly, spy)
     row["ok"] = passes(row)
-    row["strong"] = strong(row)
-    pot = potential(row) if row["ok"] else [(k, txt, None) for k, txt, _ in POTENTIAL]   # gwiazdki tylko po warunku koniecznym (RGTI)
-    row["pot"] = sum(1 for *_, v in pot if v)
-    row["pot_ok"] = [v for *_, v in pot]
     row["slow"] = slowdown(row)
     return row

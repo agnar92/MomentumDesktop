@@ -5,7 +5,7 @@ import datetime as dt
 
 from . import calc, finviz, prices, sec
 
-BENCH = "SPY"   # S&P 500 nad wykresem (jak w IBD)
+BENCH = "SPY"   # S&P 500 nad wykresem (jak w IBD) i siła względna 52 tyg.
 
 # etapy i ich udział w pasku postępu (SEC trwa najdłużej: jedno zapytanie na spółkę)
 STAGES = (("Finviz — lista spółek", 0.15), ("yfinance — tygodniowe", 0.25), ("yfinance — miesięczne High", 0.2), ("SEC — fundamenty", 0.4))
@@ -38,7 +38,8 @@ def symbol(sym, store, log=print, weekly=prices.weekly, monthly=prices.monthly, 
         log(f"SEC: {e}")
     store.save_cache("monthly", mcache)
     store.save_cache("sec", scache)
-    row = calc.build_row({"ticker": sym}, w, prices.monthly_highs(mcache.get(sym)), scache.get(sym))
+    spy = w if sym == BENCH else (store.series.get(BENCH) or (store.extra.get(BENCH) or (None, None))[1])
+    row = calc.build_row({"ticker": sym}, w, prices.monthly_highs(mcache.get(sym)), scache.get(sym), spy)
     store.extra[sym] = (row, w)
     return row, w
 
@@ -63,7 +64,7 @@ def run(store, log=print, fetch_list=finviz.fetch, weekly=prices.weekly, monthly
     except Exception as e:
         log(f"⚠ SEC niedostępny ({e}) — używam zapisanych fundamentów.")
     store.save_cache("sec", scache)
-    rows = [calc.build_row(b, series[b["ticker"]], prices.monthly_highs(mcache.get(b["ticker"])), scache.get(b["ticker"]))
+    rows = [calc.build_row(b, series[b["ticker"]], prices.monthly_highs(mcache.get(b["ticker"])), scache.get(b["ticker"]), series.get(BENCH))
             for b in base if b["ticker"] in series]
     keep = {r["ticker"] for r in rows} | {BENCH}   # SPY = panel S&P 500 nad wykresem
     store.save_scan(rows, {t: s for t, s in series.items() if t in keep}, (now or dt.datetime.now()).isoformat(timespec="minutes"))

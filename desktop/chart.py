@@ -47,12 +47,16 @@ def fmt_vol(v):
     return "—" if v is None else f"{v / 1e9:.1f}B" if v >= 1e9 else f"{v / 1e6:.1f}M" if v >= 1e6 else f"{v / 1e3:.0f}K"
 
 
-def geometry(w, h):
-    """Panele (jak w IBD): S&P 500 10 %, cena 50 %, wolumen 10 %, przychody kwartalne 11 %, MACD reszta (odstępy i oś czasu osobno)."""
+def geometry(w, h, period="W"):
+    """Panele (jak w IBD): S&P 500 10 %, cena 50 %, wolumen 10 %, przychody kwartalne 11 %, MACD reszta (odstępy i oś czasu osobno);
+    dzienny (D): S&P 500, cena (linia zamknięć + RWB + Blue Dot + GLB) i wolumen — bez przychodów i Stochastic."""
     top = 8
     ph = h - top - 22
     s1 = top + ph * 0.10
     p0 = s1 + 8
+    if period == "D":
+        p1 = p0 + ph * 0.74
+        return {"spx": (top, s1), "price": (p0, p1), "vol": (p1 + 6, h - 22), "rev": None, "macd": (h - 22, h - 22), "x0": LEFT, "x1": w - RIGHT}
     p1 = p0 + ph * 0.50
     v0, v1 = p1 + 6, p1 + 6 + ph * 0.10
     r0, r1 = v1 + 8, v1 + 8 + ph * 0.11
@@ -166,7 +170,7 @@ def draw(cv, data, row=None, w=None, h=None, n_show=None, end=None, tlines=(), s
     vavg = calc.sma([x or 0 for x in data["v"]], 10)[i0:i1]
     c, hi, lo, vol, dates = (data[k][i0:i1] for k in ("c", "h", "l", "v", "d"))
     n = len(c)
-    g = geometry(w, h)
+    g = geometry(w, h, period)
     x0, x1 = g["x0"], g["x1"]
     step = (x1 - x0) / n
 
@@ -205,7 +209,10 @@ def draw(cv, data, row=None, w=None, h=None, n_show=None, end=None, tlines=(), s
         pts = [(xf(i), yf(v)) for i, v in enumerate(s) if v]
         if len(pts) > 1:
             cv.create_line(*[p for xy in pts for p in xy], fill=SMA_COLORS[k], width=1.5)
-    for i in range(n):
+    pts = [(xf(i), yf(v)) for i, v in enumerate(c) if v] if period == "D" else []
+    if len(pts) > 1:   # dzienny: linia zamknięć zamiast słupków
+        cv.create_line(*[p for xy in pts for p in xy], fill=FG, width=1.6)
+    for i in range(n if period != "D" else 0):
         if hi[i] is None or lo[i] is None or c[i] is None:
             continue
         col = UP if i == 0 or c[i - 1] is None or c[i] >= c[i - 1] else DOWN
@@ -247,18 +254,7 @@ def draw(cv, data, row=None, w=None, h=None, n_show=None, end=None, tlines=(), s
     def ym(v):
         return mid - v / rng * (m1 - m0) / 2
 
-    if period == "D":   # dzienny: Stochastic (10, 1) z poziomem 20 zamiast MACD (wyjście i tak po tygodniowym MACD)
-        k = calc.stoch_k(data["h"], data["l"], data["c"])[i0:i1]
-
-        def ys(v):
-            return m1 - 4 - v / 100 * (m1 - m0 - 14)
-        for lv_, col in ((20, BLUE_DOT), (80, GRID)):
-            cv.create_line(x0, ys(lv_), x1, ys(lv_), fill=col, dash=(4, 3))
-        pts = [(xf(i), ys(v)) for i, v in enumerate(k) if v is not None]
-        if len(pts) > 1:
-            cv.create_line(*[p for xy in pts for p in xy], fill=FG, width=1.2)
-        cv.create_text(x0 + 4, m0 + 6, text="Stochastic (10, 1) dzienny · przecięcie 20 od dołu = Blue Dot (przy RWB nad Green Line)", anchor="w", fill=DIM, font=FONT)
-    else:
+    if period != "D":   # dzienny: bez dolnego panelu (wyjście i tak po tygodniowym MACD)
         cv.create_line(x0, mid, x1, mid, fill=GRID)
         for i in range(n):
             cv.create_rectangle(xf(i) - step * 0.3, ym(hist[i]), xf(i) + step * 0.3, mid, fill="#2f9e5a" if hist[i] >= 0 else "#a33a3e", outline="")
@@ -268,7 +264,7 @@ def draw(cv, data, row=None, w=None, h=None, n_show=None, end=None, tlines=(), s
             cv.create_text(xf(i), m1 - 6, text="▼", fill=STOP_COLOR, font=FONT)
         cv.create_text(x0 + 4, m0 + 6, text=f"MACD (12, 26, 9) {u}" + (" · ▼ przecięcie w dół = stop pod Low tego tygodnia" if period == "W" else ""),
                        anchor="w", fill=DIM, font=FONT)
-    legend = "GMMA: 6 szybkich EMA (czerwone) / 6 wolnych (niebieskie) · jasne tło = RWB · ● Blue Dot" if period == "D" else "  ".join(f"SMA {k} {u}" for k in SMA_COLORS)
+    legend = "GMMA: szybkie EMA (czerwone) / wolne (niebieskie) · jasne tło = RWB · ● Blue Dot" if period == "D" else "  ".join(f"SMA {k} {u}" for k in SMA_COLORS)
     if period == "M":
         draw_glb_history(cv, data, i0, i1, xf, yf, g, pmin, pmax, level)
     cv.create_text(x0 + 4, y1 - 10 if period == "D" else y0 + 10, text=legend, anchor="w", fill=FG, font=FONT)
@@ -289,7 +285,9 @@ def draw(cv, data, row=None, w=None, h=None, n_show=None, end=None, tlines=(), s
     else:
         cv.create_text(x0 + 4, s0 + 6, text="S&P 500 — brak danych SPY (zrób Sync)", anchor="w", fill=DIM, font=FONT)
     cv.create_line(x0, s1 + 3, x1, s1 + 3, fill=GRID)
-    # przychody kwartalne (słupki w okresie kwartału) z dynamiką r/r: zielony ≥ +25 %, żółty ≥ +15 %
+    # przychody kwartalne (słupki w okresie kwartału) z dynamiką r/r: zielony ≥ +25 %, żółty ≥ +15 % (dzienny: bez)
+    if period == "D":
+        return {"g": g, "step": step, "n": n, "i0": i0, "lmin": lmin, "lmax": lmax, "segs": segs}
     q0, q1 = g["rev"]
     qs = (row or {}).get("qs") or []
     shown = []
@@ -428,10 +426,8 @@ def fund_panel_lines(r, pos=None):
         return "—" if x is None else f"{x:+.{d}f}{u}"
     if not r:
         return [("Brak danych spółki.", "dim")]
-    pot = r.get("pot") or 0
-    npot = len(calc.POTENTIAL)
-    out = [(r["ticker"], "h"), (r.get("company") or "", "dim"), ("★" * pot + "☆" * (npot - pot), "stars"),
-           (f"Potencjał {pot}/{npot}" + ("   ·   📌 masz pozycję" if pos else ""), "")]
+    out = [(r["ticker"], "h"), (r.get("company") or "", "dim"),
+           (("✓ spełnia warunki" if r.get("ok") else "✗ nie spełnia warunków") + ("   ·   📌 masz pozycję" if pos else ""), "")]
     if r.get("slow"):
         out.append(("⚠⚠ hamuje + marża brutto spada" if r["slow"] == "HAMUJE+MB" else "⚠ hamuje (tempo przychodów −10 pp lub więcej)", "warn"))
     out += [(f"OSTATNI RAPORT · kwartał {r.get('quarter') or '—'}", "sec"),
@@ -439,24 +435,24 @@ def fund_panel_lines(r, pos=None):
             (f"  zmiana tempa\t{v(r.get('accel'), ' pp')}", "val"), (f"Δ marży oper. r/r\t{v(r.get('dopm'), ' pp')}", "val"),
             (f"  poprzedni kw.\t{v(r.get('dopm1'), ' pp')}", "val"), (f"Marża oper.\t{v(r.get('opm'), ' %')}", "val"),
             (f"Δ marży brutto r/r\t{v(r.get('dgm'), ' pp')}", "val"),
-            (f"Przychody kw.\t{r['rev_q'] / 1e6:,.0f} mln $" if r.get("rev_q") else "Przychody kw.\t—", "val"),
-            (f"Zysk oper. r/r\t{r['op_d'] / 1e6:+,.1f} mln $" if r.get("op_d") is not None else "Zysk oper. r/r\t—", "val"),
             (f"Wycena P/S\t{r['ps']:.1f}" if r.get("ps") else "Wycena P/S\t—", "val"),
-            (f"Rozwodnienie r/r\t{v(r.get('dil'), ' %')}", "val"),
+            (f"RS 52 tyg. vs S&P\t{v(r.get('rs'), ' pp')}", "val"),
             (f"Obrót dzienny\t{r['turnover'] / 1e6:.0f} mln $" if r.get("turnover") else "Obrót dzienny\t—", "val"),
             (f"Do Green Line\t{v(r.get('glb_pct'), ' %')}", "val"), ("LISTA KONTROLNA", "sec")]
 
     def item(ok, txt):
         out.append((("✓ " if ok is True else "✗ " if ok is False else "— ") + txt, "ok" if ok is True else "no" if ok is False else "na"))
-    item(bool(r.get("ok")), "warunek konieczny (obrót ≥ 50 mln $, przychody ≥ 15 % i ≥ 25 mln $, Δ marży ≥ 3 pp i zysk oper. $ ↑, P/S < 20)")
-    item(bool(r.get("strong")), "Mocne: Δ marży oper. ≥ 10 pp i rozwodnienie < 10 % (+8,0 % vs +4,0 % na transakcję)")
-    for (_, txt, p), ok in zip(calc.POTENTIAL, r.get("pot_ok") or [None] * len(calc.POTENTIAL)):
-        item(ok, f"{txt} (+{str(p).replace('.', ',')} %)")
+    def cond(x, test):
+        return None if x is None else test(x)
+    item(cond(r.get("turnover"), lambda x: x >= calc.MIN_TURNOVER), "obrót ≥ 100 mln $ dziennie")
+    item(cond(r.get("rev_rr"), lambda x: x >= calc.MIN_REV_GROWTH), "przychody kw. ≥ +15 % r/r")
+    item(cond(r.get("dopm"), lambda x: x >= calc.MIN_DOPM), "marża oper. ≥ +3 pp r/r")
+    item(cond(r.get("ps"), lambda x: x < calc.MAX_PS), "wycena P/S < 20")
+    item(cond(r.get("rs"), lambda x: x >= calc.MIN_RS), "siła względna 52 tyg. ≥ +50 pp nad S&P 500")
     st = r.get("glb_state")
     item(True if st in ("WYBICIE", "SYGNAŁ") else None if st == "NAD" else False, f"Green Line: {st or '—'} (kupno 0–10 % nad linią)")
     item(r.get("macd") == "nad", f"MACD tyg. {r.get('macd') or '—'} sygnałem" + (f" · stop {r['macd_stop']:.2f}" if r.get("macd_stop") else ""))
     item(False if r.get("slow") else None if r.get("accel") is None else True, "brak hamowania przychodów")
-    out.append(("W nawiasie: średni wynik transakcji z cechą (spółki z warunkiem bez niej: +4,0 %).", "dim"))
     if pos and r.get("slow"):
         out.append((f"⚠ Masz pozycję, a raport pokazuje hamowanie{' i spadek marży brutto' if r['slow'] == 'HAMUJE+MB' else ''} — spadek ≥ 20 % w 6 mies. "
                     f"w {'50' if r['slow'] == 'HAMUJE+MB' else '44'} % przypadków (normalnie 33 %). Rozważ zacieśnienie stopu.", "warn"))
@@ -505,7 +501,7 @@ class ChartWindow(tk.Toplevel):
         self.panel.pack_propagate(False)
         self.ptext = tk.Text(self.panel, bg=PANEL, fg="#dde3ea", relief="flat", wrap="word", font=("Segoe UI", 11), padx=14, pady=10,
                              spacing1=3, spacing3=3, cursor="arrow", highlightthickness=0)
-        for tag, kw in (("h", {"font": ("Segoe UI", 13, "bold"), "foreground": "#ffffff"}), ("stars", {"font": ("Segoe UI", 18), "foreground": "#f0b429"}),
+        for tag, kw in (("h", {"font": ("Segoe UI", 13, "bold"), "foreground": "#ffffff"}),
                         ("sec", {"font": ("Segoe UI", 11, "bold"), "foreground": "#8b95a3", "spacing1": 12}), ("ok", {"foreground": "#3ddc84"}),
                         ("no", {"foreground": "#ff6b6b"}), ("na", {"foreground": "#8b95a3"}), ("warn", {"foreground": "#ffb020", "spacing1": 10}),
                         ("val", {"font": ("Consolas", 11), "foreground": "#ffffff"}), ("dim", {"foreground": "#8b95a3", "font": ("Segoe UI", 10)})):
@@ -810,7 +806,7 @@ class ChartWindow(tk.Toplevel):
         self.render_panel()
 
     def render_panel(self):
-        """Panel fundamentów: potencjał ★, wartości z ostatnich raportów, lista kontrolna, ostrzeżenie dla pozycji."""
+        """Panel fundamentów: warunki, wartości z ostatnich raportów, lista kontrolna, ostrzeżenie dla pozycji."""
         r = self.app.store.row(self.ticker) or {}
         arrow = "▶" if self.show_panel else "◀"
         self.fund_btn.config(text="\n".join([arrow, ""] + list("FUNDAMENTY") + ["", arrow]), fg="#ffb020" if r.get("slow") else "#c9d1d9")

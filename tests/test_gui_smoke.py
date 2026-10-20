@@ -11,13 +11,14 @@ tk = pytest.importorskip("tkinter")
 def _weekly(n=156):
     c = [50 + i * 0.5 + (3 if i % 7 == 0 else 0) for i in range(n)]
     return {"d": [f"{2023 + i // 52}-{(i % 52) // 4.4 + 1:02.0f}-01" for i in range(n)], "o": c, "h": [x * 1.03 for x in c], "l": [x * 0.97 for x in c],
-            "c": c, "v": [2e6 + (i % 5) * 1e5 for i in range(n)]}
+            "c": c, "v": [5e6 + (i % 5) * 1e5 for i in range(n)]}
 
 
 @pytest.fixture
 def app(tmp_path):
     w = _weekly()
-    rows = [calc.build_row({"ticker": t, "company": t + " Inc"}, w, [40, 120, 110, 110, 110], {"rev_rr": 30, "dopm": d}) for t, d in (("AAA", 5), ("BBB", 1))]
+    spy = {**w, "c": [400 - i * 1.5 for i in range(len(w["c"]))]}      # SPY spada -> siła względna AAA / BBB > 50 pp
+    rows = [calc.build_row({"ticker": t, "company": t + " Inc"}, w, [40, 120, 110, 110, 110], {"rev_rr": 30, "dopm": d}, spy) for t, d in (("AAA", 5), ("BBB", 1))]
     Store(tmp_path).save_scan(rows, {"AAA": w, "BBB": w}, "2026-10-20T08:00")
     try:
         from desktop import app as A
@@ -139,7 +140,7 @@ def test_guide_position_and_ibd_panels(app):
     g = ch.geom["g"]
     assert g["spx"][1] < g["price"][0] and g["vol"][1] < g["rev"][0] < g["rev"][1] < g["macd"][0]
     ch.toggle_pos()
-    assert "AAA" in st.alerts["pos"] and "AAA" in st.alerts["watch"] and "⚠" in ch.ptext.get("1.0", "end") and "Potencjał" in ch.ptext.get("1.0", "end")
+    assert "AAA" in st.alerts["pos"] and "AAA" in st.alerts["watch"] and "⚠" in ch.ptext.get("1.0", "end") and "spełnia warunki" in ch.ptext.get("1.0", "end")
     assert app.tree.item("AAA")["values"][0].startswith("📌") and "poswarn" in app.tree.item("AAA")["tags"]
     lines_ = A.checklist(row, st.alerts["pos"]["AAA"])
     assert any(ln.startswith("⚠ Masz pozycję") for ln in lines_)
@@ -147,7 +148,7 @@ def test_guide_position_and_ibd_panels(app):
     shown = ch.show_panel
     ch.toggle_panel()
     assert ch.show_panel != shown and app.store.settings["fund_panel"] == ch.show_panel and ch.fund_btn.cget("text").startswith("◀" if shown else "▶")
-    assert A.cell(2, "n") == "★★☆" and A.cell("HAMUJE", "w") == "⚠ hamuje"
+    assert A.cell(12.34, "x") == "12.3" and A.cell("HAMUJE", "w") == "⚠ hamuje"
 
 
 def test_monthly_chart_shows_green_line_history(app, monkeypatch):
@@ -197,4 +198,5 @@ def test_daily_chart_rwb_and_blue_dot(app, monkeypatch):
         time.sleep(0.02)
     assert ch.period == "D" and ch.geom["n"] == min(n, 260)
     texts = [ch.cv.itemcget(i, "text") for i in ch.cv.find_all() if ch.cv.type(i) == "text"]
-    assert any(t.startswith("Stochastic (10, 1)") for t in texts)
+    assert not any(t.startswith("Stochastic") or t.startswith("Przychody kw.") or t.startswith("MACD") for t in texts)   # dzienny: linia + RWB + Blue Dot + GLB
+    assert any("Blue Dot" in t for t in texts) and ch.geom["g"]["rev"] is None

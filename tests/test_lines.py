@@ -52,8 +52,8 @@ def test_list_filters():
     assert active_filters({"a": {"in": []}, "b": {"min": 1}, "c": {}}) == 1
 
 
-def test_default_order_strong_signal_first():
+def test_default_order_signal_first_then_relative_strength():
     from desktop.app import default_order
-    rows = [{"ticker": "A", "ok": True, "glb_state": "SYGNAŁ", "dopm": 5}, {"ticker": "B", "ok": True, "strong": True, "glb_state": "WYBICIE", "dopm": 11},
-            {"ticker": "C", "ok": True, "strong": True, "glb_state": "POD", "dopm": 30}, {"ticker": "D", "ok": False, "dopm": 50}]
+    rows = [{"ticker": "A", "ok": True, "glb_state": "SYGNAŁ", "rs": 55}, {"ticker": "B", "ok": True, "glb_state": "WYBICIE", "rs": 90},
+            {"ticker": "C", "ok": True, "glb_state": "POD", "rs": 120}, {"ticker": "D", "ok": False, "rs": 300}]
     assert [r["ticker"] for r in sorted(rows, key=default_order)] == ["B", "A", "C", "D"]

@@ -5,7 +5,9 @@ import time
 import tkinter as tk
 from tkinter import messagebox, ttk
 
-from . import calc, finviz, sec, sync
+import datetime as dt
+
+from . import calc, finviz, lines, sec, sync
 from .chart import ChartWindow
 from .store import DEFAULT_SCANNERS, Store, normalize_scanners
 from .theme import BG, PANEL, apply_dark, autowrap, setup_style
@@ -18,6 +20,36 @@ COLUMNS = [  # (klucz, nagłówek, szerokość, format)
     ("ok", "Warunki", 75, "b"),
 ]
 SIGNAL = ("WYBICIE", "SYGNAŁ")
+# filtry listy (wszystkie naraz, ORAZ): {kolumna: {"in": [wartości]} | {"min", "max"}}; liczby w jednostkach tabeli (obrót w mln $)
+FILTER_CHOICES = {"glb_state": ["WYBICIE", "SYGNAŁ", "NAD", "POD", "BRAK"], "macd": ["nad", "pod"], "ok": ["tak", "nie"]}
+FILTER_SCALE = {"turnover": 1e6}
+FILTER_PRESETS = [
+    ("Nad GLB + MACD dodatni", {"glb_state": {"in": ["WYBICIE", "SYGNAŁ", "NAD"]}, "macd": {"in": ["nad"]}}),
+    ("Sygnał kupna + MACD dodatni", {"glb_state": {"in": ["WYBICIE", "SYGNAŁ"]}, "macd": {"in": ["nad"]}}),
+    ("Blisko linii (−10…+10 %)", {"glb_pct": {"min": -10, "max": 10}}),
+]
+
+
+def filter_value(r, k):
+    if k == "ok":
+        return "tak" if r.get("ok") else "nie"
+    return "—" if r.get(k) is None else str(r[k])
+
+
+def pass_filters(r, filters):
+    for k, f in (filters or {}).items():
+        if f.get("in") and filter_value(r, k) not in f["in"]:
+            return False
+        if f.get("min") is None and f.get("max") is None:
+            continue
+        v = None if r.get(k) is None else r[k] / FILTER_SCALE.get(k, 1)
+        if v is None or (f.get("min") is not None and v < f["min"]) or (f.get("max") is not None and v > f["max"]):
+            return False
+    return True
+
+
+def active_filters(filters):
+    return sum(1 for f in (filters or {}).values() if f.get("in") or f.get("min") is not None or f.get("max") is not None)
 
 
 def cell(v, f):
@@ -71,10 +103,14 @@ class App:
         tk.Button(bar, text="Skanery / ustawienia…", command=self.open_settings, relief="flat").pack(side="left", padx=4)
         self.only_ok = tk.BooleanVar(value=True)
         tk.Checkbutton(bar, text="tylko spełniające warunki", variable=self.only_ok, command=self.refresh, bg=PANEL).pack(side="left", padx=8)
+        self.flt_btn = tk.Button(bar, text="Filtry…", command=lambda: FilterDialog(self), relief="flat")
+        self.flt_btn.pack(side="left", padx=4)
         tk.Label(bar, text="Szukaj:", bg=PANEL).pack(side="left")
         self.search = tk.StringVar()
         self.search.trace_add("write", lambda *_: self.refresh())
         tk.Entry(bar, textvariable=self.search, width=12, relief="flat").pack(side="left", padx=4)
+        self.alert_btn = tk.Button(bar, text="🔔 Alerty", command=lambda: AlertsDialog(self), relief="flat")
+        self.alert_btn.pack(side="left", padx=4)
         tk.Label(bar, text="Ctrl+K — dowolny symbol (np. SPY, NVDA)", bg=PANEL, fg="#8b95a3").pack(side="left", padx=12)
         frame = tk.Frame(self.root, bg=BG)
         frame.pack(fill="both", expand=True)
@@ -106,6 +142,7 @@ class App:
         self.root.after(150, self._poll)
         self.fill_scanners()
         self.refresh()
+        self.check_alerts()
 
     # --- skanery
     def fill_scanners(self):
@@ -122,7 +159,9 @@ class App:
     # --- lista
     def rows(self):
         text = self.search.get().strip().upper()
-        rows = [r for r in self.store.rows if (not self.only_ok.get() or r.get("ok")) and (not text or text in r["ticker"] or text in (r.get("company") or "").upper())]
+        flt = self.store.settings.get("list_filters") or {}
+        rows = [r for r in self.store.rows if (not self.only_ok.get() or r.get("ok")) and pass_filters(r, flt)
+                and (not text or text in r["ticker"] or text in (r.get("company") or "").upper())]
         if self.sort:
             key, rev = self.sort
             filled = sorted((r for r in rows if r.get(key) is not None), key=lambda r: r[key], reverse=rev)
@@ -138,9 +177,11 @@ class App:
             self.tree.insert("", "end", iid=r["ticker"], values=[cell(r.get(k), f) for k, _, _, f in COLUMNS], tags=(tag,))
         if sel and self.tree.exists(sel):
             self.tree.selection_set(sel)
+        nf = active_filters(self.store.settings.get("list_filters"))
+        self.flt_btn.config(text=f"Filtry ({nf})…" if nf else "Filtry…")
         n_ok = sum(1 for r in self.store.rows if r.get("ok"))
         n_sig = sum(1 for r in self.store.rows if r.get("ok") and r.get("glb_state") in SIGNAL)
-        self.status.config(text=f"  Skaner: {self.store.settings['scanner']}   Dane: {self.store.at or 'brak — kliknij ⟳ Sync'}   Spółek: {len(self.store.rows)}   spełnia warunki: {n_ok}   sygnał GLB: {n_sig}"
+        self.status.config(text=f"  Skaner: {self.store.settings['scanner']}   Dane: {self.store.at or 'brak — kliknij ⟳ Sync'}   Na liście: {len(self.tree.get_children())} z {len(self.store.rows)}   spełnia warunki: {n_ok}   sygnał GLB: {n_sig}"
                                 f"   (warunki: obrót ≥ {calc.MIN_TURNOVER / 1e6:.0f} mln $, przychody ≥ +{calc.MIN_REV_GROWTH:.0f} %, marża oper. ≥ +{calc.MIN_DOPM:.0f} pp r/r;"
                                 f" sygnał: zamknięcie tyg. 0–{calc.ENTRY_MAX_PCT:.0f} % nad Green Line; wyjście: MACD tyg. + stop {calc.STOP_PCT:.0f} %)")
 
@@ -211,6 +252,7 @@ class App:
                     self.pframe.pack_forget()
                     self.sync_btn.config(state="normal")
                     self.refresh()
+                    self.check_alerts()
                     if self.chart is not None and self.chart.winfo_exists():
                         self.chart.set_ticker(self.chart.ticker)
                 elif kind == "error":
@@ -223,6 +265,20 @@ class App:
 
     def open_settings(self):
         SettingsDialog(self)
+
+    # --- alerty (linie trendu + obserwowane spółki), sprawdzane po starcie i po Sync
+    def check_alerts(self):
+        st = self.store
+        weeks = [s["d"][-1] for s in st.series.values() if s and s.get("d")]
+        fresh = lines.eval_alerts(st.alerts, st.row, st.weekly, dt.datetime.now().isoformat(timespec="seconds"), max(weeks) if weeks else "")
+        st.save_alerts()
+        self.alert_badge()
+        if fresh:
+            self.status.config(text=f"  🔔 {len(fresh)} nowych alertów: " + " · ".join(f"{a['t']} {a['msg']}" for a in fresh[:3]))
+
+    def alert_badge(self):
+        n = sum(1 for a in self.store.alerts["log"] if a["at"] > self.store.alerts["seen"])
+        self.alert_btn.config(text=f"🔔 Alerty ({n})" if n else "🔔 Alerty", bg="#1f3b5c" if n else self.flt_btn.cget("bg"))
 
     def run(self):
         self.root.mainloop()
@@ -324,6 +380,134 @@ class SettingsDialog(tk.Toplevel):
         st.reload()
         self.app.fill_scanners()
         self.app.refresh()
+        self.destroy()
+
+
+class FilterDialog(tk.Toplevel):
+    """Filtry listy po kolumnach (wszystkie naraz): wartości tekstowe do zaznaczenia, liczby od–do; zmiany działają od razu."""
+
+    def __init__(self, app):
+        super().__init__(app.root)
+        self.app = app
+        self.title("Filtry listy")
+        self.configure(bg=PANEL)
+        apply_dark(self)
+        self.vars = {}
+        pre = tk.Frame(self, bg=PANEL)
+        pre.pack(fill="x", padx=10, pady=(10, 6))
+        tk.Label(pre, text="Gotowe:", bg=PANEL).pack(side="left")
+        for name, f in FILTER_PRESETS:
+            tk.Button(pre, text=name, relief="flat", command=lambda f=f: self.preset(f)).pack(side="left", padx=3)
+        self.body = tk.Frame(self, bg=PANEL)
+        self.body.pack(fill="both", padx=10)
+        row = tk.Frame(self, bg=PANEL)
+        row.pack(fill="x", padx=10, pady=10)
+        tk.Button(row, text="Wyczyść filtry", command=lambda: self.preset({}), relief="flat").pack(side="left")
+        tk.Button(row, text="Zamknij", command=self.destroy, relief="flat").pack(side="right")
+        self.bind("<Escape>", lambda e: self.destroy())
+        self.build()
+
+    def filters(self):
+        return self.app.store.settings.setdefault("list_filters", {})
+
+    def build(self):
+        for w in self.body.winfo_children():
+            w.destroy()
+        f, heads = self.filters(), {k: h for k, h, _, _ in COLUMNS}
+        choices = {**FILTER_CHOICES, "sector": sorted({r["sector"] for r in self.app.store.rows if r.get("sector")})}
+        r = 0
+        for k, vals in choices.items():
+            tk.Label(self.body, text=heads[k], bg=PANEL, fg="#8b95a3").grid(row=r, column=0, sticky="nw", pady=3)
+            box = tk.Frame(self.body, bg=PANEL)
+            box.grid(row=r, column=1, columnspan=3, sticky="w")
+            on = (f.get(k) or {}).get("in") or []
+            for i, v in enumerate(vals):
+                var = tk.BooleanVar(value=v in on)
+                tk.Checkbutton(box, text=v, variable=var, bg=PANEL, command=lambda k=k, v=v, var=var: self.toggle(k, v, var.get())).grid(row=i // 6, column=i % 6, sticky="w")
+            r += 1
+        for k, h, _, fm in COLUMNS:
+            if fm not in "p%m":
+                continue
+            tk.Label(self.body, text=h + (" (mln $)" if k in FILTER_SCALE else ""), bg=PANEL, fg="#8b95a3").grid(row=r, column=0, sticky="w", pady=2)
+            for c, b in ((1, "min"), (3, "max")):
+                v = (f.get(k) or {}).get(b)
+                var = tk.StringVar(value="" if v is None else f"{v:g}")
+                var.trace_add("write", lambda *_, k=k, b=b, var=var: self.number(k, b, var.get()))
+                tk.Entry(self.body, textvariable=var, width=10).grid(row=r, column=c, padx=2)
+                self.vars[(k, b)] = var
+            tk.Label(self.body, text="do", bg=PANEL).grid(row=r, column=2)
+            r += 1
+        tk.Label(self.body, text="od", bg=PANEL, fg="#8b95a3").grid(row=r, column=1)
+
+    def set(self, k, upd):
+        f = {**(self.filters().get(k) or {}), **upd}
+        f = {a: b for a, b in f.items() if b not in (None, [])}
+        if f:
+            self.filters()[k] = f
+        else:
+            self.filters().pop(k, None)
+        self.app.store.save_settings()
+        self.app.refresh()
+
+    def toggle(self, k, v, on):
+        cur = (self.filters().get(k) or {}).get("in") or []
+        self.set(k, {"in": cur + [v] if on else [x for x in cur if x != v]})
+
+    def number(self, k, b, raw):
+        raw = raw.strip().replace(",", ".")
+        try:
+            v = None if raw in ("", "-") else float(raw)
+        except ValueError:
+            return
+        self.set(k, {b: v})
+
+    def preset(self, f):
+        self.app.store.settings["list_filters"] = {k: dict(v) for k, v in f.items()}
+        self.app.store.save_settings()
+        self.app.refresh()
+        self.build()
+
+
+class AlertsDialog(tk.Toplevel):
+    """Dziennik alertów (nowe na górze), obserwowane spółki i spółki z liniami trendu; dwuklik otwiera wykres."""
+
+    def __init__(self, app):
+        super().__init__(app.root)
+        self.app = app
+        self.title("Alerty")
+        self.configure(bg=PANEL)
+        apply_dark(self)
+        st = app.store.alerts
+        tk.Label(self, text="Sprawdzane po starcie i po każdym Sync (zamknięcia tygodni). Dwuklik = wykres.", bg=PANEL, fg="#8b95a3").pack(anchor="w", padx=10, pady=(10, 4))
+        self.lst = tk.Listbox(self, width=110, height=18, bg=BG, fg="#c9d1d9", selectbackground="#1f3a5f", relief="flat")
+        self.lst.pack(fill="both", expand=True, padx=10)
+        self.items = []
+        for a in st["log"]:
+            self.items.append(a["t"])
+            self.lst.insert("end", f"{'● ' if a['at'] > st['seen'] else '  '}{a['t']:<7} {a['msg']}   (tydz. {a['week']}, {a['at'][:10]})")
+        if not st["log"]:
+            self.lst.insert("end", "Brak alertów.")
+        self.lst.bind("<Double-1>", lambda e: self.open())
+        info = (f"Obserwowane: {', '.join(st['watch']) or '—'} (🔕 Obserwuj na wykresie)   ·   "
+                f"Linie trendu: {', '.join(f'{t} ({len(v)})' for t, v in st['lines'].items()) or '—'}")
+        autowrap(tk.Label(self, text=info, bg=PANEL, anchor="w", justify="left")).pack(fill="x", padx=10, pady=6)
+        row = tk.Frame(self, bg=PANEL)
+        row.pack(fill="x", padx=10, pady=(0, 10))
+        tk.Button(row, text="Wyczyść", command=self.clear, relief="flat").pack(side="left")
+        tk.Button(row, text="Zamknij", command=self.destroy, relief="flat").pack(side="right")
+        self.bind("<Escape>", lambda e: self.destroy())
+        st["seen"] = dt.datetime.now().isoformat(timespec="seconds")
+        app.store.save_alerts()
+        app.alert_badge()
+
+    def open(self):
+        sel = self.lst.curselection()
+        if sel and sel[0] < len(self.items):
+            self.app.open_chart(self.items[sel[0]])
+
+    def clear(self):
+        self.app.store.alerts["log"] = []
+        self.app.store.save_alerts()
         self.destroy()
 
 

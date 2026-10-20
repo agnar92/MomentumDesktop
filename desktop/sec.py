@@ -9,7 +9,7 @@ import time
 import urllib.request
 
 UA = "MomentumDesktop research@example.com"
-SEC_VERSION = 2     # 2 = z poprzednim kwartałem i historią 8 kwartałów
+SEC_VERSION = 3     # 2 = poprzedni kwartał i historia 8 kwartałów; 3 = też zmiana zysku oper. w $ i przychody kwartału
 FRESH_DAYS = 7
 TICKERS_URL = "https://www.sec.gov/files/company_tickers.json"
 FACTS_URL = "https://data.sec.gov/api/xbrl/companyfacts/CIK{:010d}.json"
@@ -62,6 +62,7 @@ def _quarter(s, rev, e0, ends):
     if e0 in s["op"] and e4 in s["op"]:
         out["opm"] = s["op"][e0] / rev[e0] * 100
         out["dopm"] = out["opm"] - s["op"][e4] / rev[e4] * 100
+        out["op_d"] = s["op"][e0] - s["op"][e4]          # zmiana zysku operacyjnego w $ r/r (zabezpieczenie: RGTI)
     if gp[e0] is not None and gp[e4] is not None:
         out["dgm"] = (gp[e0] / rev[e0] - gp[e4] / rev[e4]) * 100
     return out
@@ -79,6 +80,7 @@ def metrics(facts):
     if last is None:
         return {}
     out = {k: v for k, v in last.items() if k != "rev"}
+    out["rev_q"] = last["rev"]                             # przychody ostatniego kwartału ($)
     prev = _quarter(s, rev, ends[-2], ends) if len(ends) > 5 else None
     if prev:
         out["rev_rr1"], out["dopm1"] = prev["rev_rr"], prev.get("dopm")

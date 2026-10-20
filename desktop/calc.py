@@ -11,6 +11,7 @@ ENTRY_MAX_PCT = 10.0    # wejście do 10 % nad linią
 MIN_TURNOVER = 50e6     # obrót dzienny ($)
 MIN_REV_GROWTH = 15.0   # przychody kw. r/r (%)
 MIN_DOPM = 3.0          # zmiana marży operacyjnej r/r (pp)
+MIN_REV_Q = 25e6        # zabezpieczenie: przychody kwartału ≥ 25 mln $ (przy symbolicznych przychodach zmiana marży w pp nic nie znaczy — RGTI)
 MIN_DOPM_STRONG = 10.0  # „Mocne”: zmiana marży oper. r/r ≥ 10 pp przy pozostałych warunkach (badanie 2015–2026, wszystkie sygnały GLB 0–10 %:
                         # +5,1 % na transakcję vs +2,9 %, portfel wszystkich 22,7 % vs 16,1 % rocznie; ok. połowa spółek)
 STOP_PCT = 10.0         # stop początkowy pod wejściem
@@ -153,9 +154,12 @@ def turnover(closes, volumes, weeks=4):
 
 
 def passes(row):
-    """Warunki strategii (lista do sprawdzenia): obrót, przychody, zmiana marży operacyjnej."""
-    t, r, d = row.get("turnover"), row.get("rev_rr"), row.get("dopm")
-    return _ok(t) and t >= MIN_TURNOVER and _ok(r) and r >= MIN_REV_GROWTH and _ok(d) and d >= MIN_DOPM
+    """Warunki strategii (lista do sprawdzenia): obrót, przychody, zmiana marży operacyjnej — plus zabezpieczenia (RGTI: przychody 5 mln $, strata
+    oper. rosła o 41 %, a „Δ marży” wychodziła +558 pp): zysk operacyjny w $ lepszy niż rok wcześniej i przychody kwartału ≥ 25 mln $
+    (test: +3,4 % vs +2,9 % na transakcję, Mocne +6,2 % vs +5,1 %; odpada ok. 4 % sygnałów). Brak tych danych (stary wpis SEC) nie blokuje."""
+    t, r, d, od, rq = (row.get(k) for k in ("turnover", "rev_rr", "dopm", "op_d", "rev_q"))
+    guard = not (_ok(od) and od <= 0) and not (_ok(rq) and rq < MIN_REV_Q)
+    return _ok(t) and t >= MIN_TURNOVER and _ok(r) and r >= MIN_REV_GROWTH and _ok(d) and d >= MIN_DOPM and guard
 
 
 def potential(row):
@@ -190,7 +194,7 @@ def build_row(base, weekly, months, fund):
                turnover=turnover(c, v))
     m = macd_info(c, lo)
     row.update(macd=m["state"], macd_stop=m["stop"])
-    row.update({k: (fund or {}).get(k) for k in ("rev_rr", "rev_rr1", "accel", "dopm", "dopm1", "opm", "dgm", "quarter", "qs")})
+    row.update({k: (fund or {}).get(k) for k in ("rev_rr", "rev_rr1", "accel", "dopm", "dopm1", "opm", "dgm", "quarter", "qs", "op_d", "rev_q")})
     row["ok"] = passes(row)
     row["strong"] = bool(row["ok"] and _ok(row.get("dopm")) and row["dopm"] >= MIN_DOPM_STRONG)
     pot = potential(row)

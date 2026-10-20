@@ -535,6 +535,8 @@ GUIDE = """1. NAJPIERW DOBRA SPÓŁKA — bez tego GLB nie działa
 Wszystkie sygnały GLB 2015–2026, bez limitu kapitału: bez fundamentów GLB wypada jak zakup w losowym tygodniu (+2,6 % vs +2,4 % na transakcję).
 Z warunkami strategii portfel wszystkich sygnałów GLB dał 16,1 % rocznie (losowe wejście z tymi samymi warunkami: 10,3 %, SPY 13,6 %).
 Warunki strategii (kolumna Warunki): obrót ≥ 50 mln $ dziennie, przychody kw. ≥ +15 % r/r, marża operacyjna ≥ +3 pp r/r.
+Zabezpieczenie (przypadek RGTI): zysk operacyjny w $ musi być lepszy niż rok wcześniej, a przychody kwartału ≥ 25 mln $. Przy symbolicznych przychodach
+zmiana marży w pp nic nie znaczy (RGTI: przychody 5 mln $, strata oper. większa o 41 %, a „Δ marży” +558 pp).
 
 MOCNE (kolumna Mocne, ciemniejsza zieleń na liście): warunki strategii + zmiana marży oper. r/r ≥ 10 pp (zamiast ≥ 3 pp).
 Wszystkie sygnały GLB 0–10 % 2015–2026: +5,1 % na transakcję (obecne warunki +2,9 %), portfel wszystkich 22,7 % rocznie (16,1 %), maks. spadek −40 % (−34 %).

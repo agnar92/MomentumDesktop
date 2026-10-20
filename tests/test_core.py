@@ -110,7 +110,7 @@ def test_monthly_updates_only_new_months_and_uses_high(monkeypatch):
     hi = pd.Series([10.0, 12.0], index=pd.to_datetime(["2026-08-01", "2026-09-01"]))
     _yf_fake(monkeypatch, calls, {"A": {"High": hi}, "B": {"High": hi}})
     cache = {"A": {"h": [["2026-07", 9.0], ["2026-08", 10.0]], "upto": "2026-08"}, "C": {"h": [], "upto": "2026-09"},
-             "B": {"m": [["2026-08", 1.0]], "upto": "2026-08"}}      # stary wpis z zamknięciami -> cała historia
+             "B": {"m": [["2026-09", 1.0]], "upto": "2026-09"}}      # stary wpis z zamknięciami (nawet aktualny) -> cała historia
     prices.monthly(["A", "B", "C"], cache, log=lambda s: None, today=dt.date(2026, 10, 20))
     assert calls == [(["A"], "6mo"), (["B"], "max")]                 # C aktualne: bez zapytania
     assert cache["A"] == {"h": [["2026-07", 9.0], ["2026-08", 10.0], ["2026-09", 12.0]], "upto": "2026-09"}

@@ -130,7 +130,7 @@ def monthly(tickers, cache, log=print, today=None, progress=None):
     Spółka z zapisem sprzed ostatniego zamkniętego miesiąca dostaje tylko ostatnie miesiące; całą historię — nowa spółka albo zmienione ceny.
     Stare wpisy z zamknięciami ("m") traktujemy jak brak (Green Line liczymy teraz z High). -> lista pobranych tickerów."""
     need = last_closed_month(today)
-    todo = [t for t in tickers if (cache.get(t) or {}).get("upto") != need]
+    todo = [t for t in tickers if (cache.get(t) or {}).get("upto") != need or "h" not in cache[t]]
     update = [t for t in todo if (cache.get(t) or {}).get("h")]
     full = [t for t in todo if t not in update]
     total, done = len(todo), 0

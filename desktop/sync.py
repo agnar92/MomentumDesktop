@@ -1,8 +1,26 @@
-"""Synchronizacja: Finviz (lista) → yfinance (tygodniowe 3 lata + miesięczne z całej historii, z pamięci podręcznej) → SEC (fundamenty,
-z pamięci podręcznej) → wiersze listy. Funkcje sieciowe można podmienić (testy)."""
+"""Synchronizacja: Finviz (lista) → yfinance (tygodniowe: tylko nowe tygodnie dla spółek już pobranych; miesięczne High: tylko nowe
+miesiące) → SEC (fundamenty, z pamięci podręcznej) → wiersze listy. Funkcje sieciowe można podmienić (testy).
+`progress(ułamek 0–1, opis etapu)` dostaje postęp całości (pasek na dole okna)."""
 import datetime as dt
 
 from . import calc, finviz, prices, sec
+
+# etapy i ich udział w pasku postępu (SEC trwa najdłużej: jedno zapytanie na spółkę)
+STAGES = (("Finviz — lista spółek", 0.15), ("yfinance — tygodniowe", 0.25), ("yfinance — miesięczne High", 0.2), ("SEC — fundamenty", 0.4))
+
+
+def stage_progress(progress, k):
+    """-> funkcja (zrobione, wszystkie) dla etapu k, przeliczająca na postęp całości."""
+    start = sum(w for _, w in STAGES[:k])
+    name, weight = STAGES[k]
+
+    def f(done, total):
+        if progress:
+            frac = done / total if total else 1.0
+            progress(start + weight * min(1.0, frac), f"Etap {k + 1}/{len(STAGES)}: {name} {done}/{total}")
+    if progress:
+        progress(start, f"Etap {k + 1}/{len(STAGES)}: {name}")
+    return f
 
 
 def symbol(sym, store, log=print, weekly=prices.weekly, monthly=prices.monthly, fund=sec.update):
@@ -18,36 +36,38 @@ def symbol(sym, store, log=print, weekly=prices.weekly, monthly=prices.monthly, 
         log(f"SEC: {e}")
     store.save_cache("monthly", mcache)
     store.save_cache("sec", scache)
-    row = calc.build_row({"ticker": sym}, w, prices.closed_months(mcache.get(sym)), scache.get(sym))
+    row = calc.build_row({"ticker": sym}, w, prices.monthly_highs(mcache.get(sym)), scache.get(sym))
     store.extra[sym] = (row, w)
     return row, w
 
 
-def run(store, log=print, fetch_list=finviz.fetch, weekly=prices.weekly, monthly=prices.monthly, fund=sec.update, now=None):
+def run(store, log=print, fetch_list=finviz.fetch, weekly=prices.weekly, monthly=prices.monthly, fund=sec.update, now=None, progress=None):
     filters = store.settings.get("filters") or finviz.DEFAULT_FILTERS
     log(f"Finviz: filtr {filters}")
-    base, total = fetch_list(filters, log=log)
+    base, total = fetch_list(filters, log=log, progress=stage_progress(progress, 0))
     if not base:
         raise RuntimeError("Finviz nie zwrócił spółek (blokada albo zły filtr) — lista bez zmian.")
     tickers = [r["ticker"] for r in base]
     log(f"Finviz: {len(tickers)} spółek{f' z {total}' if total and total != len(tickers) else ''}")
-    series = weekly(tickers, log=log)
-    # fundamenty i całą historię miesięczną pobieramy tylko dla spółek, które przechodzą próg obrotu (reszta i tak odpada)
+    series = weekly(tickers, log=log, cache=store.series, progress=stage_progress(progress, 1))
+    # fundamenty i historię miesięczną pobieramy tylko dla spółek, które przechodzą próg obrotu (reszta i tak odpada)
     liquid = [t for t in tickers if t in series and (calc.turnover(series[t]["c"], series[t]["v"]) or 0) >= calc.MIN_TURNOVER]
     log(f"Obrót ≥ {calc.MIN_TURNOVER / 1e6:.0f} mln $ dziennie: {len(liquid)} spółek")
     mcache, scache = store.cache("monthly"), store.cache("sec")
-    monthly(liquid, mcache, log=log)
+    monthly(liquid, mcache, log=log, progress=stage_progress(progress, 2))
     store.save_cache("monthly", mcache)
     try:
-        fund(liquid, scache, ua=store.settings.get("sec_ua") or sec.UA, log=log)
+        fund(liquid, scache, ua=store.settings.get("sec_ua") or sec.UA, log=log, progress=stage_progress(progress, 3))
     except Exception as e:
         log(f"⚠ SEC niedostępny ({e}) — używam zapisanych fundamentów.")
     store.save_cache("sec", scache)
-    rows = [calc.build_row(b, series[b["ticker"]], prices.closed_months(mcache.get(b["ticker"])), scache.get(b["ticker"]))
+    rows = [calc.build_row(b, series[b["ticker"]], prices.monthly_highs(mcache.get(b["ticker"])), scache.get(b["ticker"]))
             for b in base if b["ticker"] in series]
     keep = {r["ticker"] for r in rows}
     store.save_scan(rows, {t: s for t, s in series.items() if t in keep}, (now or dt.datetime.now()).isoformat(timespec="minutes"))
     ok = sum(1 for r in rows if r["ok"])
     sig = sum(1 for r in rows if r["ok"] and r["glb_state"] in ("SYGNAŁ", "WYBICIE"))
+    if progress:
+        progress(1.0, "Gotowe")
     log(f"✓ Gotowe: {len(rows)} spółek, warunki spełnia {ok}, sygnał GLB: {sig}")
     return rows

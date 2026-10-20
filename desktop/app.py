@@ -1,6 +1,7 @@
 """Główne okno: jedna lista (skan Finviz + warunki strategii), Sync, ustawienia filtra i wykres tygodniowy. Ctrl+K = dowolny symbol."""
 import queue
 import threading
+import time
 import tkinter as tk
 from tkinter import messagebox, ttk
 
@@ -31,6 +32,17 @@ def cell(v, f):
     if f == "b":
         return "✓" if v else ""
     return str(v)
+
+
+def fmt_time(sec):
+    sec = int(max(0, sec))
+    return f"{sec // 60}:{sec % 60:02d}"
+
+
+def progress_text(frac, stage, elapsed):
+    """Napis przy pasku postępu: etap, procent, czas od startu i szacunek do końca (gdy jest z czego liczyć)."""
+    eta = f" · zostało ~{fmt_time(elapsed * (1 - frac) / frac)}" if 0.03 < frac < 1 else ""
+    return f"{stage} · {frac * 100:.0f} % · {fmt_time(elapsed)}{eta}"
 
 
 def default_order(r):
@@ -76,6 +88,13 @@ class App:
         self.tree.bind("<<TreeviewSelect>>", lambda e: self._follow())
         self.status = autowrap(tk.Label(self.root, text="", bg=PANEL, padx=8))
         self.status.pack(fill="x", side="bottom")
+        # pasek postępu Sync (na samym dole, widoczny tylko w trakcie)
+        self.pframe = tk.Frame(self.root, bg=PANEL)
+        self.pbar = ttk.Progressbar(self.pframe, orient="horizontal", mode="determinate", maximum=1000)
+        self.pbar.pack(side="left", fill="x", expand=True, padx=(8, 8), pady=4)
+        self.plabel = tk.Label(self.pframe, text="", bg=PANEL, anchor="w", width=70)
+        self.plabel.pack(side="left", padx=(0, 8))
+        self.t0 = None
         self.root.bind("<F5>", lambda e: self.start_sync())
         self.root.bind("<Control-k>", lambda e: self.open_symbol())
         self.root.bind("<slash>", lambda e: self.open_symbol() if e.widget is self.tree else None)
@@ -144,10 +163,14 @@ class App:
             return
         self.sync_btn.config(state="disabled")
         log = lambda s: self.q.put(("log", s))   # noqa: E731
+        self.t0 = time.monotonic()
+        self.pbar["value"] = 0
+        self.plabel.config(text="Start…")
+        self.pframe.pack(fill="x", side="bottom", before=self.status)
 
         def work():
             try:
-                sync.run(self.store, log=log)
+                sync.run(self.store, log=log, progress=lambda f, st: self.q.put(("progress", (f, st))))
                 self.q.put(("synced", None))
             except Exception as e:   # błąd sieci / Finviz: lista zostaje stara, komunikat w pasku
                 self.q.put(("error", str(e)))
@@ -162,12 +185,18 @@ class App:
                 kind, val = self.q.get_nowait()
                 if kind == "log":
                     self.status.config(text="  " + val)
+                elif kind == "progress":
+                    frac, stage = val
+                    self.pbar["value"] = frac * 1000
+                    self.plabel.config(text=progress_text(frac, stage, time.monotonic() - (self.t0 or time.monotonic())))
                 elif kind == "synced":
+                    self.pframe.pack_forget()
                     self.sync_btn.config(state="normal")
                     self.refresh()
                     if self.chart is not None and self.chart.winfo_exists():
                         self.chart.set_ticker(self.chart.ticker)
                 elif kind == "error":
+                    self.pframe.pack_forget()
                     self.sync_btn.config(state="normal")
                     self.status.config(text=f"  ❌ {val}")
         except queue.Empty:

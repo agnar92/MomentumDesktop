@@ -1,7 +1,7 @@
-"""Obliczenia (czyste funkcje, bez sieci i GUI): Green Line z miesięcznych zamknięć, stan GLB na zamknięciu tygodnia, MACD tygodniowy,
+"""Obliczenia (czyste funkcje, bez sieci i GUI): Green Line z miesięcznych High (jak w oryginale Dr. Wisha), stan GLB na zamknięciu tygodnia, MACD tygodniowy,
 średnie, obrót i warunki strategii z backtestu (płynny rynek USA 2015–2026):
   - obrót dzienny ≥ 50 mln $, przychody kw. ≥ +15 % r/r, marża operacyjna ≥ +3 pp r/r (z SEC),
-  - wejście: zamknięcie tygodnia 0–10 % nad Green Line (rekord zamknięcia miesięcznego, który stoi ≥ 3 zamknięte miesiące),
+  - wejście: zamknięcie tygodnia 0–10 % nad Green Line (rekord wszech czasów miesięcznego High, który stoi ≥ 3 zamknięte miesiące),
   - wyjście: tygodniowy MACD (12, 26, 9) — stop pod Low tygodnia, w którym MACD przeciął sygnał w dół, plus stop 10 % pod wejściem.
 Heurystyka z backtestu, nie porada inwestycyjna."""
 import math
@@ -19,7 +19,7 @@ def _ok(v):
 
 
 def green_line(months, confirm=CONFIRM_MONTHS):
-    """months = zamknięcia ZAMKNIĘTYCH miesięcy (od najstarszego). -> (poziom, indeks miesiąca rekordu) albo (None, None).
+    """months = High ZAMKNIĘTYCH miesięcy (od najstarszego). -> (poziom, indeks miesiąca rekordu) albo (None, None).
     Rekord wszech czasów jest linią, gdy stoi ≥ `confirm` miesięcy; nowszy rekord zastępuje ją dopiero po swoich `confirm` miesiącach."""
     level = at = None
     mx, mi = -math.inf, None
@@ -98,7 +98,7 @@ def passes(row):
 
 
 def build_row(base, weekly, months, fund):
-    """Wiersz listy: base (z Finviz), weekly {d, o, h, l, c, v}, months (zamknięte miesiące), fund (z SEC albo None)."""
+    """Wiersz listy: base (z Finviz), weekly {d, o, h, l, c, v}, months (High zamkniętych miesięcy), fund (z SEC albo None)."""
     c, lo, v = weekly.get("c") or [], weekly.get("l") or [], weekly.get("v") or []
     row = dict(base)
     price = c[-1] if c else None

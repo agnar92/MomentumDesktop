@@ -64,8 +64,8 @@ def parse_page(page):
     return rows, total
 
 
-def fetch(filters, max_tickers=MAX_TICKERS, pause=0.7, log=print, get=None):
-    """Wszystkie strony screenera (po 20 wierszy). -> (wiersze, łączna liczba wg Finviz)."""
+def fetch(filters, max_tickers=MAX_TICKERS, pause=0.7, log=print, get=None, progress=None):
+    """Wszystkie strony screenera (po 20 wierszy). -> (wiersze, łączna liczba wg Finviz). progress(wiersze, oczekiwane) po każdej stronie."""
     get = get or requests.Session().get
     out, seen, offset, total = [], set(), 1, None
     while len(out) < max_tickers:
@@ -79,6 +79,8 @@ def fetch(filters, max_tickers=MAX_TICKERS, pause=0.7, log=print, get=None):
         for x in new:
             seen.add(x["ticker"])
             out.append(x)
+        if progress:
+            progress(len(out), min(total or len(out), max_tickers))
         if offset == 1 and total:
             log(f"Finviz: {total} spółek z filtrem")
         offset += PAGE

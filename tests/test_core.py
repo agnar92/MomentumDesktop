@@ -92,31 +92,80 @@ def test_sec_update_uses_cache(monkeypatch):
     assert cache["OLD"]["rev_rr"] == 1 and "at" in cache["ZZZ"]
 
 
-def test_monthly_cache_only_refetches_after_month_close(monkeypatch):
-    calls = []
+class _Frame(dict):
+    empty = False
 
-    class F:
-        empty = False
-    monkeypatch.setattr(prices, "_yf", lambda: type("Y", (), {"download": staticmethod(lambda part, **k: calls.append(part) or F())}))
-    monkeypatch.setattr(prices, "_frames", lambda df, part: {})
-    cache = {"A": {"m": [], "upto": "2026-09"}}
-    prices.monthly(["A", "B"], cache, log=lambda s: None, today=dt.date(2026, 10, 20))
-    assert calls == [["B"]]
+    def dropna(self, subset=None):
+        return self
+
+
+def _yf_fake(monkeypatch, calls, frames):
+    monkeypatch.setattr(prices, "_yf", lambda: type("Y", (), {"download": staticmethod(lambda part, **k: calls.append((list(part), k["period"])) or "df")}))
+    monkeypatch.setattr(prices, "_frames", lambda df, part: {t: frames[t] for t in part if t in frames})
+
+
+def test_monthly_updates_only_new_months_and_uses_high(monkeypatch):
+    import pandas as pd
+    calls = []
+    hi = pd.Series([10.0, 12.0], index=pd.to_datetime(["2026-08-01", "2026-09-01"]))
+    _yf_fake(monkeypatch, calls, {"A": {"High": hi}, "B": {"High": hi}})
+    cache = {"A": {"h": [["2026-07", 9.0], ["2026-08", 10.0]], "upto": "2026-08"}, "C": {"h": [], "upto": "2026-09"},
+             "B": {"m": [["2026-08", 1.0]], "upto": "2026-08"}}      # stary wpis z zamknięciami -> cała historia
+    prices.monthly(["A", "B", "C"], cache, log=lambda s: None, today=dt.date(2026, 10, 20))
+    assert calls == [(["A"], "6mo"), (["B"], "max")]                 # C aktualne: bez zapytania
+    assert cache["A"] == {"h": [["2026-07", 9.0], ["2026-08", 10.0], ["2026-09", 12.0]], "upto": "2026-09"}
+    assert prices.monthly_highs(cache["B"]) == [10.0, 12.0]
+
+
+def test_monthly_refetches_full_history_when_prices_changed(monkeypatch):
+    import pandas as pd
+    calls = []
+    _yf_fake(monkeypatch, calls, {"A": {"High": pd.Series([5.0, 6.0], index=pd.to_datetime(["2026-08-01", "2026-09-01"]))}})
+    cache = {"A": {"h": [["2026-08", 10.0]], "upto": "2026-08"}}   # split 2:1 — 10 -> 5
+    prices.monthly(["A"], cache, log=lambda s: None, today=dt.date(2026, 10, 20))
+    assert calls == [(["A"], "6mo"), (["A"], "max")] and cache["A"]["h"] == [["2026-08", 5.0], ["2026-09", 6.0]]
+
+
+def test_merge_weekly_appends_new_weeks_and_detects_adjusted_history():
+    old = {k: [1, 2, 3] for k in "ohlcv"} | {"d": ["2026-09-28", "2026-10-05", "2026-10-12"]}
+    new = {k: [3.01, 4] for k in "ohlcv"} | {"d": ["2026-10-12", "2026-10-19"]}
+    m = prices.merge_weekly(old, new)
+    assert m["d"] == ["2026-09-28", "2026-10-05", "2026-10-12", "2026-10-19"] and m["c"] == [1, 2, 3.01, 4]
+    assert prices.merge_weekly(old, {**new, "c": [1.5, 2]}) is None
+    assert prices.merge_weekly(old, new, keep=2)["d"] == ["2026-10-12", "2026-10-19"]
+
+
+def test_weekly_fetches_only_recent_weeks_for_cached(monkeypatch):
+    import pandas as pd
+    calls = []
+    idx = pd.to_datetime(["2026-10-12", "2026-10-19"])
+    f = {"Open": [3.0, 4.0], "High": [3.0, 4.0], "Low": [3.0, 4.0], "Close": [3.0, 4.0], "Volume": [1.0, 1.0]}
+    df = pd.DataFrame(f, index=idx)
+    full = pd.DataFrame({k: [1.0] * 12 for k in f}, index=pd.date_range("2026-08-03", periods=12, freq="W-MON"))
+    monkeypatch.setattr(prices, "_yf", lambda: type("Y", (), {"download": staticmethod(lambda part, **k: calls.append((list(part), k["period"])) or k["period"])}))
+    monkeypatch.setattr(prices, "_frames", lambda d, part: {t: (full if d == "3y" else df) for t in part})
+    cache = {"A": {k: [1, 2, 3] for k in "ohlcv"} | {"d": ["2026-09-28", "2026-10-05", "2026-10-12"]}}
+    out = prices.weekly(["A", "N"], log=lambda s: None, cache=cache, today=dt.date(2026, 10, 20))
+    assert calls == [(["A"], "1mo"), (["N"], "3y")]
+    assert out["A"]["c"] == [1, 2, 3.0, 4.0] and len(out["N"]["c"]) == 12
 
 
 def test_sync_run_with_fake_sources(tmp_path):
     store = Store(tmp_path)
     w = {"d": ["2026-01-05"] * 40, "o": [1] * 40, "h": [1] * 40, "l": [1] * 40, "c": [100.0] * 39 + [104.0], "v": [5e6] * 40}
 
-    def monthly(ts, cache, log):
+    def monthly(ts, cache, log, progress=None):
         for t in ts:
-            cache[t] = {"m": [["2025-01", 50], ["2025-02", 100], ["2025-03", 90], ["2025-04", 90], ["2025-05", 90]], "upto": "2025-05"}
+            cache[t] = {"h": [["2025-01", 50], ["2025-02", 100], ["2025-03", 90], ["2025-04", 90], ["2025-05", 90]], "upto": "2025-05"}
 
-    def fund(ts, cache, ua, log):
+    def fund(ts, cache, ua, log, progress=None):
         for t in ts:
             cache[t] = {"at": "2026-10-20", "rev_rr": 25, "dopm": 6}
-    rows = sync.run(store, log=lambda s: None, fetch_list=lambda f, log: ([{"ticker": "A"}, {"ticker": "B"}], 2),
-                    weekly=lambda ts, log: {"A": w, "B": {**w, "v": [1e3] * 40}}, monthly=monthly, fund=fund)
+    steps = []
+    rows = sync.run(store, log=lambda s: None, fetch_list=lambda f, log, progress: ([{"ticker": "A"}, {"ticker": "B"}], 2),
+                    weekly=lambda ts, log, cache, progress: {"A": w, "B": {**w, "v": [1e3] * 40}}, monthly=monthly, fund=fund,
+                    progress=lambda f, st: steps.append((round(f, 2), st)))
+    assert [f for f, _ in steps] == [0.0, 0.15, 0.4, 0.6, 1.0] and steps[-1][1] == "Gotowe"
     a = next(r for r in rows if r["ticker"] == "A")
     assert a["ok"] and a["glb_state"] == "SYGNAŁ"
     assert not next(r for r in rows if r["ticker"] == "B")["ok"]   # za mały obrót

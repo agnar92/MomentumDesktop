@@ -1,12 +1,16 @@
-"""Ceny z yfinance — tylko dwa zapytania na spółkę:
-  - tygodniowe świece z ostatnich 3 lat (wykres, średnie, MACD, wolumen, obrót),
-  - miesięczne zamknięcia z całej historii (Green Line). Zakończone miesiące się nie zmieniają, więc trzymamy je w pamięci podręcznej
-    i pobieramy ponownie dopiero po zamknięciu kolejnego miesiąca."""
+"""Ceny z yfinance — tylko dwa rodzaje zapytań i tylko o to, czego jeszcze nie mamy:
+  - tygodniowe świece z ostatnich 3 lat (wykres, średnie, MACD, wolumen, obrót): spółka już pobrana dostaje tylko ostatnie tygodnie
+    (doklejane do zapisanych), pełne 3 lata pobieramy dla nowej spółki, po długiej przerwie albo gdy ceny wstecz się zmieniły (split / dywidenda),
+  - miesięczne HIGH z całej historii (Green Line jak w oryginale Dr. Wisha): zamknięte miesiące się nie zmieniają, więc po zamknięciu
+    kolejnego miesiąca dociągamy tylko ostatnie miesiące; całą historię tylko dla nowej spółki albo gdy ceny wstecz się zmieniły.
+`progress(zrobione, wszystkie)` (opcjonalnie) dostaje postęp po każdej paczce."""
 import datetime as dt
 import math
 
 WEEKLY_PERIOD = "3y"
+KEEP_WEEKS = 157          # ~3 lata świec tygodniowych
 BATCH = 100
+ADJ_TOL = 0.015           # różnica cen na wspólnej dacie > 1,5 % = ceny wstecz zmienione (split / dywidenda) -> pełne pobranie
 
 
 def _yf():
@@ -33,19 +37,70 @@ def _clean(x):
     return None if x is None or (isinstance(x, float) and math.isnan(x)) else round(float(x), 4)
 
 
-def weekly(tickers, log=print, period=WEEKLY_PERIOD):
-    """-> {ticker: {d: [daty], o, h, l, c, v}} (tydzień = data poniedziałku jak w Yahoo; ostatni tydzień może być w toku)."""
-    out = {}
-    for i in range(0, len(tickers), BATCH):
-        part = tickers[i:i + BATCH]
-        df = _yf().download(part, period=period, interval="1wk", auto_adjust=True, group_by="ticker", progress=False, threads=True)
-        for t, f in _frames(df, part).items():
-            f = f.dropna(subset=["Close"])
-            if len(f) < 10:
-                continue
-            out[t] = {"d": [d.strftime("%Y-%m-%d") for d in f.index], **{k: [_clean(x) for x in f[col]] for k, col in
-                                                                         (("o", "Open"), ("h", "High"), ("l", "Low"), ("c", "Close"), ("v", "Volume"))}}
-        log(f"yfinance (tygodniowe 3 lata): {min(i + BATCH, len(tickers))}/{len(tickers)}")
+def _series(f):
+    f = f.dropna(subset=["Close"])
+    return {"d": [d.strftime("%Y-%m-%d") for d in f.index], **{k: [_clean(x) for x in f[col]] for k, col in
+                                                              (("o", "Open"), ("h", "High"), ("l", "Low"), ("c", "Close"), ("v", "Volume"))}}
+
+
+def _same(a, b):
+    return a and b and abs(a / b - 1) <= ADJ_TOL
+
+
+def merge_weekly(old, new, keep=KEEP_WEEKS):
+    """Dokleja nowe tygodnie do zapisanych (nowe nadpisują od swojej pierwszej daty). -> seria albo None, gdy ceny na wspólnej dacie
+    się różnią (zmienione wstecz — trzeba pobrać całość)."""
+    if not new["d"]:
+        return old
+    first = new["d"][0]
+    if first in old["d"] and not _same(old["c"][old["d"].index(first)], new["c"][0]):
+        return None
+    cut = next((i for i, d in enumerate(old["d"]) if d >= first), len(old["d"]))
+    out = {k: (old[k][:cut] + new[k])[-keep:] for k in ("d", "o", "h", "l", "c", "v")}
+    return out
+
+
+def _recent_period(last, today):
+    """Ile dociągnąć do zapisanej serii: '1mo' / '6mo', albo None = za długa przerwa, całe 3 lata."""
+    gap = (today - dt.date.fromisoformat(last)).days
+    return "1mo" if gap <= 21 else "6mo" if gap <= 150 else None
+
+
+def weekly(tickers, log=print, period=WEEKLY_PERIOD, cache=None, today=None, progress=None):
+    """-> {ticker: {d: [daty], o, h, l, c, v}} (tydzień = data poniedziałku jak w Yahoo; ostatni tydzień może być w toku).
+    cache = zapisane serie {ticker: seria}: dla nich pobieramy tylko ostatnie tygodnie i doklejamy."""
+    cache, today = cache or {}, today or dt.date.today()
+    update, full = {}, []
+    for t in tickers:
+        old = cache.get(t)
+        p = _recent_period(old["d"][-1], today) if old and old.get("d") else None
+        (update.setdefault(p, []) if p else full).append(t)
+    total, done, out = len(tickers), 0, {}
+
+    def fetch(part, per):
+        nonlocal done
+        df = _yf().download(part, period=per, interval="1wk", auto_adjust=True, group_by="ticker", progress=False, threads=True)
+        done += len(part)
+        if progress:
+            progress(done, total)
+        log(f"yfinance tygodniowe ({'3 lata' if per == period else 'aktualizacja'}): {done}/{total}")
+        return {t: _series(f) for t, f in _frames(df, part).items()}
+
+    for per, ts in update.items():
+        for i in range(0, len(ts), BATCH):
+            part = ts[i:i + BATCH]
+            got = fetch(part, per)
+            for t in part:
+                m = merge_weekly(cache[t], got[t]) if t in got else cache[t]   # brak nowych danych: zostaje zapisana seria
+                if m is None:   # ceny wstecz zmienione — ta spółka w pełnym pobraniu
+                    full.append(t)
+                    total += 1
+                else:
+                    out[t] = m
+    for i in range(0, len(full), BATCH):
+        for t, s in fetch(full[i:i + BATCH], period).items():
+            if len(s["d"]) >= 10:
+                out[t] = {k: v[-KEEP_WEEKS:] for k, v in s.items()}
     return out
 
 
@@ -55,22 +110,60 @@ def last_closed_month(today=None):
     return (first - dt.timedelta(days=1)).strftime("%Y-%m")
 
 
-def monthly(tickers, cache, log=print, today=None):
-    """Uzupełnia `cache` {ticker: {"m": [[YYYY-MM, close]...], "upto": YYYY-MM}} o miesięczne zamknięcia z całej historii (tylko ZAMKNIĘTE miesiące).
-    Pobiera tylko spółki, których cache nie sięga ostatniego zamkniętego miesiąca. -> lista pobranych tickerów."""
-    need_upto = last_closed_month(today)
-    todo = [t for t in tickers if (cache.get(t) or {}).get("upto") != need_upto]
-    for i in range(0, len(todo), BATCH):
-        part = todo[i:i + BATCH]
-        df = _yf().download(part, period="max", interval="1mo", auto_adjust=True, group_by="ticker", progress=False, threads=True)
+def _months(f, upto):
+    s = f["High"].dropna()
+    return [[d.strftime("%Y-%m"), round(float(v), 4)] for d, v in s.items() if d.strftime("%Y-%m") <= upto]
+
+
+def merge_monthly(old, new):
+    """Dokleja nowe zamknięte miesiące. -> lista albo None, gdy High na wspólnym miesiącu się różni (ceny zmienione wstecz)."""
+    known = dict(old)
+    for ym, v in new:
+        if ym in known and not _same(known[ym], v):
+            return None
+    last = old[-1][0] if old else ""
+    return old + [x for x in new if x[0] > last]
+
+
+def monthly(tickers, cache, log=print, today=None, progress=None):
+    """Uzupełnia `cache` {ticker: {"h": [[YYYY-MM, high]...], "upto": YYYY-MM}} o miesięczne High z całej historii (tylko ZAMKNIĘTE miesiące).
+    Spółka z zapisem sprzed ostatniego zamkniętego miesiąca dostaje tylko ostatnie miesiące; całą historię — nowa spółka albo zmienione ceny.
+    Stare wpisy z zamknięciami ("m") traktujemy jak brak (Green Line liczymy teraz z High). -> lista pobranych tickerów."""
+    need = last_closed_month(today)
+    todo = [t for t in tickers if (cache.get(t) or {}).get("upto") != need]
+    update = [t for t in todo if (cache.get(t) or {}).get("h")]
+    full = [t for t in todo if t not in update]
+    total, done = len(todo), 0
+
+    def step(part, per, label):
+        nonlocal done
+        df = _yf().download(part, period=per, interval="1mo", auto_adjust=True, group_by="ticker", progress=False, threads=True)
+        redo = []
         for t, f in _frames(df, part).items():
-            s = f["Close"].dropna()
-            rows = [[d.strftime("%Y-%m"), round(float(v), 4)] for d, v in s.items() if d.strftime("%Y-%m") <= need_upto]
-            if rows:
-                cache[t] = {"m": rows, "upto": need_upto}
-        log(f"yfinance (miesięczne, cała historia): {min(i + BATCH, len(todo))}/{len(todo)}")
+            rows = _months(f, need)
+            if per == "max":
+                if rows:
+                    cache[t] = {"h": rows, "upto": need}
+                continue
+            m = merge_monthly(cache[t]["h"], rows)
+            if m is None:
+                redo.append(t)
+            else:
+                cache[t] = {"h": m, "upto": need}
+        done += len(part)
+        if progress:
+            progress(min(done, total), total)
+        log(f"yfinance miesięczne ({label}): {min(done, total)}/{total}")
+        return redo
+
+    for i in range(0, len(update), BATCH):
+        redo = step(update[i:i + BATCH], "6mo", "aktualizacja")
+        full += redo
+        total += len(redo)
+    for i in range(0, len(full), BATCH):
+        step(full[i:i + BATCH], "max", "cała historia")
     return todo
 
 
-def closed_months(entry):
-    return [c for _, c in (entry or {}).get("m", [])]
+def monthly_highs(entry):
+    return [h for _, h in (entry or {}).get("h", [])]

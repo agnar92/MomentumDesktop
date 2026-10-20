@@ -17,13 +17,15 @@ COLUMNS = [  # (klucz, nagłówek, szerokość, format)
     ("glb", "Green Line", 90, "p"), ("glb_pct", "Do linii %", 85, "%"), ("glb_state", "GLB", 85, "s"), ("macd", "MACD", 60, "s"),
     ("macd_stop", "Stop MACD", 85, "p"), ("dopm", "Δ marża oper. pp", 120, "%"), ("rev_rr", "Przychody r/r %", 115, "%"),
     ("dgm", "Δ marża brutto pp", 125, "%"), ("quarter", "Kwartał", 105, "s"), ("turnover", "Obrót mln $", 95, "m"),
-    ("ok", "Warunki", 75, "b"),
+    ("ok", "Warunki", 75, "b"), ("pot", "Potencjał", 85, "n"), ("slow", "Hamuje", 95, "w"),
 ]
 SIGNAL = ("WYBICIE", "SYGNAŁ")
 # filtry listy (wszystkie naraz, ORAZ): {kolumna: {"in": [wartości]} | {"min", "max"}}; liczby w jednostkach tabeli (obrót w mln $)
-FILTER_CHOICES = {"glb_state": ["WYBICIE", "SYGNAŁ", "NAD", "POD", "BRAK"], "macd": ["nad", "pod"], "ok": ["tak", "nie"]}
+FILTER_CHOICES = {"glb_state": ["WYBICIE", "SYGNAŁ", "NAD", "POD", "BRAK"], "macd": ["nad", "pod"], "ok": ["tak", "nie"], "slow": ["HAMUJE", "HAMUJE+MB", "—"]}
 FILTER_SCALE = {"turnover": 1e6}
 FILTER_PRESETS = [
+    ("Potencjał ≥ 3 + nad GLB + MACD dodatni", {"pot": {"min": 3}, "glb_state": {"in": ["WYBICIE", "SYGNAŁ", "NAD"]}, "macd": {"in": ["nad"]}}),
+    ("Sygnał kupna z potencjałem ≥ 3", {"pot": {"min": 3}, "glb_state": {"in": ["WYBICIE", "SYGNAŁ"]}}),
     ("Nad GLB + MACD dodatni", {"glb_state": {"in": ["WYBICIE", "SYGNAŁ", "NAD"]}, "macd": {"in": ["nad"]}}),
     ("Sygnał kupna + MACD dodatni", {"glb_state": {"in": ["WYBICIE", "SYGNAŁ"]}, "macd": {"in": ["nad"]}}),
     ("Blisko linii (−10…+10 %)", {"glb_pct": {"min": -10, "max": 10}}),
@@ -63,6 +65,10 @@ def cell(v, f):
         return f"{v / 1e6:,.0f}"
     if f == "b":
         return "✓" if v else ""
+    if f == "n":
+        return "★" * v + "☆" * max(0, 5 - v)
+    if f == "w":
+        return "⚠⚠ + marża" if v == "HAMUJE+MB" else "⚠ hamuje" if v else ""
     return str(v)
 
 
@@ -109,6 +115,7 @@ class App:
         self.search = tk.StringVar()
         self.search.trace_add("write", lambda *_: self.refresh())
         tk.Entry(bar, textvariable=self.search, width=12, relief="flat").pack(side="left", padx=4)
+        tk.Button(bar, text="📖 Poradnik", command=lambda: GuideDialog(self), relief="flat").pack(side="left", padx=4)
         self.alert_btn = tk.Button(bar, text="🔔 Alerty", command=lambda: AlertsDialog(self), relief="flat")
         self.alert_btn.pack(side="left", padx=4)
         tk.Label(bar, text="Ctrl+K — dowolny symbol (np. SPY, NVDA)", bg=PANEL, fg="#8b95a3").pack(side="left", padx=12)
@@ -124,6 +131,7 @@ class App:
         sb.pack(side="right", fill="y")
         self.tree.tag_configure("signal", background="#123a24")
         self.tree.tag_configure("dim", foreground="#6b7684")
+        self.tree.tag_configure("poswarn", foreground="#ffb020")
         self.tree.bind("<Double-1>", lambda e: self.open_chart(self.current()))
         self.tree.bind("<Return>", lambda e: self.open_chart(self.current()))
         self.tree.bind("<<TreeviewSelect>>", lambda e: self._follow())
@@ -174,7 +182,13 @@ class App:
         self.tree.delete(*self.tree.get_children())
         for r in self.rows():
             tag = "signal" if r.get("ok") and r.get("glb_state") in SIGNAL else "" if r.get("ok") else "dim"
-            self.tree.insert("", "end", iid=r["ticker"], values=[cell(r.get(k), f) for k, _, _, f in COLUMNS], tags=(tag,))
+            held = r["ticker"] in self.store.alerts["pos"]
+            if held and (r.get("slow") or (r.get("macd_stop") and (r.get("price") or 0) < r["macd_stop"])):
+                tag = "poswarn"
+            vals = [cell(r.get(k), f) for k, _, _, f in COLUMNS]
+            if held:
+                vals[0] = "📌 " + vals[0]
+            self.tree.insert("", "end", iid=r["ticker"], values=vals, tags=(tag,))
         if sel and self.tree.exists(sel):
             self.tree.selection_set(sel)
         nf = active_filters(self.store.settings.get("list_filters"))
@@ -426,7 +440,7 @@ class FilterDialog(tk.Toplevel):
                 tk.Checkbutton(box, text=v, variable=var, bg=PANEL, command=lambda k=k, v=v, var=var: self.toggle(k, v, var.get())).grid(row=i // 6, column=i % 6, sticky="w")
             r += 1
         for k, h, _, fm in COLUMNS:
-            if fm not in "p%m":
+            if fm not in "p%mn":
                 continue
             tk.Label(self.body, text=h + (" (mln $)" if k in FILTER_SCALE else ""), bg=PANEL, fg="#8b95a3").grid(row=r, column=0, sticky="w", pady=2)
             for c, b in ((1, "min"), (3, "max")):
@@ -488,7 +502,8 @@ class AlertsDialog(tk.Toplevel):
         if not st["log"]:
             self.lst.insert("end", "Brak alertów.")
         self.lst.bind("<Double-1>", lambda e: self.open())
-        info = (f"Obserwowane: {', '.join(st['watch']) or '—'} (🔕 Obserwuj na wykresie)   ·   "
+        info = (f"📌 Pozycje: {', '.join(t + (' ⚠' if (app.store.row(t) or {}).get('slow') else '') for t in st['pos']) or '—'}   ·   "
+                f"Obserwowane: {', '.join(st['watch']) or '—'} (🔕 Obserwuj na wykresie)   ·   "
                 f"Linie trendu: {', '.join(f'{t} ({len(v)})' for t, v in st['lines'].items()) or '—'}")
         autowrap(tk.Label(self, text=info, bg=PANEL, anchor="w", justify="left")).pack(fill="x", padx=10, pady=6)
         row = tk.Frame(self, bg=PANEL)
@@ -509,6 +524,94 @@ class AlertsDialog(tk.Toplevel):
         self.app.store.alerts["log"] = []
         self.app.store.save_alerts()
         self.destroy()
+
+
+GUIDE = """1. NAJPIERW DOBRA SPÓŁKA — bez tego GLB nie działa
+Wszystkie sygnały GLB 2015–2026, bez limitu kapitału: bez fundamentów GLB wypada jak zakup w losowym tygodniu (+2,6 % vs +2,4 % na transakcję).
+Z warunkami strategii portfel wszystkich sygnałów GLB dał 16,1 % rocznie (losowe wejście z tymi samymi warunkami: 10,3 %, SPY 13,6 %).
+Warunki strategii (kolumna Warunki): obrót ≥ 50 mln $ dziennie, przychody kw. ≥ +15 % r/r, marża operacyjna ≥ +3 pp r/r.
+
+2. POTENCJAŁ ★ — co podnosi szansę na bardzo duży ruch
+Wybicia z konsolidacji po pierwszym wzroście o 30–100 % (2021–2025, 7314 przypadków). Bez warunków tylko 5,1 % dało dalej ≥ +100 % w 12 mies. Gdy spełnione:
+   przychody ≥ +25 % r/r i marża oper. ↑ ≥ +3 pp ........................ 9,6 %
+   ★ przychody ≥ +25 % r/r dwa kwartały z rzędu .......................... 8,9 %
+   ★ marża oper. ↑ ≥ +3 pp dwa kwartały z rzędu .......................... 8,9 %
+   ★ marża oper. < 10 % (spółka dopiero zaczyna zarabiać — dźwignia) .... 8,6 %
+   ★ marża brutto ↑ ≥ +2 pp r/r ........................................... 8,0 %
+   ★ przychody ≥ +25 % r/r ................................................ 7,9 %
+Wysoki potencjał = większa szansa na duży ruch, ale też większa zmienność (średni wynik po 6 mies. nie jest wyższy) — stop jest obowiązkowy.
+
+3. JAK WYGLĄDA DUŻY RUCH W RAPORTACH
+Start: w dołku fundamenty są słabe (mediana: przychody +5 %, EPS −6 %, marża oper. −1 pp); poprawę widać 2–3 raporty później. Od wyprzedzenia jest Green Line.
+Szczyt: kurs kończy ruch przy raporcie z najwyższym tempem wzrostu (EPS +33 %); kolejne raporty dalej dobre, ale wolniejsze (EPS +27 → +15 → +11 %).
+
+4. WEJŚCIE I WYJŚCIE
+Kupno: zamknięcie tygodnia 0–10 % nad Green Line. Stop 10 % pod wejściem; po przecięciu MACD tyg. w dół stop pod Low tego tygodnia.
+⚠ Hamowanie (kolumna Hamuje, alert dla 📌 pozycji): tempo przychodów spadło o ≥ 10 pp — spadek ≥ 20 % w 6 mies. w 44 % przypadków (normalnie 33 %);
+⚠⚠ z marżą brutto spadającą r/r — 50 %, średnio −1,8 % po 3 i 6 mies. Wtedy zacieśnij stop albo nie dokładaj.
+
+5. CZEGO NIE SZUKAĆ (nic nie wnosiło)
+ROE / ROI, ranking po RS, Blue Dot, samo przyspieszenie przychodów, poziom marży brutto, „marża oper. > 0”, sam EPS ponad przychody i marże.
+Wykres: S&P 500 nad ceną = kierunek rynku; słupki przychodów pod wolumenem — zielony ≥ +25 % r/r, żółty ≥ +15 %.
+
+Heurystyka z backtestu na spółkach notowanych dziś (bez wycofanych z giełdy), nie porada inwestycyjna."""
+POT_TEXT = [(txt, p) for _, txt, p in calc.POTENTIAL]
+
+
+def checklist(row, pos=None):
+    """Lista kontrolna spółki -> linie tekstu."""
+    def yes(v):
+        return "✓" if v is True else "✗" if v is False else "—"
+
+    def f(v, u):
+        return "—" if v is None else f"{v:+.1f}{u}"
+    r = row
+    lines_ = [f"{r['ticker']} {r.get('company') or ''} — potencjał ★ {r.get('pot') or 0}/5" + (f" · 📌 pozycja od {pos['since']} ({pos['price']:.2f})" if pos and pos.get("price") else ""),
+              f"Przychody {f(r.get('rev_rr'), ' %')} r/r (kwartał wcześniej {f(r.get('rev_rr1'), ' %')}), Δ marży oper. {f(r.get('dopm'), ' pp')} "
+              f"(wcześniej {f(r.get('dopm1'), ' pp')}), marża oper. {f(r.get('opm'), ' %')} · kwartał {r.get('quarter') or '—'}", "",
+              f"{yes(r.get('ok'))} Warunki strategii (obrót ≥ 50 mln $, przychody ≥ +15 %, Δ marży oper. ≥ +3 pp)"]
+    for (txt, p), v in zip(POT_TEXT, r.get("pot_ok") or [None] * 5):
+        lines_.append(f"{yes(v)} {txt}  (szansa {p:.1f} % vs 5,1 %)".replace(f"{p:.1f}", f"{p:.1f}".replace(".", ",")))
+    st = r.get("glb_state")
+    lines_.append(f"{yes(True if st in SIGNAL else None if st == 'NAD' else False)} Green Line: {st or '—'} ({f(r.get('glb_pct'), ' %')} od linii; kupno 0–10 % nad)")
+    stop = f"{r['macd_stop']:.2f}" if r.get("macd_stop") else "—"
+    lines_.append(f"{yes(r.get('macd') == 'nad')} MACD tyg. {r.get('macd') or '—'} sygnałem (stop pod {stop})")
+    lines_.append(f"{yes(False if r.get('slow') else None if r.get('accel') is None else True)} Brak hamowania (tempo przychodów {f(r.get('accel'), ' pp')}, "
+                  f"Δ marży brutto {f(r.get('dgm'), ' pp')})")
+    if pos and r.get("slow"):
+        lines_ += ["", f"⚠ Masz pozycję, a ostatni raport pokazuje hamowanie{' i spadek marży brutto' if r['slow'] == 'HAMUJE+MB' else ''} — spadek ≥ 20 % w 6 mies. "
+                       f"w {'50' if r['slow'] == 'HAMUJE+MB' else '44'} % przypadków (normalnie 33 %). Rozważ zacieśnienie stopu."]
+    return lines_
+
+
+class GuideDialog(tk.Toplevel):
+    """📖 Poradnik: zasady z badań + lista kontrolna spółki otwartej na wykresie (albo zaznaczonej na liście)."""
+
+    def __init__(self, app):
+        super().__init__(app.root)
+        self.title("Poradnik — czego szukać w spółce")
+        self.configure(bg=PANEL)
+        apply_dark(self)
+        t = app.chart.ticker if app.chart is not None and app.chart.winfo_exists() else app.current()
+        row = app.store.row(t) if t else None
+        txt = tk.Text(self, width=150, height=46, bg=BG, fg="#c9d1d9", relief="flat", wrap="word", font=("Segoe UI", 10), padx=10, pady=8)
+        txt.tag_configure("h", font=("Segoe UI", 11, "bold"), foreground="#ffffff")
+        txt.tag_configure("ok", foreground="#3ddc84")
+        txt.tag_configure("no", foreground="#ff5c5c")
+        txt.tag_configure("warn", foreground="#ffb020")
+        if row:
+            for n, ln in enumerate(checklist(row, app.store.alerts["pos"].get(t))):
+                tag = "h" if n == 0 else "ok" if ln.startswith("✓") else "no" if ln.startswith("✗") else "warn" if ln.startswith("⚠") else ""
+                txt.insert("end", ln + "\n", tag)
+        else:
+            txt.insert("end", "Zaznacz spółkę na liście albo otwórz wykres, żeby zobaczyć jej listę kontrolną.\n")
+        txt.insert("end", "\n")
+        for ln in GUIDE.split("\n"):
+            txt.insert("end", ln + "\n", "h" if ln[:2].rstrip(".").isdigit() else "")
+        txt.config(state="disabled")
+        txt.pack(fill="both", expand=True, padx=10, pady=10)
+        tk.Button(self, text="Zamknij", command=self.destroy, relief="flat").pack(pady=(0, 10))
+        self.bind("<Escape>", lambda e: self.destroy())
 
 
 class SymbolDialog(tk.Toplevel):

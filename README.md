@@ -28,6 +28,10 @@ Heurystyka z backtestu (spółki z dzisiejszej listy, bez spółek wycofanych z 
   (przerywana) do ostatniego tygodnia, z wartością przy prawej krawędzi.
 - **🔔 Alerty** (pasek): zamknięcie tygodnia przecięło linię trendu oraz dla obserwowanych spółek (🔕 Obserwuj na wykresie): sygnał GLB, przecięcie MACD
   w dół, zamknięcie pod stopem MACD, spełnione warunki. Sprawdzane po starcie i po każdym Sync; zapis w `data/alerts.json`.
+- **Potencjał ★ (0–5) i Hamuje ⚠** (kolumny): cechy fundamentów, które w badaniu 2021–2026 (ceny bez korekty) podnosiły szansę na duży ruch — przychody ≥ 25 %,
+  dwa kwartały z rzędu, marża oper. ↑ ≥ 3 pp dwa kwartały, marża brutto ↑ ≥ 2 pp, marża oper. < 10 % — i ostrzeżenie o hamowaniu przychodów (≥ 10 pp, ⚠⚠ z marżą
+  brutto w dół). **📖 Poradnik**: zasady z badań i lista kontrolna spółki. **📌 Pozycja** na wykresie: 📌 i pomarańczowy wiersz przy hamowaniu / pod stopem, alerty.
+  Wykres jak w IBD: S&P 500 (SPY, pobierany przy Sync) nad ceną, przychody kwartalne z r/r % pod wolumenem.
 - **Ctrl+K**: dowolny symbol (np. SPY, ^GSPC, NVDA) — te same obliczenia i wykres; ostatnie symbole są zapamiętane.
 
 ## Dane (darmowe źródła, jak najmniej zapytań)

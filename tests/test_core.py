@@ -82,13 +82,22 @@ def test_sec_metrics_quarter_vs_year_ago_q4_from_annual():
     m = sec.metrics(facts)
     assert m["quarter"] == "2026-03-31" and m["rev_rr"] == pytest.approx(50)
     assert m["opm"] == pytest.approx(20) and m["dopm"] == pytest.approx(10)
+    assert "rev_rr1" not in m and [q["rev"] for q in m["qs"]] == [100, 110, 120, 140, 150] and m["qs"][-1]["rev_rr"] == pytest.approx(50)
+
+
+def test_potential_and_slowdown():
+    row = {"rev_rr": 30, "rev_rr1": 26, "dopm": 4, "dopm1": 3, "dgm": 1, "opm": 8, "accel": 4}
+    assert [v for *_, v in calc.potential(row)] == [True, True, True, False, True] and calc.slowdown(row) is None
+    assert calc.slowdown({"accel": -12, "dgm": 0.5}) == "HAMUJE" and calc.slowdown({"accel": -12, "dgm": -1}) == "HAMUJE+MB"
+    assert [v for *_, v in calc.potential({})] == [None] * 5
 
 
 def test_sec_update_uses_cache(monkeypatch):
-    cache = {"OLD": {"at": dt.date.today().isoformat(), "rev_rr": 1}}
-    monkeypatch.setattr(sec, "cik_map", lambda ua: {"NEW": 1})
+    cache = {"OLD": {"at": dt.date.today().isoformat(), "rev_rr": 1, "v": sec.SEC_VERSION},
+             "V1": {"at": dt.date.today().isoformat(), "rev_rr": 1}}      # świeży, ale bez historii kwartałów -> pobierz ponownie
+    monkeypatch.setattr(sec, "cik_map", lambda ua: {"NEW": 1, "V1": 2})
     monkeypatch.setattr(sec, "_get", lambda url, ua: {"facts": {}})
-    assert sec.update(["OLD", "NEW", "ZZZ"], cache, log=lambda s: None, pause=0) == ["NEW"]
+    assert sec.update(["OLD", "NEW", "ZZZ", "V1"], cache, log=lambda s: None, pause=0) == ["NEW", "V1"]
     assert cache["OLD"]["rev_rr"] == 1 and "at" in cache["ZZZ"]
 
 

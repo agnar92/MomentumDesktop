@@ -46,7 +46,7 @@ def test_list_filters():
     rows = [{"ticker": "A", "ok": True, "glb_state": "NAD", "macd": "nad", "glb_pct": 15, "turnover": 80e6},
             {"ticker": "B", "ok": True, "glb_state": "NAD", "macd": "pod", "glb_pct": 12, "turnover": 60e6},
             {"ticker": "C", "ok": False, "glb_state": "POD", "macd": "nad", "glb_pct": -5, "turnover": None}]
-    assert [r["ticker"] for r in rows if pass_filters(r, FILTER_PRESETS[0][1])] == ["A"]
+    assert [r["ticker"] for r in rows if pass_filters(r, dict(FILTER_PRESETS)["Nad GLB + MACD dodatni"])] == ["A"]
     assert [r["ticker"] for r in rows if pass_filters(r, {"turnover": {"min": 70}})] == ["A"]
     assert [r["ticker"] for r in rows if pass_filters(r, {"glb_pct": {"max": 12}, "ok": {"in": ["nie"]}})] == ["C"]
     assert active_filters({"a": {"in": []}, "b": {"min": 1}, "c": {}}) == 1

@@ -88,11 +88,15 @@ def state_alerts(prev, row):
         out.append(f"zamknięcie {price} pod stopem MACD {stop}")
     if row.get("ok") and not prev.get("ok"):
         out.append("spełnia warunki strategii")
+    if row.get("slow") and row.get("slow") != prev.get("slow"):
+        a = f"{row['accel']:.0f}" if row.get("accel") is not None else ""
+        out.append(f"⚠ hamowanie: tempo przychodów {a} pp i marża brutto spada r/r — zacieśnij stop" if row["slow"] == "HAMUJE+MB"
+                   else f"⚠ hamowanie: tempo przychodów {a} pp względem kwartału wcześniej")
     return out
 
 
 def snapshot(r):
-    return {"glb_state": r.get("glb_state"), "macd": r.get("macd"), "macd_stop": r.get("macd_stop"), "price": r.get("price"), "ok": bool(r.get("ok"))}
+    return {"glb_state": r.get("glb_state"), "macd": r.get("macd"), "macd_stop": r.get("macd_stop"), "price": r.get("price"), "ok": bool(r.get("ok")), "slow": r.get("slow")}
 
 
 def eval_alerts(st, row_for, series_for, now, as_of=""):

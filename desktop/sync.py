@@ -5,6 +5,8 @@ import datetime as dt
 
 from . import calc, finviz, prices, sec
 
+BENCH = "SPY"   # S&P 500 nad wykresem (jak w IBD)
+
 # etapy i ich udział w pasku postępu (SEC trwa najdłużej: jedno zapytanie na spółkę)
 STAGES = (("Finviz — lista spółek", 0.15), ("yfinance — tygodniowe", 0.25), ("yfinance — miesięczne High", 0.2), ("SEC — fundamenty", 0.4))
 
@@ -49,7 +51,7 @@ def run(store, log=print, fetch_list=finviz.fetch, weekly=prices.weekly, monthly
         raise RuntimeError("Finviz nie zwrócił spółek (blokada albo zły filtr) — lista bez zmian.")
     tickers = [r["ticker"] for r in base]
     log(f"Finviz: {len(tickers)} spółek{f' z {total}' if total and total != len(tickers) else ''}")
-    series = weekly(tickers, log=log, cache=store.series, progress=stage_progress(progress, 1))
+    series = weekly(tickers + [x for x in (BENCH,) if x not in tickers], log=log, cache=store.series, progress=stage_progress(progress, 1))
     # fundamenty i historię miesięczną pobieramy tylko dla spółek, które przechodzą próg obrotu (reszta i tak odpada)
     liquid = [t for t in tickers if t in series and (calc.turnover(series[t]["c"], series[t]["v"]) or 0) >= calc.MIN_TURNOVER]
     log(f"Obrót ≥ {calc.MIN_TURNOVER / 1e6:.0f} mln $ dziennie: {len(liquid)} spółek")
@@ -63,7 +65,7 @@ def run(store, log=print, fetch_list=finviz.fetch, weekly=prices.weekly, monthly
     store.save_cache("sec", scache)
     rows = [calc.build_row(b, series[b["ticker"]], prices.monthly_highs(mcache.get(b["ticker"])), scache.get(b["ticker"]))
             for b in base if b["ticker"] in series]
-    keep = {r["ticker"] for r in rows}
+    keep = {r["ticker"] for r in rows} | {BENCH}   # SPY = panel S&P 500 nad wykresem
     store.save_scan(rows, {t: s for t, s in series.items() if t in keep}, (now or dt.datetime.now()).isoformat(timespec="minutes"))
     ok = sum(1 for r in rows if r["ok"])
     sig = sum(1 for r in rows if r["ok"] and r["glb_state"] in ("SYGNAŁ", "WYBICIE"))

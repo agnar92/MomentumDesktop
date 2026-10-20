@@ -574,7 +574,8 @@ def checklist(row, pos=None):
         lines_.append(f"{yes(v)} {txt}  (szansa {p:.1f} % vs 5,1 %)".replace(f"{p:.1f}", f"{p:.1f}".replace(".", ",")))
     st = r.get("glb_state")
     lines_.append(f"{yes(True if st in SIGNAL else None if st == 'NAD' else False)} Green Line: {st or '—'} ({f(r.get('glb_pct'), ' %')} od linii; kupno 0–10 % nad)")
-    lines_.append(f"{yes(r.get('macd') == 'nad')} MACD tyg. {r.get('macd') or '—'} sygnałem (stop pod {f"{r['macd_stop']:.2f}" if r.get('macd_stop') else '—'})")
+    stop = f"{r['macd_stop']:.2f}" if r.get("macd_stop") else "—"
+    lines_.append(f"{yes(r.get('macd') == 'nad')} MACD tyg. {r.get('macd') or '—'} sygnałem (stop pod {stop})")
     lines_.append(f"{yes(False if r.get('slow') else None if r.get('accel') is None else True)} Brak hamowania (tempo przychodów {f(r.get('accel'), ' pp')}, "
                   f"Δ marży brutto {f(r.get('dgm'), ' pp')})")
     if pos and r.get("slow"):

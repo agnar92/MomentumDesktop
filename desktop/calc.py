@@ -43,6 +43,18 @@ def green_line(months, confirm=CONFIRM_MONTHS):
     return level, at
 
 
+def green_line_series(months, confirm=CONFIRM_MONTHS):
+    """Green Line obowiązująca w każdym miesiącu: wartość i = linia z miesięcy zamkniętych przed miesiącem i (wykres miesięczny)."""
+    out, level, mx, mi = [None], None, -math.inf, None
+    for i, c in enumerate(months):
+        if _ok(c) and c > mx:
+            mx, mi = c, i
+        if mi is not None and i - mi >= confirm:
+            level = mx
+        out.append(level)
+    return out[:len(months)]
+
+
 def glb_state(price, prev, level, max_pct=ENTRY_MAX_PCT):
     """Stan na zamknięciu tygodnia: SYGNAŁ (0–max_pct % nad linią; „WYBICIE”, gdy poprzedni tydzień był pod nią), NAD (dalej), POD, BRAK."""
     if not (_ok(price) and _ok(level) and level > 0):

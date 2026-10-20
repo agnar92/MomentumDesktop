@@ -138,9 +138,36 @@ def test_guide_position_and_ibd_panels(app):
     g = ch.geom["g"]
     assert g["spx"][1] < g["price"][0] and g["vol"][1] < g["rev"][0] < g["rev"][1] < g["macd"][0]
     ch.toggle_pos()
-    assert "AAA" in st.alerts["pos"] and "AAA" in st.alerts["watch"] and "⚠" in ch.pot_btn.cget("text")
+    assert "AAA" in st.alerts["pos"] and "AAA" in st.alerts["watch"] and "⚠" in ch.ptext.get("1.0", "end") and "Potencjał" in ch.ptext.get("1.0", "end")
     assert app.tree.item("AAA")["values"][0].startswith("📌") and "poswarn" in app.tree.item("AAA")["tags"]
     lines_ = A.checklist(row, st.alerts["pos"]["AAA"])
     assert any(ln.startswith("⚠ Masz pozycję") for ln in lines_)
     A.GuideDialog(app).destroy()
+    shown = ch.show_panel
+    ch.toggle_panel()
+    assert ch.show_panel != shown and app.store.settings["fund_panel"] == ch.show_panel and ch.fund_btn.cget("text").startswith("◀" if shown else "▶")
     assert A.cell(3, "n") == "★★★☆☆" and A.cell("HAMUJE", "w") == "⚠ hamuje"
+
+
+def test_monthly_chart_shows_green_line_history(app, monkeypatch):
+    import time
+    from desktop import calc as C, prices
+    h = [10, 12, 30, 20, 21, 22, 25, 28, 29, 31, 29, 28, 27]          # rekord 30 (3. mies.) stoi; 31 jeszcze nie przestał 3 zamkniętych miesięcy
+    d = [f"2025-{m:02d}-01" for m in range(1, 13)] + ["2026-01-01"]
+    m = {"d": d, "o": h, "h": h, "l": [x * 0.9 for x in h], "c": h, "v": [1e6] * len(h)}
+    monkeypatch.setattr(prices, "monthly_ohlc", lambda t: dict(m))
+    assert C.green_line_series(h)[:6] == [None, None, None, None, None, None] and C.green_line_series(h)[6] == 30
+    app.open_chart("AAA")
+    ch = app.chart
+    ch.update()
+    ch.toggle_period()
+    for _ in range(50):
+        app.root.update()
+        if ch.geom and ch.geom["n"] == len(h):
+            break
+        time.sleep(0.02)
+    assert ch.period == "M" and ch.geom["n"] == len(h)
+    texts = [ch.cv.itemcget(i, "text") for i in ch.cv.find_all() if ch.cv.type(i) == "text"]
+    assert any(t.startswith("rekord ") for t in texts) and any(t.startswith("Green Line z wykresu") for t in texts)
+    ch.toggle_period()
+    assert ch.period == "W" and ch.geom["n"] == 156

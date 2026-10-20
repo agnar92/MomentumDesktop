@@ -32,6 +32,11 @@ Heurystyka z backtestu (spółki z dzisiejszej listy, bez spółek wycofanych z 
   dwa kwartały z rzędu, marża oper. ↑ ≥ 3 pp dwa kwartały, marża brutto ↑ ≥ 2 pp, marża oper. < 10 % — i ostrzeżenie o hamowaniu przychodów (≥ 10 pp, ⚠⚠ z marżą
   brutto w dół). **📖 Poradnik**: zasady z badań i lista kontrolna spółki. **📌 Pozycja** na wykresie: 📌 i pomarańczowy wiersz przy hamowaniu / pod stopem, alerty.
   Wykres jak w IBD: S&P 500 (SPY, pobierany przy Sync) nad ceną, przychody kwartalne z r/r % pod wolumenem.
+- **Okno wykresu** jest wyższe niż szersze; po prawej rozwijany panel **FUNDAMENTY** (pasek ze strzałką na całej wysokości): potencjał ★, wartości z ostatnich
+  raportów, lista kontrolna i ostrzeżenie dla pozycji (stan panelu zostaje zapamiętany).
+- **📅 Tygodniowy / Miesięczny** (przycisk na wykresie albo klawisz M): wykres miesięczny z pełnej historii (yfinance, ceny bez korekty, pobierany raz na spółkę)
+  do sprawdzenia Green Line — schodki = linia w czasie, kółko = miesiąc obecnego rekordu („stoi N mies.”), porównanie z linią z listy (⚠ przy różnicy).
+  Linie trendu rysujemy na tygodniowym.
 - **Ctrl+K**: dowolny symbol (np. SPY, ^GSPC, NVDA) — te same obliczenia i wykres; ostatnie symbole są zapamiętane.
 
 ## Dane (darmowe źródła, jak najmniej zapytań)

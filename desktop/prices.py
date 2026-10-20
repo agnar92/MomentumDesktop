@@ -177,3 +177,13 @@ def monthly_highs(entry):
     i nie była odświeżana) traktujemy jak brak — inaczej w tabeli zostawałaby za niska Green Line."""
     e = entry or {}
     return [h for _, h in e.get("h", [])] if e.get("raw") else []
+
+
+def monthly_ohlc(ticker):
+    """Pełna historia miesięczna {d, o, h, l, c, v} jednej spółki (wykres miesięczny w desktopie; ostatni miesiąc może być w toku). -> seria albo None."""
+    df = _yf().download([ticker], period="max", interval="1mo", auto_adjust=AUTO_ADJUST, group_by="ticker", progress=False, threads=False)
+    f = _frames(df, [ticker]).get(ticker)
+    if f is None:
+        return None
+    s = _series(f)
+    return s if len(s["d"]) >= 2 else None

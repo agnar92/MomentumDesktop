@@ -533,12 +533,12 @@ Warunki strategii (kolumna Warunki): obrót ≥ 50 mln $ dziennie, przychody kw.
 
 2. POTENCJAŁ ★ — co podnosi szansę na bardzo duży ruch
 Wybicia z konsolidacji po pierwszym wzroście o 30–100 % (2021–2025, 7314 przypadków). Bez warunków tylko 5,1 % dało dalej ≥ +100 % w 12 mies. Gdy spełnione:
-   przychody ≥ +25 % r/r i marża oper. ↑ ≥ +3 pp ........................ 9,6 %
-   ★ przychody ≥ +25 % r/r dwa kwartały z rzędu .......................... 8,9 %
-   ★ marża oper. ↑ ≥ +3 pp dwa kwartały z rzędu .......................... 8,9 %
-   ★ marża oper. < 10 % (spółka dopiero zaczyna zarabiać — dźwignia) .... 8,6 %
-   ★ marża brutto ↑ ≥ +2 pp r/r ........................................... 8,0 %
-   ★ przychody ≥ +25 % r/r ................................................ 7,9 %
+   przychody ≥ +25 % r/r i marża oper. ↑ ≥ +3 pp	9,6 %
+   ★ przychody ≥ +25 % r/r dwa kwartały z rzędu	8,9 %
+   ★ marża oper. ↑ ≥ +3 pp dwa kwartały z rzędu	8,9 %
+   ★ marża oper. < 10 % (spółka dopiero zaczyna zarabiać — dźwignia)	8,6 %
+   ★ marża brutto ↑ ≥ +2 pp r/r	8,0 %
+   ★ przychody ≥ +25 % r/r	7,9 %
 Wysoki potencjał = większa szansa na duży ruch, ale też większa zmienność (średni wynik po 6 mies. nie jest wyższy) — stop jest obowiązkowy.
 
 3. JAK WYGLĄDA DUŻY RUCH W RAPORTACH
@@ -594,8 +594,10 @@ class GuideDialog(tk.Toplevel):
         apply_dark(self)
         t = app.chart.ticker if app.chart is not None and app.chart.winfo_exists() else app.current()
         row = app.store.row(t) if t else None
-        txt = tk.Text(self, width=150, height=46, bg=BG, fg="#c9d1d9", relief="flat", wrap="word", font=("Segoe UI", 10), padx=10, pady=8)
-        txt.tag_configure("h", font=("Segoe UI", 11, "bold"), foreground="#ffffff")
+        self.geometry("1000x900")
+        txt = tk.Text(self, bg="#151a21", fg="#e1e6ec", relief="flat", wrap="word", font=("Segoe UI", 12), padx=28, pady=18,
+                      spacing1=4, spacing2=3, spacing3=4, tabs=("540",), highlightthickness=0)
+        txt.tag_configure("h", font=("Segoe UI", 15, "bold"), foreground="#ffffff", spacing1=18, spacing3=6)
         txt.tag_configure("ok", foreground="#3ddc84")
         txt.tag_configure("no", foreground="#ff5c5c")
         txt.tag_configure("warn", foreground="#ffb020")
@@ -609,8 +611,11 @@ class GuideDialog(tk.Toplevel):
         for ln in GUIDE.split("\n"):
             txt.insert("end", ln + "\n", "h" if ln[:2].rstrip(".").isdigit() else "")
         txt.config(state="disabled")
-        txt.pack(fill="both", expand=True, padx=10, pady=10)
-        tk.Button(self, text="Zamknij", command=self.destroy, relief="flat").pack(pady=(0, 10))
+        tk.Button(self, text="Zamknij", command=self.destroy, relief="flat").pack(side="bottom", pady=10)
+        sb = ttk.Scrollbar(self, orient="vertical", command=txt.yview)
+        txt.configure(yscrollcommand=sb.set)
+        sb.pack(side="right", fill="y")
+        txt.pack(fill="both", expand=True)
         self.bind("<Escape>", lambda e: self.destroy())
 
 

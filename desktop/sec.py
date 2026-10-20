@@ -72,8 +72,8 @@ def metrics(facts):
     return out
 
 
-def update(tickers, cache, ua=UA, log=print, today=None, pause=0.15):
-    """Uzupełnia `cache` {ticker: {"at": data pobrania, ...metrics}} dla spółek bez świeżych danych. Spółki bez CIK (np. zagraniczne bez XBRL) pomijamy."""
+def update(tickers, cache, ua=UA, log=print, today=None, pause=0.15, progress=None):
+    """Uzupełnia `cache` {ticker: {"at": data pobrania, ...metrics}} dla spółek bez świeżych danych. Spółki bez CIK (np. zagraniczne bez XBRL) pomijamy. progress(n, wszystkie) po każdej spółce."""
     today = today or dt.date.today()
     todo = [t for t in tickers if not (cache.get(t) and (today - dt.date.fromisoformat(cache[t]["at"])).days < FRESH_DAYS)]
     if not todo:
@@ -90,6 +90,8 @@ def update(tickers, cache, ua=UA, log=print, today=None, pause=0.15):
             done.append(t)
         except Exception as e:   # pojedyncza spółka bez danych nie przerywa synchronizacji
             log(f"SEC: {t} — {e}")
+        if progress:
+            progress(n, len(todo))
         if n % 25 == 0 or n == len(todo):
             log(f"SEC (fundamenty): {n}/{len(todo)}")
         time.sleep(pause)

@@ -1,13 +1,50 @@
-"""Dane programu w katalogu data/ obok programu (wersja portable): scan.json (lista + tygodniowe świece), monthly.json i sec.json
-(pamięć podręczna), settings.json (filtr Finviz, User-Agent dla SEC, ostatnie symbole)."""
+"""Dane programu w katalogu data/ obok programu (wersja portable): scans/<skaner>.json (lista spółek skanera), weekly.json (tygodniowe świece
+wszystkich skanerów — wspólne, aktualizowane tylko o nowe tygodnie), monthly.json i sec.json (pamięć podręczna), settings.json (skanery Finviz,
+wybrany skaner, User-Agent dla SEC, ostatnie symbole)."""
 import json
 import os
+import re
 import sys
 from pathlib import Path
 
 from . import finviz, sec
 
-DEFAULT_SETTINGS = {"filters": finviz.DEFAULT_FILTERS, "sec_ua": sec.UA, "symbols": []}
+# skanery do wyboru: każdy = nazwa + filtr Finviz (+ limit spółek); wszystkie liczą tę samą strategię
+DEFAULT_SCANNERS = [
+    {"name": "Bezpieczny (backtest)", "filters": finviz.DEFAULT_FILTERS, "max_tickers": 1500},
+    {"name": "Trend 50/200", "filters": "ta_sma50_pa,ta_sma200_pa,cap_midover,sh_avgvol_o300", "max_tickers": 1500},
+    {"name": "Blisko rekordu (ATH)", "filters": "cap_smallover,sh_avgvol_o100,ta_alltime_b0to10h", "max_tickers": 1500},
+    {"name": "CANSLIM", "filters": "cap_smallover,fa_epsqoq_high,fa_epsyoyttm_high,fa_salesqoq_high,ind_stocksonly,sh_avgvol_o300,sh_price_o1,ta_sma200_pa",
+     "max_tickers": 1500},
+]
+DEFAULT_SETTINGS = {"sec_ua": sec.UA, "symbols": []}
+
+
+def slug(name):
+    t = name.lower().translate(str.maketrans("ąćęłńóśźż", "acelnoszz"))
+    return re.sub(r"[^a-z0-9]+", "-", t).strip("-") or "skaner"
+
+
+def normalize_scanners(settings):
+    """settings["scanners"] (stary zapis: samo "filters" -> skaner „Mój filtr” przed domyślnymi). Unikalne nazwy, min. jeden skaner."""
+    items = [dict(x) for x in settings.get("scanners") or [] if isinstance(x, dict) and x.get("filters")]
+    if not items:
+        items = [dict(x) for x in DEFAULT_SCANNERS]
+        old = (settings.get("filters") or "").strip()
+        if old and old != finviz.DEFAULT_FILTERS:
+            items.insert(0, {"name": "Mój filtr", "filters": old, "max_tickers": finviz.MAX_TICKERS})
+    out, seen = [], set()
+    for x in items:
+        name = str(x.get("name") or "Skaner").strip() or "Skaner"
+        while name in seen:
+            name += " 2"
+        seen.add(name)
+        out.append({"name": name, "filters": str(x["filters"]).strip(), "max_tickers": int(x.get("max_tickers") or finviz.MAX_TICKERS)})
+    settings.pop("filters", None)
+    settings["scanners"] = out
+    if settings.get("scanner") not in seen:
+        settings["scanner"] = out[0]["name"]
+    return settings
 
 
 def app_dir():
@@ -41,16 +78,42 @@ def write(path, data):
 class Store:
     def __init__(self, base=None):
         self.dir = data_dir(base)
-        self.settings = {**DEFAULT_SETTINGS, **read(self.dir / "settings.json", {})}
+        self.settings = normalize_scanners({**DEFAULT_SETTINGS, **read(self.dir / "settings.json", {})})
+        (self.dir / "scans").mkdir(exist_ok=True)
+        self.series = read(self.dir / "weekly.json", None)
+        if self.series is None:   # dane sprzed skanerów: świece ze starego scan.json
+            self.series = read(self.dir / "scan.json", {}).get("series", {})
+        self.extra = {}   # symbole otwarte przez Ctrl+K (tylko w pamięci): {ticker: (wiersz, świece)}
         self.reload()
 
+    @property
+    def scanner(self):
+        return next(x for x in self.settings["scanners"] if x["name"] == self.settings["scanner"])
+
+    def scan_path(self, name=None):
+        return self.dir / "scans" / f"{slug(name or self.settings['scanner'])}.json"
+
     def reload(self):
-        scan = read(self.dir / "scan.json", {})
-        self.rows, self.series, self.at = scan.get("rows", []), scan.get("series", {}), scan.get("at")
-        self.extra = {}   # symbole otwarte przez Ctrl+K (tylko w pamięci): {ticker: (wiersz, świece)}
+        scan = read(self.scan_path(), {})
+        if not scan and self.settings["scanner"] == self.settings["scanners"][0]["name"]:
+            scan = read(self.dir / "scan.json", {})   # stara lista (jeden skaner) jako pierwszy skaner
+        self.rows, self.at = scan.get("rows", []), scan.get("at")
+
+    def select(self, name):
+        """Przełącza wybrany skaner (lista spółek z jego ostatniego Sync)."""
+        if any(x["name"] == name for x in self.settings["scanners"]):
+            self.settings["scanner"] = name
+            self.save_settings()
+            self.reload()
 
     def save_scan(self, rows, series, at):
-        write(self.dir / "scan.json", {"at": at, "rows": rows, "series": series})
+        """Lista wybranego skanera + świece (dopisane do wspólnego weekly.json; zostają tylko spółki z list skanerów i symbole)."""
+        write(self.scan_path(), {"at": at, "rows": rows})
+        keep = set(series)
+        for sc in self.settings["scanners"]:
+            keep.update(r["ticker"] for r in read(self.scan_path(sc["name"]), {}).get("rows", []))
+        self.series = {t: s for t, s in {**self.series, **series}.items() if t in keep}
+        write(self.dir / "weekly.json", self.series)
         self.reload()
 
     def save_settings(self):

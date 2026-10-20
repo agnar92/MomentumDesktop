@@ -1,12 +1,13 @@
 """Główne okno: jedna lista (skan Finviz + warunki strategii), Sync, ustawienia filtra i wykres tygodniowy. Ctrl+K = dowolny symbol."""
 import queue
 import threading
+import time
 import tkinter as tk
 from tkinter import messagebox, ttk
 
 from . import calc, finviz, sec, sync
 from .chart import ChartWindow
-from .store import Store
+from .store import DEFAULT_SCANNERS, Store, normalize_scanners
 from .theme import BG, PANEL, apply_dark, autowrap, setup_style
 
 COLUMNS = [  # (klucz, nagłówek, szerokość, format)
@@ -33,6 +34,17 @@ def cell(v, f):
     return str(v)
 
 
+def fmt_time(sec):
+    sec = int(max(0, sec))
+    return f"{sec // 60}:{sec % 60:02d}"
+
+
+def progress_text(frac, stage, elapsed):
+    """Napis przy pasku postępu: etap, procent, czas od startu i szacunek do końca (gdy jest z czego liczyć)."""
+    eta = f" · zostało ~{fmt_time(elapsed * (1 - frac) / frac)}" if 0.03 < frac < 1 else ""
+    return f"{stage} · {frac * 100:.0f} % · {fmt_time(elapsed)}{eta}"
+
+
 def default_order(r):
     """Najpierw spółki spełniające warunki z sygnałem GLB, potem spełniające warunki, w grupie od największej zmiany marży operacyjnej."""
     return (not (r.get("ok") and r.get("glb_state") in SIGNAL), not r.get("ok"), -(r.get("dopm") if r.get("dopm") is not None else -1e9))
@@ -51,7 +63,12 @@ class App:
         bar.pack(fill="x")
         self.sync_btn = tk.Button(bar, text="⟳ Sync (F5)", command=self.start_sync, relief="flat")
         self.sync_btn.pack(side="left", padx=4, pady=4)
-        tk.Button(bar, text="Filtr Finviz / ustawienia…", command=self.open_settings, relief="flat").pack(side="left", padx=4)
+        tk.Label(bar, text="Skaner:", bg=PANEL).pack(side="left", padx=(8, 2))
+        self.scanner = tk.StringVar(value=self.store.settings["scanner"])
+        self.scanner_box = ttk.Combobox(bar, textvariable=self.scanner, state="readonly", width=24)
+        self.scanner_box.pack(side="left", padx=2)
+        self.scanner_box.bind("<<ComboboxSelected>>", lambda e: self.select_scanner(self.scanner.get()))
+        tk.Button(bar, text="Skanery / ustawienia…", command=self.open_settings, relief="flat").pack(side="left", padx=4)
         self.only_ok = tk.BooleanVar(value=True)
         tk.Checkbutton(bar, text="tylko spełniające warunki", variable=self.only_ok, command=self.refresh, bg=PANEL).pack(side="left", padx=8)
         tk.Label(bar, text="Szukaj:", bg=PANEL).pack(side="left")
@@ -76,10 +93,30 @@ class App:
         self.tree.bind("<<TreeviewSelect>>", lambda e: self._follow())
         self.status = autowrap(tk.Label(self.root, text="", bg=PANEL, padx=8))
         self.status.pack(fill="x", side="bottom")
+        # pasek postępu Sync (na samym dole, widoczny tylko w trakcie)
+        self.pframe = tk.Frame(self.root, bg=PANEL)
+        self.pbar = ttk.Progressbar(self.pframe, orient="horizontal", mode="determinate", maximum=1000)
+        self.pbar.pack(side="left", fill="x", expand=True, padx=(8, 8), pady=4)
+        self.plabel = tk.Label(self.pframe, text="", bg=PANEL, anchor="w", width=70)
+        self.plabel.pack(side="left", padx=(0, 8))
+        self.t0 = None
         self.root.bind("<F5>", lambda e: self.start_sync())
         self.root.bind("<Control-k>", lambda e: self.open_symbol())
         self.root.bind("<slash>", lambda e: self.open_symbol() if e.widget is self.tree else None)
         self.root.after(150, self._poll)
+        self.fill_scanners()
+        self.refresh()
+
+    # --- skanery
+    def fill_scanners(self):
+        self.scanner_box["values"] = [x["name"] for x in self.store.settings["scanners"]]
+        self.scanner.set(self.store.settings["scanner"])
+
+    def select_scanner(self, name):
+        if self.sync_btn["state"] == "disabled":   # w trakcie Sync zostaje skaner, który się synchronizuje
+            self.scanner.set(self.store.settings["scanner"])
+            return
+        self.store.select(name)
         self.refresh()
 
     # --- lista
@@ -103,7 +140,7 @@ class App:
             self.tree.selection_set(sel)
         n_ok = sum(1 for r in self.store.rows if r.get("ok"))
         n_sig = sum(1 for r in self.store.rows if r.get("ok") and r.get("glb_state") in SIGNAL)
-        self.status.config(text=f"  Dane: {self.store.at or 'brak — kliknij ⟳ Sync'}   Spółek: {len(self.store.rows)}   spełnia warunki: {n_ok}   sygnał GLB: {n_sig}"
+        self.status.config(text=f"  Skaner: {self.store.settings['scanner']}   Dane: {self.store.at or 'brak — kliknij ⟳ Sync'}   Spółek: {len(self.store.rows)}   spełnia warunki: {n_ok}   sygnał GLB: {n_sig}"
                                 f"   (warunki: obrót ≥ {calc.MIN_TURNOVER / 1e6:.0f} mln $, przychody ≥ +{calc.MIN_REV_GROWTH:.0f} %, marża oper. ≥ +{calc.MIN_DOPM:.0f} pp r/r;"
                                 f" sygnał: zamknięcie tyg. 0–{calc.ENTRY_MAX_PCT:.0f} % nad Green Line; wyjście: MACD tyg. + stop {calc.STOP_PCT:.0f} %)")
 
@@ -144,10 +181,14 @@ class App:
             return
         self.sync_btn.config(state="disabled")
         log = lambda s: self.q.put(("log", s))   # noqa: E731
+        self.t0 = time.monotonic()
+        self.pbar["value"] = 0
+        self.plabel.config(text="Start…")
+        self.pframe.pack(fill="x", side="bottom", before=self.status)
 
         def work():
             try:
-                sync.run(self.store, log=log)
+                sync.run(self.store, log=log, progress=lambda f, st: self.q.put(("progress", (f, st))))
                 self.q.put(("synced", None))
             except Exception as e:   # błąd sieci / Finviz: lista zostaje stara, komunikat w pasku
                 self.q.put(("error", str(e)))
@@ -162,12 +203,18 @@ class App:
                 kind, val = self.q.get_nowait()
                 if kind == "log":
                     self.status.config(text="  " + val)
+                elif kind == "progress":
+                    frac, stage = val
+                    self.pbar["value"] = frac * 1000
+                    self.plabel.config(text=progress_text(frac, stage, time.monotonic() - (self.t0 or time.monotonic())))
                 elif kind == "synced":
+                    self.pframe.pack_forget()
                     self.sync_btn.config(state="normal")
                     self.refresh()
                     if self.chart is not None and self.chart.winfo_exists():
                         self.chart.set_ticker(self.chart.ticker)
                 elif kind == "error":
+                    self.pframe.pack_forget()
                     self.sync_btn.config(state="normal")
                     self.status.config(text=f"  ❌ {val}")
         except queue.Empty:
@@ -182,29 +229,101 @@ class App:
 
 
 class SettingsDialog(tk.Toplevel):
+    """Skanery Finviz (nazwa + filtr + limit spółek; każdy liczy tę samą strategię, ma własną listę po Sync) i User-Agent dla SEC."""
+
     def __init__(self, app):
         super().__init__(app.root)
         self.app = app
-        self.title("Filtr Finviz i ustawienia")
+        self.title("Skanery Finviz i ustawienia")
         self.configure(bg=PANEL)
         apply_dark(self)
-        s = app.store.settings
-        tk.Label(self, text="Filtr Finviz (kody f= z adresu screenera; tylko wstępne cięcie listy do pobrania):", bg=PANEL).pack(anchor="w", padx=10, pady=(10, 2))
-        self.filters = tk.StringVar(value=s.get("filters"))
-        tk.Entry(self, textvariable=self.filters, width=90).pack(padx=10, fill="x")
-        tk.Label(self, text=f"Domyślny (bezpieczny — nie odcina dużych zwycięzców z testu): {finviz.DEFAULT_FILTERS}", bg=PANEL, fg="#8b95a3").pack(anchor="w", padx=10)
-        tk.Label(self, text="User-Agent dla SEC (SEC prosi o nazwę i e-mail kontaktowy):", bg=PANEL).pack(anchor="w", padx=10, pady=(10, 2))
-        self.ua = tk.StringVar(value=s.get("sec_ua"))
+        self.items = [dict(x) for x in app.store.settings["scanners"]]
+        self.cur = next(i for i, x in enumerate(self.items) if x["name"] == app.store.settings["scanner"])
+        top = tk.Frame(self, bg=PANEL)
+        top.pack(fill="both", expand=True, padx=10, pady=(10, 4))
+        self.lst = tk.Listbox(top, height=8, width=30, bg=BG, fg="#c9d1d9", selectbackground="#1f3a5f", selectforeground="#ffffff", exportselection=False, relief="flat")
+        self.lst.pack(side="left", fill="y")
+        self.lst.bind("<<ListboxSelect>>", lambda e: self.pick())
+        form = tk.Frame(top, bg=PANEL)
+        form.pack(side="left", fill="both", expand=True, padx=(10, 0))
+        self.name, self.filters, self.maxn = tk.StringVar(), tk.StringVar(), tk.StringVar()
+        for lab, var, w in (("Nazwa:", self.name, 40), ("Filtr Finviz (kody f= z adresu screenera):", self.filters, 80), ("Limit spółek:", self.maxn, 8)):
+            tk.Label(form, text=lab, bg=PANEL).pack(anchor="w")
+            tk.Entry(form, textvariable=var, width=w).pack(anchor="w", fill="x" if w > 10 else None, pady=(0, 6))
+        tk.Label(form, text="Finviz po cichu ignoruje nieznany kod — po zmianie sprawdź liczbę spółek po Sync.", bg=PANEL, fg="#8b95a3").pack(anchor="w")
+        btns = tk.Frame(form, bg=PANEL)
+        btns.pack(anchor="w", pady=6)
+        for text, cmd in (("＋ Nowy", self.new), ("Usuń", self.delete), ("Przywróć domyślne skanery", self.defaults)):
+            tk.Button(btns, text=text, command=cmd, relief="flat").pack(side="left", padx=(0, 6))
+        tk.Label(self, text="User-Agent dla SEC (SEC prosi o nazwę i e-mail kontaktowy):", bg=PANEL).pack(anchor="w", padx=10, pady=(6, 2))
+        self.ua = tk.StringVar(value=app.store.settings.get("sec_ua"))
         tk.Entry(self, textvariable=self.ua, width=90).pack(padx=10, fill="x")
         row = tk.Frame(self, bg=PANEL)
         row.pack(fill="x", padx=10, pady=10)
         tk.Button(row, text="Zapisz", command=self.save, relief="flat").pack(side="left")
-        tk.Button(row, text="Przywróć domyślne", command=lambda: (self.filters.set(finviz.DEFAULT_FILTERS), self.ua.set(sec.UA)), relief="flat").pack(side="left", padx=8)
+        tk.Button(row, text="Anuluj", command=self.destroy, relief="flat").pack(side="left", padx=8)
         self.bind("<Escape>", lambda e: self.destroy())
+        self.fill()
+
+    def fill(self):
+        self.lst.delete(0, "end")
+        for x in self.items:
+            self.lst.insert("end", x["name"])
+        self.lst.selection_set(self.cur)
+        x = self.items[self.cur]
+        self.name.set(x["name"])
+        self.filters.set(x["filters"])
+        self.maxn.set(str(x["max_tickers"]))
+
+    def keep(self):
+        """Zapamiętuje pola formularza w bieżącym skanerze."""
+        x = self.items[self.cur]
+        x["old"] = x.get("old", x["name"])
+        x["name"] = self.name.get().strip() or x["name"]
+        x["filters"] = self.filters.get().strip() or x["filters"]
+        try:
+            x["max_tickers"] = max(20, int(self.maxn.get()))
+        except ValueError:
+            pass
+
+    def pick(self):
+        sel = self.lst.curselection()
+        if sel:
+            self.keep()
+            self.cur = sel[0]
+            self.fill()
+
+    def new(self):
+        self.keep()
+        self.items.append({"name": f"Skaner {len(self.items) + 1}", "filters": finviz.DEFAULT_FILTERS, "max_tickers": finviz.MAX_TICKERS})
+        self.cur = len(self.items) - 1
+        self.fill()
+
+    def delete(self):
+        if len(self.items) > 1:
+            self.items.pop(self.cur)
+            self.cur = 0
+            self.fill()
+
+    def defaults(self):
+        self.items = [dict(x) for x in DEFAULT_SCANNERS]
+        self.cur = 0
+        self.fill()
 
     def save(self):
-        self.app.store.settings.update(filters=self.filters.get().strip() or finviz.DEFAULT_FILTERS, sec_ua=self.ua.get().strip() or sec.UA)
-        self.app.store.save_settings()
+        self.keep()
+        st = self.app.store
+        current = self.items[self.cur]["name"]
+        for x in self.items:   # zmiana nazwy przenosi listę spółek skanera
+            old = x.pop("old", None)
+            if old and old != x["name"] and st.scan_path(old).exists() and not st.scan_path(x["name"]).exists():
+                st.scan_path(old).rename(st.scan_path(x["name"]))
+        st.settings.update(scanners=self.items, scanner=current, sec_ua=self.ua.get().strip() or sec.UA)
+        normalize_scanners(st.settings)
+        st.save_settings()
+        st.reload()
+        self.app.fill_scanners()
+        self.app.refresh()
         self.destroy()
 
 

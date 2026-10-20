@@ -173,4 +173,7 @@ def monthly(tickers, cache, log=print, today=None, progress=None):
 
 
 def monthly_highs(entry):
-    return [h for _, h in (entry or {}).get("h", [])]
+    """High zamkniętych miesięcy; wpis bez "raw" (stare ceny skorygowane o dywidendy, np. spółka, która od tamtej pory nie przeszła progu obrotu
+    i nie była odświeżana) traktujemy jak brak — inaczej w tabeli zostawałaby za niska Green Line."""
+    e = entry or {}
+    return [h for _, h in e.get("h", [])] if e.get("raw") else []

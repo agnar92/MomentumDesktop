@@ -42,9 +42,9 @@ def symbol(sym, store, log=print, weekly=prices.weekly, monthly=prices.monthly, 
 
 
 def run(store, log=print, fetch_list=finviz.fetch, weekly=prices.weekly, monthly=prices.monthly, fund=sec.update, now=None, progress=None):
-    filters = store.settings.get("filters") or finviz.DEFAULT_FILTERS
-    log(f"Finviz: filtr {filters}")
-    base, total = fetch_list(filters, log=log, progress=stage_progress(progress, 0))
+    sc = store.scanner
+    log(f"Finviz [{sc['name']}]: filtr {sc['filters']}")
+    base, total = fetch_list(sc["filters"], max_tickers=sc["max_tickers"], log=log, progress=stage_progress(progress, 0))
     if not base:
         raise RuntimeError("Finviz nie zwrócił spółek (blokada albo zły filtr) — lista bez zmian.")
     tickers = [r["ticker"] for r in base]

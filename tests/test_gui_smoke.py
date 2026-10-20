@@ -66,3 +66,20 @@ def test_progress_bar_text_and_visibility(app):
     app.root.after(0, app._poll)
     app.root.update()
     assert app.pbar["value"] == 250
+
+
+def test_scanner_switch_and_settings_dialog(app):
+    from desktop import app as A
+    names = list(app.scanner_box["values"])
+    assert names[0] == "Bezpieczny (backtest)" and len(names) == 4
+    app.select_scanner(names[1])
+    assert app.tree.get_children() == () and app.store.settings["scanner"] == names[1]
+    app.select_scanner(names[0])
+    assert app.tree.get_children() == ("AAA",)
+    d = A.SettingsDialog(app)
+    d.new()
+    d.name.set("Mój")
+    d.filters.set("cap_largeover")
+    d.save()
+    assert app.store.settings["scanner"] == "Mój" and app.store.scanner["filters"] == "cap_largeover"
+    assert "Mój" in app.scanner_box["values"] and app.tree.get_children() == ()

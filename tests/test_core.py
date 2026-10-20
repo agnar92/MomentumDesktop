@@ -162,7 +162,7 @@ def test_sync_run_with_fake_sources(tmp_path):
         for t in ts:
             cache[t] = {"at": "2026-10-20", "rev_rr": 25, "dopm": 6}
     steps = []
-    rows = sync.run(store, log=lambda s: None, fetch_list=lambda f, log, progress: ([{"ticker": "A"}, {"ticker": "B"}], 2),
+    rows = sync.run(store, log=lambda s: None, fetch_list=lambda f, max_tickers, log, progress: ([{"ticker": "A"}, {"ticker": "B"}], 2),
                     weekly=lambda ts, log, cache, progress: {"A": w, "B": {**w, "v": [1e3] * 40}}, monthly=monthly, fund=fund,
                     progress=lambda f, st: steps.append((round(f, 2), st)))
     assert [f for f, _ in steps] == [0.0, 0.15, 0.4, 0.6, 1.0] and steps[-1][1] == "Gotowe"
@@ -170,3 +170,26 @@ def test_sync_run_with_fake_sources(tmp_path):
     assert a["ok"] and a["glb_state"] == "SYGNAŁ"
     assert not next(r for r in rows if r["ticker"] == "B")["ok"]   # za mały obrót
     assert Store(tmp_path).rows and Store(tmp_path).weekly("A")["c"][-1] == 104.0
+
+
+def test_scanners_have_own_lists_and_share_weekly(tmp_path):
+    store = Store(tmp_path)
+    names = [x["name"] for x in store.settings["scanners"]]
+    assert names[0] == "Bezpieczny (backtest)" and store.settings["scanner"] == names[0] and len(names) == 4
+    w = {"d": ["2026-01-05"] * 40, "o": [1] * 40, "h": [1] * 40, "l": [1] * 40, "c": [100.0] * 40, "v": [5e6] * 40}
+    store.save_scan([{"ticker": "A"}], {"A": w}, "x")
+    store.select(names[1])
+    assert store.rows == [] and store.weekly("A")                     # inny skaner: pusta lista, świece wspólne
+    store.save_scan([{"ticker": "B"}], {"B": w}, "y")
+    store.select(names[0])
+    s2 = Store(tmp_path)
+    assert [r["ticker"] for r in s2.rows] == ["A"] and set(s2.series) == {"A", "B"}
+
+
+def test_old_settings_filter_becomes_first_scanner(tmp_path):
+    from desktop import store as S
+    S.write(tmp_path / "settings.json", {"filters": "cap_largeover"})
+    S.write(tmp_path / "scan.json", {"at": "a", "rows": [{"ticker": "OLD"}], "series": {"OLD": {"c": [1]}}})
+    store = Store(tmp_path)
+    assert store.settings["scanners"][0] == {"name": "Mój filtr", "filters": "cap_largeover", "max_tickers": 1500}
+    assert [r["ticker"] for r in store.rows] == ["OLD"] and store.weekly("OLD")

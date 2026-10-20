@@ -1,5 +1,0 @@
-{
-  "_instructions": "Domyslny skaner CANSLIM (okt 2026, link v=351 uzytkownika): kapitalizacja od 300 mln USD, wzrost EPS q/q, EPS TTM r/r i sprzedazy q/q w grupie 'High (>25%)', tylko akcje, sredni wolumen > 300 tys., cena > 1 USD, cena powyzej SMA200 (bez ograniczenia do USA). 'filters' = kody filtrow Finviz rozdzielone przecinkami; Finviz po cichu ignoruje nieznany kod, wiec po zmianie sprawdz liczbe spolek. 'max_tickers' = limit listy.",
-  "filters": "cap_smallover,fa_epsqoq_high,fa_epsyoyttm_high,fa_salesqoq_high,ind_stocksonly,sh_avgvol_o300,sh_price_o1,ta_sma200_pa",
-  "max_tickers": 300
-}

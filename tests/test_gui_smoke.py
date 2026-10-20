@@ -120,3 +120,27 @@ def test_trend_line_draw_move_delete_and_filters(app):
     d.preset({})
     assert set(app.tree.get_children()) == {"AAA", "BBB"}
     A.AlertsDialog(app).destroy()
+
+
+def test_guide_position_and_ibd_panels(app):
+    from desktop import app as A
+    st = app.store
+    w = st.weekly("AAA")
+    st.series["SPY"] = {**w, "c": [x * 4 for x in w["c"]]}
+    row = st.row("AAA")
+    row.update(qs=[{"quarter": w["d"][100], "rev": 1e9, "rev_rr": 30}, {"quarter": w["d"][113], "rev": 1.2e9, "rev_rr": 12}], slow="HAMUJE+MB", accel=-12)
+    app.open_chart("AAA")
+    ch = app.chart
+    ch.update()
+    ch.redraw()
+    texts = [ch.cv.itemcget(i, "text") for i in ch.cv.find_all() if ch.cv.type(i) == "text"]
+    assert any(t.startswith("S&P 500 (SPY)") for t in texts) and "+30%" in texts
+    g = ch.geom["g"]
+    assert g["spx"][1] < g["price"][0] and g["vol"][1] < g["rev"][0] < g["rev"][1] < g["macd"][0]
+    ch.toggle_pos()
+    assert "AAA" in st.alerts["pos"] and "AAA" in st.alerts["watch"] and "⚠" in ch.pot_btn.cget("text")
+    assert app.tree.item("AAA")["values"][0].startswith("📌") and "poswarn" in app.tree.item("AAA")["tags"]
+    lines_ = A.checklist(row, st.alerts["pos"]["AAA"])
+    assert any(ln.startswith("⚠ Masz pozycję") for ln in lines_)
+    A.GuideDialog(app).destroy()
+    assert A.cell(3, "n") == "★★★☆☆" and A.cell("HAMUJE", "w") == "⚠ hamuje"

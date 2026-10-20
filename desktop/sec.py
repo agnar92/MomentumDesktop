@@ -9,6 +9,7 @@ import time
 import urllib.request
 
 UA = "MomentumDesktop research@example.com"
+SEC_VERSION = 2     # 2 = z poprzednim kwartałem i historią 8 kwartałów
 FRESH_DAYS = 7
 TICKERS_URL = "https://www.sec.gov/files/company_tickers.json"
 FACTS_URL = "https://data.sec.gov/api/xbrl/companyfacts/CIK{:010d}.json"
@@ -51,19 +52,13 @@ def _durations(facts, tags, unit="USD"):
     return out
 
 
-def metrics(facts):
-    """Cechy z ostatniego kwartału (porównanie r/r z kwartałem ~rok wcześniej). Brak danych -> {}."""
-    s = {k: _durations(facts, t) for k, t in TAGS.items()}
-    rev = {e: v for e, v in s["rev"].items() if v > 0}
-    ends = sorted(rev)
-    if len(ends) < 5:
-        return {}
-    e0 = ends[-1]
-    e4 = next((e for e in reversed(ends[:-1]) if 330 <= (e0 - e).days <= 400), None)
+def _quarter(s, rev, e0, ends):
+    """Cechy kwartału e0 względem kwartału ~rok wcześniej -> dict albo None."""
+    e4 = next((e for e in reversed([x for x in ends if x < e0]) if 330 <= (e0 - e).days <= 400), None)
     if e4 is None:
-        return {}
+        return None
     gp = {e: s["gp"].get(e, rev[e] - s["cogs"][e] if e in s["cogs"] else None) for e in (e0, e4)}
-    out = {"quarter": e0.isoformat(), "rev_rr": (rev[e0] / rev[e4] - 1) * 100}
+    out = {"quarter": e0.isoformat(), "rev": rev[e0], "rev_rr": (rev[e0] / rev[e4] - 1) * 100}
     if e0 in s["op"] and e4 in s["op"]:
         out["opm"] = s["op"][e0] / rev[e0] * 100
         out["dopm"] = out["opm"] - s["op"][e4] / rev[e4] * 100
@@ -72,10 +67,35 @@ def metrics(facts):
     return out
 
 
+def metrics(facts):
+    """Cechy z ostatniego kwartału (porównanie r/r z kwartałem ~rok wcześniej), poprzedniego kwartału (rev_rr1, dopm1, accel = zmiana tempa
+    przychodów) i historia 8 kwartałów `qs` [{quarter, rev, rev_rr}] do wykresu przychodów. Brak danych -> {}."""
+    s = {k: _durations(facts, t) for k, t in TAGS.items()}
+    rev = {e: v for e, v in s["rev"].items() if v > 0}
+    ends = sorted(rev)
+    if len(ends) < 5:
+        return {}
+    last = _quarter(s, rev, ends[-1], ends)
+    if last is None:
+        return {}
+    out = {k: v for k, v in last.items() if k != "rev"}
+    prev = _quarter(s, rev, ends[-2], ends) if len(ends) > 5 else None
+    if prev:
+        out["rev_rr1"], out["dopm1"] = prev["rev_rr"], prev.get("dopm")
+        out["accel"] = last["rev_rr"] - prev["rev_rr"]
+    qs = [_quarter(s, rev, e, ends) or {"quarter": e.isoformat(), "rev": rev[e]} for e in ends[-8:]]
+    out["qs"] = [{"quarter": q["quarter"], "rev": q["rev"], "rev_rr": q.get("rev_rr")} for q in qs]
+    out["v"] = SEC_VERSION
+    return out
+
+
 def update(tickers, cache, ua=UA, log=print, today=None, pause=0.15, progress=None):
     """Uzupełnia `cache` {ticker: {"at": data pobrania, ...metrics}} dla spółek bez świeżych danych. Spółki bez CIK (np. zagraniczne bez XBRL) pomijamy. progress(n, wszystkie) po każdej spółce."""
     today = today or dt.date.today()
-    todo = [t for t in tickers if not (cache.get(t) and (today - dt.date.fromisoformat(cache[t]["at"])).days < FRESH_DAYS)]
+    def fresh(e):   # wpis sprzed historii kwartałów (bez "v") z danymi pobieramy ponownie
+        return e and (today - dt.date.fromisoformat(e["at"])).days < FRESH_DAYS and (e.get("v") == SEC_VERSION or "rev_rr" not in e)
+
+    todo = [t for t in tickers if not fresh(cache.get(t))]
     if not todo:
         return []
     ciks = cik_map(ua)

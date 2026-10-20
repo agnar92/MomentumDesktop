@@ -15,7 +15,7 @@ GRID, DIM = "#1a1f26", "#6b7684"
 UP, DOWN = "#d5d9e0", "#e5484d"
 SMA_COLORS = {10: "#e5484d", 30: "#f0b429"}
 TLINE = "#22d3ee"
-GLB_COLOR, STOP_COLOR, MACD_C, SIG_C = "#3ddc84", "#ff5c5c", "#4aa3ff", "#f0b429"
+GLB_COLOR, STOP_COLOR, MACD_C, SIG_C, SPX_C = "#3ddc84", "#ff5c5c", "#4aa3ff", "#f0b429", "#b392f0"
 FONT = ("Consolas", 9)
 RIGHT, LEFT, TOP = 64, 6, 22
 
@@ -45,12 +45,23 @@ def fmt_vol(v):
 
 
 def geometry(w, h):
-    """Panele: cena 62 %, wolumen 14 %, MACD 18 % wysokości (reszta na odstępy i oś czasu)."""
-    ph = h - TOP - 22
-    p1 = TOP + ph * 0.62
-    v0, v1 = p1 + 6, p1 + 6 + ph * 0.14
-    m0, m1 = v1 + 8, h - 22
-    return {"price": (TOP, p1), "vol": (v0, v1), "macd": (m0, m1), "x0": LEFT, "x1": w - RIGHT}
+    """Panele (jak w IBD): S&P 500 10 %, cena 50 %, wolumen 10 %, przychody kwartalne 11 %, MACD reszta (odstępy i oś czasu osobno)."""
+    top = 8
+    ph = h - top - 22
+    s1 = top + ph * 0.10
+    p0 = s1 + 8
+    p1 = p0 + ph * 0.50
+    v0, v1 = p1 + 6, p1 + 6 + ph * 0.10
+    r0, r1 = v1 + 8, v1 + 8 + ph * 0.11
+    return {"spx": (top, s1), "price": (p0, p1), "vol": (v0, v1), "rev": (r0, r1), "macd": (r1 + 8, h - 22), "x0": LEFT, "x1": w - RIGHT}
+
+
+def fmt_big(v):
+    return f"{v / 1e9:.1f} mld" if v >= 1e9 else f"{v / 1e6:.0f} mln"
+
+
+def rev_color(g):
+    return DIM if g is None else GLB_COLOR if g >= 25 else SIG_C if g >= 15 else "#6b7684" if g >= 0 else DOWN
 
 
 # ---------- suwak okna czasu (minimapa) ----------
@@ -135,7 +146,7 @@ def draw_slider(cv, closes, n_show, end):
     cv.create_text(x1 - 6 if right else x1 + 6, 4, text=f"{i1 - i0} tyg.", fill=FG, font=FONT, anchor="ne" if right else "nw")
 
 
-def draw(cv, data, row=None, w=None, h=None, n_show=None, end=None, tlines=(), sel=None):
+def draw(cv, data, row=None, w=None, h=None, n_show=None, end=None, tlines=(), sel=None, spx=None):
     """Rysuje wykres okna (n_show tygodni kończące się na `end`, domyślnie cała historia) na canvas `cv`; data = {d, o, h, l, c, v};
     tlines = linie trendu, sel = id zaznaczonej. -> geometria (do dymka i linii; `i0` = indeks pierwszego tygodnia okna w pełnej serii, segs = linie w px)."""
     cv.delete("all")
@@ -232,7 +243,43 @@ def draw(cv, data, row=None, w=None, h=None, n_show=None, end=None, tlines=(), s
         cv.create_text(xf(i), m1 - 6, text="▼", fill=STOP_COLOR, font=FONT)
     cv.create_text(x0 + 4, m0 + 6, text="MACD (12, 26, 9) tyg. · ▼ przecięcie w dół = stop pod Low tego tygodnia", anchor="w", fill=DIM, font=FONT)
     legend = "  ".join(f"SMA {k} tyg." for k in SMA_COLORS)
-    cv.create_text(x0 + 4, 10, text=legend, anchor="w", fill=FG, font=FONT)
+    cv.create_text(x0 + 4, y0 + 10, text=legend, anchor="w", fill=FG, font=FONT)
+    # S&P 500 nad wykresem: kierunek rynku (skala log w oknie)
+    s0, s1 = g["spx"]
+    sv = []
+    if spx and spx.get("d"):
+        for d in dates:
+            k = L.date_index(spx["d"], d)
+            sv.append(spx["c"][k] if k >= 0 else None)
+    sok = [v for v in sv if v]
+    if len(sok) > 1:
+        lo_, hi_ = math.log(min(sok)), math.log(max(sok))
+        pts = [(xf(i), s1 - (math.log(v) - lo_) / ((hi_ - lo_) or 1) * (s1 - s0 - 4) - 2) for i, v in enumerate(sv) if v]
+        cv.create_line(*[p for xy in pts for p in xy], fill=SPX_C, width=1.3)
+        ch = (sok[-1] / sok[0] - 1) * 100
+        cv.create_text(x0 + 4, s0 + 6, text=f"S&P 500 (SPY) {fmt(sok[-1])} · w oknie {ch:+.1f} %", anchor="w", fill=SPX_C, font=FONT)
+    else:
+        cv.create_text(x0 + 4, s0 + 6, text="S&P 500 — brak danych SPY (zrób Sync)", anchor="w", fill=DIM, font=FONT)
+    cv.create_line(x0, s1 + 3, x1, s1 + 3, fill=GRID)
+    # przychody kwartalne (słupki w okresie kwartału) z dynamiką r/r: zielony ≥ +25 %, żółty ≥ +15 %
+    q0, q1 = g["rev"]
+    qs = (row or {}).get("qs") or []
+    shown = []
+    for m, q in enumerate(qs):
+        b = L.date_index(dates, q["quarter"])
+        a = L.date_index(dates, qs[m - 1]["quarter"]) + 1 if m > 0 else b - 12
+        if b >= 0 and a <= n - 1 and (q.get("rev") or 0) > 0:
+            shown.append((max(0, a), b, q))
+    rmax = max([q["rev"] for *_, q in shown] or [1])
+    for a, b, q in shown:
+        xa, xb = xf(a) - step * 0.45, xf(min(b, n - 1)) + step * 0.45
+        ht = q["rev"] / rmax * (q1 - q0 - 14)
+        col = rev_color(q.get("rev_rr"))
+        cv.create_rectangle(xa + 1, q1 - ht, max(xa + 2, xb - 1), q1, fill=col, outline="", stipple="gray75")
+        if xb - xa > 30 and q.get("rev_rr") is not None:
+            cv.create_text((xa + xb) / 2, q1 - ht - 6, text=f"{q['rev_rr']:+.0f}%", fill=col, font=FONT)
+    cv.create_text(x0 + 4, q0 + 4, text=(f"Przychody kw. · r/r % (zielony ≥ 25 %, żółty ≥ 15 %) · ostatni {fmt_big(qs[-1]['rev'])} $" if qs
+                                         else "Przychody kw. — brak danych SEC"), anchor="w", fill=DIM, font=FONT)
     return {"g": g, "step": step, "n": n, "i0": i0, "lmin": lmin, "lmax": lmax, "segs": segs}
 
 
@@ -313,6 +360,10 @@ class ChartWindow(tk.Toplevel):
         top.pack(fill="x")
         self.watch_btn = tk.Button(top, text="🔕 Obserwuj", command=self.toggle_watch, relief="flat")
         self.watch_btn.pack(side="right", padx=4, pady=2)
+        self.pos_btn = tk.Button(top, text="📌 Pozycja", command=self.toggle_pos, relief="flat")
+        self.pos_btn.pack(side="right", padx=2, pady=2)
+        self.pot_btn = tk.Button(top, text="", command=self.guide, relief="flat", fg="#f0b429")
+        self.pot_btn.pack(side="right", padx=2, pady=2)
         self.del_btn = tk.Button(top, text="🗑 linia", command=self.delete_selected, relief="flat")
         self.alert_btn = tk.Button(top, text="🔔 alert linii", command=self.toggle_line_alert, relief="flat")
         self.head = tk.Label(top, text="", bg=PANEL, anchor="w", padx=8)
@@ -367,7 +418,8 @@ class ChartWindow(tk.Toplevel):
             self.cv.delete("all")
             self.cv.create_text(20, 20, text="Brak danych — zrób Sync albo Ctrl+K.", anchor="w", fill=FG)
             return
-        self.geom = draw(self.cv, data, self.app.store.row(self.ticker), n_show=self.n_show, end=self.end, tlines=self.lines(), sel=self.sel)
+        self.geom = draw(self.cv, data, self.app.store.row(self.ticker), n_show=self.n_show, end=self.end, tlines=self.lines(), sel=self.sel,
+                         spx=self.app.store.weekly("SPY"))
 
     def draw_slider(self):
         data = self.data()
@@ -422,7 +474,7 @@ class ChartWindow(tk.Toplevel):
         i = int((e.x - g["x0"]) / self.geom["step"])
         if not 0 <= i < self.geom["n"]:
             return
-        self.cv.create_line(e.x, g["price"][0], e.x, g["macd"][1], fill="#3a4654", tags="tip")
+        self.cv.create_line(e.x, g["spx"][0], e.x, g["macd"][1], fill="#3a4654", tags="tip")
         lines = [s for s in info_lines(data, self.geom["i0"] + i) if s]
         x = e.x + 14 if e.x < g["x1"] - 200 else e.x - 190
         self.cv.create_rectangle(x, e.y + 10, x + 176, e.y + 16 + 15 * len(lines), fill="#1b2027", outline="#3a4654", tags="tip")
@@ -549,7 +601,27 @@ class ChartWindow(tk.Toplevel):
         st.save_alerts()
         self.tools()
 
+    def guide(self):
+        from .app import GuideDialog
+        GuideDialog(self.app)
+
+    def toggle_pos(self):
+        st = self.app.store
+        r = st.row(self.ticker) or {}
+        if self.ticker in st.alerts["pos"]:
+            del st.alerts["pos"][self.ticker]
+        else:
+            st.alerts["pos"][self.ticker] = {"since": max((s["d"][-1] for s in [self.data()] if s), default=""), "price": r.get("price")}
+            st.alerts["watch"].setdefault(self.ticker, L.snapshot(r))   # pozycja = też alerty strategii (MACD, stop, hamowanie)
+        st.save_alerts()
+        self.tools()
+        self.app.refresh()
+
     def tools(self):
+        held = self.ticker in self.app.store.alerts["pos"]
+        self.pos_btn.config(text="📌 Mam pozycję" if held else "📌 Pozycja", bg="#1f3b5c" if held else self.del_btn.cget("bg"))
+        r = self.app.store.row(self.ticker) or {}
+        self.pot_btn.config(text=f"★ {r.get('pot') or 0}/5" + (" · ⚠ hamuje" if r.get("slow") else ""), fg="#ffb020" if r.get("slow") else "#f0b429")
         watched = self.ticker in self.app.store.alerts["watch"]
         self.watch_btn.config(text="🔔 Obserwujesz" if watched else "🔕 Obserwuj", bg="#1f3b5c" if watched else self.del_btn.cget("bg"))
         ln = self.find(self.sel) if self.sel else None

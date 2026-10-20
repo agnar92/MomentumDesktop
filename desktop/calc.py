@@ -12,6 +12,16 @@ MIN_TURNOVER = 50e6     # obrót dzienny ($)
 MIN_REV_GROWTH = 15.0   # przychody kw. r/r (%)
 MIN_DOPM = 3.0          # zmiana marży operacyjnej r/r (pp)
 STOP_PCT = 10.0         # stop początkowy pod wejściem
+# Potencjał (badanie 2021–2026 na cenach bez korekty: wybicia z konsolidacji po +30–100 %, szansa na dalsze ≥ +100 % w 12 mies.; bez warunków 5,1 %).
+# Tylko cechy, które rzeczywiście podnosiły szansę; przyspieszenie przychodów, EPS, marża brutto (poziom), marża oper. > 0, ROE, RS — bez wpływu.
+POTENTIAL = (  # (klucz, opis, szansa na dalsze ≥ +100 % gdy spełnione)
+    ("rev25", "przychody ≥ +25 % r/r", 7.9),
+    ("rev25x2", "przychody ≥ +25 % r/r dwa kwartały z rzędu", 8.9),
+    ("dopm3x2", "marża oper. ↑ ≥ +3 pp dwa kwartały z rzędu", 8.9),
+    ("dgm2", "marża brutto ↑ ≥ +2 pp r/r", 8.0),
+    ("lowopm", "marża oper. < 10 % (dźwignia operacyjna na starcie)", 8.6),
+)
+SLOW_ACCEL = -10.0      # hamowanie: tempo przychodów spadło o ≥ 10 pp względem kwartału wcześniej (cena 3 mies. −0,5 % vs +2,1 %, spadek ≥ 20 %: 44 % vs 33 %)
 
 
 def _ok(v):
@@ -97,6 +107,26 @@ def passes(row):
     return _ok(t) and t >= MIN_TURNOVER and _ok(r) and r >= MIN_REV_GROWTH and _ok(d) and d >= MIN_DOPM
 
 
+def potential(row):
+    """-> lista (klucz, opis, spełnione: True / False / None = brak danych) dla warunków POTENTIAL."""
+    r, r1, d, d1, g, o = (row.get(k) for k in ("rev_rr", "rev_rr1", "dopm", "dopm1", "dgm", "opm"))
+    val = {"rev25": r >= 25 if _ok(r) else None,
+           "rev25x2": (r >= 25 and r1 >= 25) if _ok(r) and _ok(r1) else None,
+           "dopm3x2": (d >= 3 and d1 >= 3) if _ok(d) and _ok(d1) else None,
+           "dgm2": g >= 2 if _ok(g) else None,
+           "lowopm": o < 10 if _ok(o) else None}
+    return [(k, txt, val[k]) for k, txt, _ in POTENTIAL]
+
+
+def slowdown(row):
+    """Hamowanie w ostatnim raporcie: None, 'HAMUJE' (tempo przychodów −10 pp lub więcej) albo 'HAMUJE+MB' (do tego marża brutto spada r/r:
+    cena 3 i 6 mies. −1,8 %, spadek ≥ 20 % w 6 mies.: 50 %)."""
+    a, g = row.get("accel"), row.get("dgm")
+    if not (_ok(a) and a <= SLOW_ACCEL):
+        return None
+    return "HAMUJE+MB" if _ok(g) and g < 0 else "HAMUJE"
+
+
 def build_row(base, weekly, months, fund):
     """Wiersz listy: base (z Finviz), weekly {d, o, h, l, c, v}, months (High zamkniętych miesięcy), fund (z SEC albo None)."""
     c, lo, v = weekly.get("c") or [], weekly.get("l") or [], weekly.get("v") or []
@@ -109,6 +139,10 @@ def build_row(base, weekly, months, fund):
                turnover=turnover(c, v))
     m = macd_info(c, lo)
     row.update(macd=m["state"], macd_stop=m["stop"])
-    row.update({k: (fund or {}).get(k) for k in ("rev_rr", "dopm", "opm", "dgm", "quarter")})
+    row.update({k: (fund or {}).get(k) for k in ("rev_rr", "rev_rr1", "accel", "dopm", "dopm1", "opm", "dgm", "quarter", "qs")})
     row["ok"] = passes(row)
+    pot = potential(row)
+    row["pot"] = sum(1 for *_, v in pot if v)
+    row["pot_ok"] = [v for *_, v in pot]
+    row["slow"] = slowdown(row)
     return row

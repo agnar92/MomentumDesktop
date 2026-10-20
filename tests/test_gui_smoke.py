@@ -42,7 +42,8 @@ def test_list_chart_and_navigation(app):
     ch.update()
     ch.redraw()
     assert ch.geom and ch.geom["n"] == 156
-    ev = type("E", (), {"x": 300, "y": 200})()
+    g = ch.geom["g"]   # środek wykresu (szerokość zależy od ekranu i panelu fundamentów)
+    ev = type("E", (), {"x": (g["x0"] + g["x1"]) / 2, "y": (g["price"][0] + g["price"][1]) / 2})()
     ch.on_motion(ev)
     assert ch.cv.find_withtag("tip")
     ch.zoom(0.5)                                         # kółko: okno 78 tygodni, prawy brzeg zostaje
@@ -134,7 +135,7 @@ def test_guide_position_and_ibd_panels(app):
     ch.update()
     ch.redraw()
     texts = [ch.cv.itemcget(i, "text") for i in ch.cv.find_all() if ch.cv.type(i) == "text"]
-    assert any(t.startswith("S&P 500 (SPY)") for t in texts) and "+30%" in texts
+    assert any(t.startswith("S&P 500 (SPY)") for t in texts) and any(t.startswith("Przychody kw.") and "1.2 mld" in t for t in texts)
     g = ch.geom["g"]
     assert g["spx"][1] < g["price"][0] and g["vol"][1] < g["rev"][0] < g["rev"][1] < g["macd"][0]
     ch.toggle_pos()

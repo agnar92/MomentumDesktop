@@ -108,12 +108,13 @@ def test_monthly_updates_only_new_months_and_uses_high(monkeypatch):
     import pandas as pd
     calls = []
     hi = pd.Series([10.0, 12.0], index=pd.to_datetime(["2026-08-01", "2026-09-01"]))
-    _yf_fake(monkeypatch, calls, {"A": {"High": hi}, "B": {"High": hi}})
-    cache = {"A": {"h": [["2026-07", 9.0], ["2026-08", 10.0]], "upto": "2026-08"}, "C": {"h": [], "upto": "2026-09"},
-             "B": {"m": [["2026-09", 1.0]], "upto": "2026-09"}}      # stary wpis z zamknięciami (nawet aktualny) -> cała historia
-    prices.monthly(["A", "B", "C"], cache, log=lambda s: None, today=dt.date(2026, 10, 20))
-    assert calls == [(["A"], "6mo"), (["B"], "max")]                 # C aktualne: bez zapytania
-    assert cache["A"] == {"h": [["2026-07", 9.0], ["2026-08", 10.0], ["2026-09", 12.0]], "upto": "2026-09"}
+    cache = {"A": {"h": [["2026-07", 9.0], ["2026-08", 10.0]], "upto": "2026-08", "raw": 1}, "C": {"h": [], "upto": "2026-09", "raw": 1},
+             "B": {"m": [["2026-09", 1.0]], "upto": "2026-09"},     # stary wpis z zamknięciami (nawet aktualny) -> cała historia
+             "D": {"h": [["2026-09", 1.0]], "upto": "2026-09"}}     # aktualny, ale ze skorygowanymi cenami (bez "raw") -> cała historia
+    _yf_fake(monkeypatch, calls, {"A": {"High": hi}, "B": {"High": hi}, "D": {"High": hi}})
+    prices.monthly(["A", "B", "C", "D"], cache, log=lambda s: None, today=dt.date(2026, 10, 20))
+    assert calls == [(["A"], "6mo"), (["B", "D"], "max")]            # C aktualne: bez zapytania
+    assert cache["A"] == {"h": [["2026-07", 9.0], ["2026-08", 10.0], ["2026-09", 12.0]], "upto": "2026-09", "raw": 1}
     assert prices.monthly_highs(cache["B"]) == [10.0, 12.0]
 
 
@@ -121,7 +122,7 @@ def test_monthly_refetches_full_history_when_prices_changed(monkeypatch):
     import pandas as pd
     calls = []
     _yf_fake(monkeypatch, calls, {"A": {"High": pd.Series([5.0, 6.0], index=pd.to_datetime(["2026-08-01", "2026-09-01"]))}})
-    cache = {"A": {"h": [["2026-08", 10.0]], "upto": "2026-08"}}   # split 2:1 — 10 -> 5
+    cache = {"A": {"h": [["2026-08", 10.0]], "upto": "2026-08", "raw": 1}}   # split 2:1 — 10 -> 5
     prices.monthly(["A"], cache, log=lambda s: None, today=dt.date(2026, 10, 20))
     assert calls == [(["A"], "6mo"), (["A"], "max")] and cache["A"]["h"] == [["2026-08", 5.0], ["2026-09", 6.0]]
 
@@ -144,9 +145,10 @@ def test_weekly_fetches_only_recent_weeks_for_cached(monkeypatch):
     full = pd.DataFrame({k: [1.0] * 12 for k in f}, index=pd.date_range("2026-08-03", periods=12, freq="W-MON"))
     monkeypatch.setattr(prices, "_yf", lambda: type("Y", (), {"download": staticmethod(lambda part, **k: calls.append((list(part), k["period"])) or k["period"])}))
     monkeypatch.setattr(prices, "_frames", lambda d, part: {t: (full if d == "3y" else df) for t in part})
-    cache = {"A": {k: [1, 2, 3] for k in "ohlcv"} | {"d": ["2026-09-28", "2026-10-05", "2026-10-12"]}}
-    out = prices.weekly(["A", "N"], log=lambda s: None, cache=cache, today=dt.date(2026, 10, 20))
-    assert calls == [(["A"], "1mo"), (["N"], "3y")]
+    cache = {"A": {k: [1, 2, 3] for k in "ohlcv"} | {"d": ["2026-09-28", "2026-10-05", "2026-10-12"], "raw": 1},
+             "S": {k: [1, 2, 3] for k in "ohlcv"} | {"d": ["2026-09-28", "2026-10-05", "2026-10-12"]}}   # bez "raw": ceny skorygowane -> 3 lata
+    out = prices.weekly(["A", "N", "S"], log=lambda s: None, cache=cache, today=dt.date(2026, 10, 20))
+    assert calls == [(["A"], "1mo"), (["N", "S"], "3y")] and out["A"]["raw"] == 1
     assert out["A"]["c"] == [1, 2, 3.0, 4.0] and len(out["N"]["c"]) == 12
 
 

@@ -147,7 +147,7 @@ def test_guide_position_and_ibd_panels(app):
     shown = ch.show_panel
     ch.toggle_panel()
     assert ch.show_panel != shown and app.store.settings["fund_panel"] == ch.show_panel and ch.fund_btn.cget("text").startswith("◀" if shown else "▶")
-    assert A.cell(3, "n") == "★★★☆☆" and A.cell("HAMUJE", "w") == "⚠ hamuje"
+    assert A.cell(2, "n") == "★★☆" and A.cell("HAMUJE", "w") == "⚠ hamuje"
 
 
 def test_monthly_chart_shows_green_line_history(app, monkeypatch):

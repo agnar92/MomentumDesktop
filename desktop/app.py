@@ -25,7 +25,7 @@ FILTER_CHOICES = {"glb_state": ["WYBICIE", "SYGNAŁ", "NAD", "POD", "BRAK"], "ma
 FILTER_SCALE = {"turnover": 1e6}
 FILTER_PRESETS = [
     ("Mocne (Δ marży ≥ 10 pp) z sygnałem GLB", {"strong": {"in": ["tak"]}, "glb_state": {"in": ["WYBICIE", "SYGNAŁ"]}}),
-    ("Potencjał ≥ 3 + nad GLB + MACD dodatni", {"pot": {"min": 3}, "glb_state": {"in": ["WYBICIE", "SYGNAŁ", "NAD"]}, "macd": {"in": ["nad"]}}),
+    ("Potencjał ≥ 2 + nad GLB + MACD dodatni", {"pot": {"min": 2}, "glb_state": {"in": ["WYBICIE", "SYGNAŁ", "NAD"]}, "macd": {"in": ["nad"]}}),
     ("Sygnał kupna z potencjałem ≥ 3", {"pot": {"min": 3}, "glb_state": {"in": ["WYBICIE", "SYGNAŁ"]}}),
     ("Nad GLB + MACD dodatni", {"glb_state": {"in": ["WYBICIE", "SYGNAŁ", "NAD"]}, "macd": {"in": ["nad"]}}),
     ("Sygnał kupna + MACD dodatni", {"glb_state": {"in": ["WYBICIE", "SYGNAŁ"]}, "macd": {"in": ["nad"]}}),
@@ -67,7 +67,7 @@ def cell(v, f):
     if f == "b":
         return "✓" if v else ""
     if f == "n":
-        return "★" * v + "☆" * max(0, 5 - v)
+        return "★" * v + "☆" * max(0, len(calc.POTENTIAL) - v)
     if f == "w":
         return "⚠⚠ + marża" if v == "HAMUJE+MB" else "⚠ hamuje" if v else ""
     return str(v)
@@ -531,33 +531,33 @@ class AlertsDialog(tk.Toplevel):
         self.destroy()
 
 
-GUIDE = """1. NAJPIERW DOBRA SPÓŁKA — bez tego GLB nie działa
-Wszystkie sygnały GLB 2015–2026, bez limitu kapitału: bez fundamentów GLB wypada jak zakup w losowym tygodniu (+2,6 % vs +2,4 % na transakcję).
-Z warunkami strategii portfel wszystkich sygnałów GLB dał 16,1 % rocznie (losowe wejście z tymi samymi warunkami: 10,3 %, SPY 13,6 %).
-Warunki strategii (kolumna Warunki): obrót ≥ 50 mln $ dziennie, przychody kw. ≥ +15 % r/r, marża operacyjna ≥ +3 pp r/r.
-Zabezpieczenie (przypadek RGTI): zysk operacyjny w $ musi być lepszy niż rok wcześniej, a przychody kwartału ≥ 25 mln $. Przy symbolicznych przychodach
-zmiana marży w pp nic nie znaczy (RGTI: przychody 5 mln $, strata oper. większa o 41 %, a „Δ marży” +558 pp).
+GUIDE = """BLUEPRINT (październik 2026) — sprawdzony w strategii GLB + MACD na wszystkich sygnałach 2015–2026, ceny bez korekty
+Wcześniejsza wersja liczyła „szansę na ruch +100 %”, a to głównie mierzy zmienność: najczęściej robią go spółki z mikro-przychodami (24 %), marżą < −50 %
+(22 %) i P/S > 50 (17,5 %) — z medianą zwrotu −13…−31 % i 50–60 % szans na spadek ≥ 30 %. Tak trafił się RGTI. Teraz liczy się wynik strategii.
 
-MOCNE (kolumna Mocne, ciemniejsza zieleń na liście): warunki strategii + zmiana marży oper. r/r ≥ 10 pp (zamiast ≥ 3 pp).
-Wszystkie sygnały GLB 0–10 % 2015–2026: +5,1 % na transakcję (obecne warunki +2,9 %), portfel wszystkich 22,7 % rocznie (16,1 %), maks. spadek −40 % (−34 %).
-Liczy się POPRAWA marży, nie jej poziom: top 5 % spółek wg samej marży dało +2,1 % na transakcję, wg zmiany marży r/r +8,7 %. Zmiana kw./kw. nie działa (+2,9 %).
-W konsolidacji po +30–100 % spółki z górnych 10 % rynku wg zmiany marży r/r robiły dalej ≥ +100 % w 10–12 % przypadków (dolna połowa: 4,8 %).
+1. WARUNEK KONIECZNY (kolumna Warunki)
+   obrót ≥ 50 mln $ dziennie
+   przychody kwartału ≥ +15 % r/r i ≥ 25 mln $
+   marża operacyjna ≥ +3 pp r/r i zysk operacyjny w $ lepszy niż rok wcześniej
+   wycena P/S < 20 (kapitalizacja / przychody z 4 kwartałów)
+Bez fundamentów GLB działa jak zakup w losowym tygodniu (+2,6 % vs +2,4 % na transakcję). Z warunkiem: +4,0 % na transakcję, portfel wszystkich
+sygnałów 19,4 % rocznie (2015–20: 20,1 %, 2021–26: 19,1 %), maks. spadek −33 %. Drogie (P/S ≥ 20) przy tych samych warunkach: −1,8 % na transakcję.
 
-2. POTENCJAŁ ★ — co podnosi szansę na bardzo duży ruch
-Wybicia z konsolidacji po pierwszym wzroście o 30–100 % (2021–2025, 7314 przypadków). Bez warunków tylko 5,1 % dało dalej ≥ +100 % w 12 mies. Gdy spełnione:
-   przychody ≥ +25 % r/r i marża oper. ↑ ≥ +3 pp	9,6 %
-   ★ przychody ≥ +25 % r/r dwa kwartały z rzędu	8,9 %
-   ★ marża oper. ↑ ≥ +3 pp dwa kwartały z rzędu	8,9 %
-   ★ marża oper. < 10 % (spółka dopiero zaczyna zarabiać — dźwignia)	8,6 %
-   ★ marża brutto ↑ ≥ +2 pp r/r	8,0 %
-   ★ przychody ≥ +25 % r/r	7,9 %
-Wysoki potencjał = większa szansa na duży ruch, ale też większa zmienność (średni wynik po 6 mies. nie jest wyższy) — stop jest obowiązkowy.
+2. MOCNE (kolumna Mocne, ciemniejsza zieleń): warunek konieczny + marża oper. ↑ ≥ 10 pp r/r + rozwodnienie akcji < 10 % r/r
+   +8,0 % na transakcję (2015–20: +10,7 %, 2021–26: +6,9 %), portfel wszystkich 26,4 % rocznie, maks. spadek −39 %.
+Liczy się POPRAWA marży, nie jej poziom (top 5 % wg poziomu: +2,1 %, wg zmiany: +8,7 %); zmiana kwartał do kwartału nie działa.
 
-3. JAK WYGLĄDA DUŻY RUCH W RAPORTACH
+3. POTENCJAŁ ★ (0–3) — średni wynik transakcji z cechą (spółki z warunkiem bez niej: +4,0 %)
+   ★ marża oper. ↑ ≥ +10 pp r/r	+6,2 %
+   ★ marża brutto ↑ r/r	+5,0 % (mocno w 2015–20, słabiej w 2021–26)
+   ★ rozwodnienie akcji < 10 % r/r	razem z Mocne +8,0 %
+Usunięte, bo nagradzały ryzyko: marża oper. < 10 % (łapała też −500 %), przychody ≥ 25 % (dwa kwartały) — w strategii bez poprawy.
+
+4. JAK WYGLĄDA DUŻY RUCH W RAPORTACH
 Start: w dołku fundamenty są słabe (mediana: przychody +5 %, EPS −6 %, marża oper. −1 pp); poprawę widać 2–3 raporty później. Od wyprzedzenia jest Green Line.
 Szczyt: kurs kończy ruch przy raporcie z najwyższym tempem wzrostu (EPS +33 %); kolejne raporty dalej dobre, ale wolniejsze (EPS +27 → +15 → +11 %).
 
-4. WEJŚCIE I WYJŚCIE
+5. WEJŚCIE I WYJŚCIE
 Kupno: zamknięcie tygodnia 0–10 % nad Green Line. Stop 10 % pod wejściem; po przecięciu MACD tyg. w dół stop pod Low tego tygodnia.
 ⚠ Hamowanie (kolumna Hamuje, alert dla 📌 pozycji): tempo przychodów spadło o ≥ 10 pp — spadek ≥ 20 % w 6 mies. w 44 % przypadków (normalnie 33 %);
 ⚠⚠ z marżą brutto spadającą r/r — 50 %, średnio −1,8 % po 3 i 6 mies. Wtedy zacieśnij stop albo nie dokładaj.
@@ -568,7 +568,7 @@ kropki, wyjście MACD: tylko +1,0…+1,2 % na transakcję, trafność 14–15 % 
 Ze stopem 10 % zamiast Low kropki: +1,6…+1,8 %. Dla porównania GLB 0–10 % na tygodniowym: +2,9 %, z Mocne +5,1 %. Przegapione wejście lepiej
 odpuścić albo czekać na nowe wybicie z linii.
 
-5. CZEGO NIE SZUKAĆ (nic nie wnosiło)
+6. CZEGO NIE SZUKAĆ (nic nie wnosiło)
 ROE / ROI, ranking po RS, Blue Dot, samo przyspieszenie przychodów, poziom marży brutto i operacyjnej, „marża oper. > 0”, sam EPS ponad przychody
 i marże, zmiana marży kwartał do kwartału, RWB + Blue Dot jako wejście.
 Wykres: S&P 500 nad ceną = kierunek rynku; słupki przychodów pod wolumenem — zielony ≥ +25 % r/r, żółty ≥ +15 %.
@@ -585,13 +585,15 @@ def checklist(row, pos=None):
     def f(v, u):
         return "—" if v is None else f"{v:+.1f}{u}"
     r = row
-    lines_ = [f"{r['ticker']} {r.get('company') or ''} — potencjał ★ {r.get('pot') or 0}/5" + (f" · 📌 pozycja od {pos['since']} ({pos['price']:.2f})" if pos and pos.get("price") else ""),
+    ps_txt = f"{r['ps']:.1f}" if r.get("ps") else "—"
+    lines_ = [f"{r['ticker']} {r.get('company') or ''} — potencjał ★ {r.get('pot') or 0}/{len(calc.POTENTIAL)}" + (f" · 📌 pozycja od {pos['since']} ({pos['price']:.2f})" if pos and pos.get("price") else ""),
               f"Przychody {f(r.get('rev_rr'), ' %')} r/r (kwartał wcześniej {f(r.get('rev_rr1'), ' %')}), Δ marży oper. {f(r.get('dopm'), ' pp')} "
-              f"(wcześniej {f(r.get('dopm1'), ' pp')}), marża oper. {f(r.get('opm'), ' %')} · kwartał {r.get('quarter') or '—'}", "",
-              f"{yes(r.get('ok'))} Warunki strategii (obrót ≥ 50 mln $, przychody ≥ +15 %, Δ marży oper. ≥ +3 pp)",
-              f"{yes(bool(r.get('strong')))} Mocne: Δ marży oper. ≥ +10 pp (+5,1 % vs +2,9 % na transakcję)"]
-    for (txt, p), v in zip(POT_TEXT, r.get("pot_ok") or [None] * 5):
-        lines_.append(f"{yes(v)} {txt}  (szansa {p:.1f} % vs 5,1 %)".replace(f"{p:.1f}", f"{p:.1f}".replace(".", ",")))
+              f"(wcześniej {f(r.get('dopm1'), ' pp')}), marża oper. {f(r.get('opm'), ' %')} · P/S {ps_txt} · rozwodnienie {f(r.get('dil'), ' %')} "
+              f"· kwartał {r.get('quarter') or '—'}", "",
+              f"{yes(r.get('ok'))} Warunek konieczny (obrót ≥ 50 mln $, przychody ≥ +15 % i ≥ 25 mln $, Δ marży oper. ≥ +3 pp i zysk oper. $ ↑, P/S < 20)",
+              f"{yes(bool(r.get('strong')))} Mocne: Δ marży oper. ≥ +10 pp i rozwodnienie < 10 % (+8,0 % vs +4,0 % na transakcję)"]
+    for (txt, p), v in zip(POT_TEXT, r.get("pot_ok") or [None] * len(POT_TEXT)):
+        lines_.append(f"{yes(v)} {txt}  (śr. transakcja +{p:.1f} % vs +4,0 %)".replace(f"{p:.1f}", f"{p:.1f}".replace(".", ",")))
     st = r.get("glb_state")
     lines_.append(f"{yes(True if st in SIGNAL else None if st == 'NAD' else False)} Green Line: {st or '—'} ({f(r.get('glb_pct'), ' %')} od linii; kupno 0–10 % nad)")
     stop = f"{r['macd_stop']:.2f}" if r.get("macd_stop") else "—"

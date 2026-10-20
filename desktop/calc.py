@@ -15,14 +15,16 @@ MIN_REV_Q = 25e6        # zabezpieczenie: przychody kwartału ≥ 25 mln $ (przy
 MIN_DOPM_STRONG = 10.0  # „Mocne”: zmiana marży oper. r/r ≥ 10 pp przy pozostałych warunkach (badanie 2015–2026, wszystkie sygnały GLB 0–10 %:
                         # +5,1 % na transakcję vs +2,9 %, portfel wszystkich 22,7 % vs 16,1 % rocznie; ok. połowa spółek)
 STOP_PCT = 10.0         # stop początkowy pod wejściem
-# Potencjał (badanie 2021–2026 na cenach bez korekty: wybicia z konsolidacji po +30–100 %, szansa na dalsze ≥ +100 % w 12 mies.; bez warunków 5,1 %).
-# Tylko cechy, które rzeczywiście podnosiły szansę; przyspieszenie przychodów, EPS, marża brutto (poziom), marża oper. > 0, ROE, RS — bez wpływu.
-POTENTIAL = (  # (klucz, opis, szansa na dalsze ≥ +100 % gdy spełnione)
-    ("rev25", "przychody ≥ +25 % r/r", 7.9),
-    ("rev25x2", "przychody ≥ +25 % r/r dwa kwartały z rzędu", 8.9),
-    ("dopm3x2", "marża oper. ↑ ≥ +3 pp dwa kwartały z rzędu", 8.9),
-    ("dgm2", "marża brutto ↑ ≥ +2 pp r/r", 8.0),
-    ("lowopm", "marża oper. < 10 % (dźwignia operacyjna na starcie)", 8.6),
+MAX_PS = 20.0           # warunek konieczny: wycena P/S < 20 (kapitalizacja / przychody TTM). Test w strategii: +4,0 % vs +3,4 % na transakcję,
+                        # portfel wszystkich 19,4 % vs 17,0 % rocznie, płytszy spadek; drogie (P/S ≥ 20): −1,8 % na transakcję
+MAX_DIL_STRONG = 10.0   # „Mocne”: rozwodnienie (liczba akcji r/r) < 10 % — Mocne + P/S < 20 + rozwodn. < 10 %: +8,0 % na transakcję (oba okresy)
+# Potencjał (blueprint, październik 2026): tylko cechy sprawdzone w strategii GLB + MACD (wszystkie sygnały 2015–2026, ceny bez korekty) na spółkach,
+# które spełniają warunki. Średni wynik transakcji z cechą (bez niej: +4,0 %). Usunięte (nagradzały ryzyko, np. RGTI): marża oper. < 10 %,
+# przychody ≥ 25 % (dwa kwartały) — w grupie kontrolnej to głównie spółki spekulacyjne z ujemną medianą zwrotu.
+POTENTIAL = (  # (klucz, opis, średni wynik transakcji z cechą w %)
+    ("dopm10", "marża oper. ↑ ≥ +10 pp r/r", 6.2),
+    ("dgm", "marża brutto ↑ r/r", 5.0),
+    ("dil10", "rozwodnienie akcji < 10 % r/r (razem z Mocne: +8,0 %)", 8.0),
 )
 SLOW_ACCEL = -10.0      # hamowanie: tempo przychodów spadło o ≥ 10 pp względem kwartału wcześniej (cena 3 mies. −0,5 % vs +2,1 %, spadek ≥ 20 %: 44 % vs 33 %)
 
@@ -154,22 +156,24 @@ def turnover(closes, volumes, weeks=4):
 
 
 def passes(row):
-    """Warunki strategii (lista do sprawdzenia): obrót, przychody, zmiana marży operacyjnej — plus zabezpieczenia (RGTI: przychody 5 mln $, strata
-    oper. rosła o 41 %, a „Δ marży” wychodziła +558 pp): zysk operacyjny w $ lepszy niż rok wcześniej i przychody kwartału ≥ 25 mln $
-    (test: +3,4 % vs +2,9 % na transakcję, Mocne +6,2 % vs +5,1 %; odpada ok. 4 % sygnałów). Brak tych danych (stary wpis SEC) nie blokuje."""
-    t, r, d, od, rq = (row.get(k) for k in ("turnover", "rev_rr", "dopm", "op_d", "rev_q"))
-    guard = not (_ok(od) and od <= 0) and not (_ok(rq) and rq < MIN_REV_Q)
+    """Warunek konieczny (blueprint): obrót ≥ 50 mln $, przychody kw. ≥ +15 % r/r i ≥ 25 mln $, marża oper. ≥ +3 pp r/r i zysk oper. w $ lepszy niż rok
+    wcześniej (przypadek RGTI: przychody 5 mln $, strata oper. większa o 41 %, a „Δ marży” +558 pp), wycena P/S < 20. Brak danych o zysku w $,
+    przychodach kwartału albo P/S (stary wpis SEC, brak kapitalizacji) nie blokuje."""
+    t, r, d, od, rq, ps = (row.get(k) for k in ("turnover", "rev_rr", "dopm", "op_d", "rev_q", "ps"))
+    guard = not (_ok(od) and od <= 0) and not (_ok(rq) and rq < MIN_REV_Q) and not (_ok(ps) and ps >= MAX_PS)
     return _ok(t) and t >= MIN_TURNOVER and _ok(r) and r >= MIN_REV_GROWTH and _ok(d) and d >= MIN_DOPM and guard
+
+
+def strong(row):
+    """„Mocne”: warunek konieczny + zmiana marży oper. ≥ 10 pp + rozwodnienie < 10 % r/r (brak danych o akcjach nie blokuje)."""
+    d, dil = row.get("dopm"), row.get("dil")
+    return bool(row.get("ok") and _ok(d) and d >= MIN_DOPM_STRONG and not (_ok(dil) and dil >= MAX_DIL_STRONG))
 
 
 def potential(row):
     """-> lista (klucz, opis, spełnione: True / False / None = brak danych) dla warunków POTENTIAL."""
-    r, r1, d, d1, g, o = (row.get(k) for k in ("rev_rr", "rev_rr1", "dopm", "dopm1", "dgm", "opm"))
-    val = {"rev25": r >= 25 if _ok(r) else None,
-           "rev25x2": (r >= 25 and r1 >= 25) if _ok(r) and _ok(r1) else None,
-           "dopm3x2": (d >= 3 and d1 >= 3) if _ok(d) and _ok(d1) else None,
-           "dgm2": g >= 2 if _ok(g) else None,
-           "lowopm": o < 10 if _ok(o) else None}
+    d, g, dil = row.get("dopm"), row.get("dgm"), row.get("dil")
+    val = {"dopm10": d >= MIN_DOPM_STRONG if _ok(d) else None, "dgm": g > 0 if _ok(g) else None, "dil10": dil < MAX_DIL_STRONG if _ok(dil) else None}
     return [(k, txt, val[k]) for k, txt, _ in POTENTIAL]
 
 
@@ -194,9 +198,12 @@ def build_row(base, weekly, months, fund):
                turnover=turnover(c, v))
     m = macd_info(c, lo)
     row.update(macd=m["state"], macd_stop=m["stop"])
-    row.update({k: (fund or {}).get(k) for k in ("rev_rr", "rev_rr1", "accel", "dopm", "dopm1", "opm", "dgm", "quarter", "qs", "op_d", "rev_q")})
+    row.update({k: (fund or {}).get(k) for k in ("rev_rr", "rev_rr1", "accel", "dopm", "dopm1", "opm", "dgm", "quarter", "qs", "op_d", "rev_q", "ttm_rev", "dil")})
+    f = fund or {}
+    mcap = row.get("market_cap") or (price * f["shares"] if _ok(price) and _ok(f.get("shares")) else None)
+    row["ps"] = mcap / f["ttm_rev"] if _ok(mcap) and _ok(f.get("ttm_rev")) and f["ttm_rev"] > 0 else None
     row["ok"] = passes(row)
-    row["strong"] = bool(row["ok"] and _ok(row.get("dopm")) and row["dopm"] >= MIN_DOPM_STRONG)
+    row["strong"] = strong(row)
     pot = potential(row)
     row["pot"] = sum(1 for *_, v in pot if v)
     row["pot_ok"] = [v for *_, v in pot]

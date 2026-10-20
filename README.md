@@ -28,12 +28,10 @@ Heurystyka z backtestu (spółki z dzisiejszej listy, bez spółek wycofanych z 
   (przerywana) do ostatniego tygodnia, z wartością przy prawej krawędzi.
 - **🔔 Alerty** (pasek): zamknięcie tygodnia przecięło linię trendu oraz dla obserwowanych spółek (🔕 Obserwuj na wykresie): sygnał GLB, przecięcie MACD
   w dół, zamknięcie pod stopem MACD, spełnione warunki. Sprawdzane po starcie i po każdym Sync; zapis w `data/alerts.json`.
-- **Mocne** (kolumna, ciemniejsza zieleń): warunki strategii ze zmianą marży oper. r/r ≥ 10 pp — w teście wszystkich sygnałów GLB 2015–2026 +5,1 % na
-  transakcję (vs +2,9 %) i 22,7 % rocznie (vs 16,1 %). Takie spółki są na górze listy; liczy się poprawa marży, nie jej poziom.
-- **Potencjał ★ (0–5) i Hamuje ⚠** (kolumny): cechy fundamentów, które w badaniu 2021–2026 (ceny bez korekty) podnosiły szansę na duży ruch — przychody ≥ 25 %,
-  dwa kwartały z rzędu, marża oper. ↑ ≥ 3 pp dwa kwartały, marża brutto ↑ ≥ 2 pp, marża oper. < 10 % — i ostrzeżenie o hamowaniu przychodów (≥ 10 pp, ⚠⚠ z marżą
-  brutto w dół). **📖 Poradnik**: zasady z badań i lista kontrolna spółki. **📌 Pozycja** na wykresie: 📌 i pomarańczowy wiersz przy hamowaniu / pod stopem, alerty.
-  Wykres jak w IBD: S&P 500 (SPY, pobierany przy Sync) nad ceną, przychody kwartalne z r/r % pod wolumenem.
+- **Mocne** (kolumna, ciemniejsza zieleń): spółki na górze listy — opis w punkcie „Warunki = blueprint”.
+- **Warunki = blueprint**: obrót ≥ 50 mln $, przychody kw. ≥ +15 % r/r i ≥ 25 mln $, marża oper. ≥ +3 pp r/r i zysk oper. w $ lepszy niż rok wcześniej,
+  wycena P/S < 20. **Mocne**: do tego marża oper. ↑ ≥ 10 pp i rozwodnienie akcji < 10 %. **Potencjał ★ (0–3)**: tylko cechy sprawdzone w strategii (marża oper.
+  ↑ ≥ 10 pp, marża brutto ↑, rozwodnienie < 10 %). **Hamuje ⚠**: tempo przychodów spadło o ≥ 10 pp (⚠⚠ z marżą brutto w dół). Liczby w 📖 Poradniku.
 - **Okno wykresu** jest wyższe niż szersze; po prawej rozwijany panel **FUNDAMENTY** (pasek ze strzałką na całej wysokości): potencjał ★, wartości z ostatnich
   raportów, lista kontrolna i ostrzeżenie dla pozycji (stan panelu zostaje zapamiętany).
 - **📅 Dzienny** (przycisk przełącza tygodniowy → dzienny → miesięczny; klawisze W / D / M): 2 lata świec dziennych z yfinance (raz na spółkę, w tle), RWB

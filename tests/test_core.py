@@ -86,10 +86,10 @@ def test_sec_metrics_quarter_vs_year_ago_q4_from_annual():
 
 
 def test_potential_and_slowdown():
-    row = {"rev_rr": 30, "rev_rr1": 26, "dopm": 4, "dopm1": 3, "dgm": 1, "opm": 8, "accel": 4}
-    assert [v for *_, v in calc.potential(row)] == [True, True, True, False, True] and calc.slowdown(row) is None
+    row = {"rev_rr": 30, "dopm": 12, "dgm": 1, "dil": 15, "accel": 4}
+    assert [v for *_, v in calc.potential(row)] == [True, True, False] and calc.slowdown(row) is None
     assert calc.slowdown({"accel": -12, "dgm": 0.5}) == "HAMUJE" and calc.slowdown({"accel": -12, "dgm": -1}) == "HAMUJE+MB"
-    assert [v for *_, v in calc.potential({})] == [None] * 5
+    assert [v for *_, v in calc.potential({})] == [None] * 3
 
 
 def test_sec_update_uses_cache(monkeypatch):
@@ -229,3 +229,25 @@ def test_guard_tiny_revenue_and_growing_operating_loss():
     good = calc.build_row({"ticker": "Z"}, w, [], {"rev_rr": 30, "dopm": 12, "op_d": 9e6, "rev_q": 80e6})
     assert good["ok"] and good["strong"]
     assert calc.build_row({"ticker": "OLD"}, w, [], {"rev_rr": 30, "dopm": 5})["ok"]       # stary wpis bez tych pól nie blokuje
+
+
+def test_blueprint_ps_and_dilution():
+    w = {"d": ["2026-01-05"] * 40, "o": [1] * 40, "h": [1] * 40, "l": [1] * 40, "c": [100.0] * 40, "v": [5e6] * 40}
+    f = {"rev_rr": 30, "dopm": 12, "op_d": 9e6, "rev_q": 80e6, "ttm_rev": 300e6, "dil": 2}
+    ok = calc.build_row({"ticker": "A", "market_cap": 3e9}, w, [], f)                  # P/S 10
+    assert ok["ok"] and ok["strong"] and ok["ps"] == 10
+    assert not calc.build_row({"ticker": "B", "market_cap": 9e9}, w, [], f)["ok"]      # P/S 30 -> drogie
+    diluted = calc.build_row({"ticker": "C", "market_cap": 3e9}, w, [], {**f, "dil": 25})
+    assert diluted["ok"] and not diluted["strong"]                                   # rozwodnienie 25 % -> nie Mocne
+    assert calc.build_row({"ticker": "D"}, w, [], {**f, "shares": 60e6})["ps"] == 20  # bez kapitalizacji: cena × akcje
+
+
+def test_sec_metrics_ttm_revenue_and_dilution():
+    rev = [_q("2025-01-01", "2025-03-31", 100), _q("2025-04-01", "2025-06-30", 110), _q("2025-07-01", "2025-09-30", 120),
+           _q("2025-10-01", "2025-12-31", 140), _q("2026-01-01", "2026-03-31", 150)]
+    op = [dict(x, val=x["val"] / 10) for x in rev]
+    sh = [_q("2025-01-01", "2025-03-31", 100), _q("2026-01-01", "2026-03-31", 110), _q("2025-01-01", "2025-12-31", 105)]   # roczna średnia nie daje Q4
+    facts = {"us-gaap": {"Revenues": {"units": {"USD": rev}}, "OperatingIncomeLoss": {"units": {"USD": op}},
+                         "WeightedAverageNumberOfDilutedSharesOutstanding": {"units": {"shares": sh}}}}
+    m = sec.metrics(facts)
+    assert m["ttm_rev"] == pytest.approx(520) and m["shares"] == 110 and m["dil"] == pytest.approx(10) and m["v"] == sec.SEC_VERSION

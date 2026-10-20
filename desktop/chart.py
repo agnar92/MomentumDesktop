@@ -429,8 +429,9 @@ def fund_panel_lines(r, pos=None):
     if not r:
         return [("Brak danych spółki.", "dim")]
     pot = r.get("pot") or 0
-    out = [(r["ticker"], "h"), (r.get("company") or "", "dim"), ("★" * pot + "☆" * (5 - pot), "stars"),
-           (f"Potencjał {pot}/5" + ("   ·   📌 masz pozycję" if pos else ""), "")]
+    npot = len(calc.POTENTIAL)
+    out = [(r["ticker"], "h"), (r.get("company") or "", "dim"), ("★" * pot + "☆" * (npot - pot), "stars"),
+           (f"Potencjał {pot}/{npot}" + ("   ·   📌 masz pozycję" if pos else ""), "")]
     if r.get("slow"):
         out.append(("⚠⚠ hamuje + marża brutto spada" if r["slow"] == "HAMUJE+MB" else "⚠ hamuje (tempo przychodów −10 pp lub więcej)", "warn"))
     out += [(f"OSTATNI RAPORT · kwartał {r.get('quarter') or '—'}", "sec"),
@@ -438,20 +439,24 @@ def fund_panel_lines(r, pos=None):
             (f"  zmiana tempa\t{v(r.get('accel'), ' pp')}", "val"), (f"Δ marży oper. r/r\t{v(r.get('dopm'), ' pp')}", "val"),
             (f"  poprzedni kw.\t{v(r.get('dopm1'), ' pp')}", "val"), (f"Marża oper.\t{v(r.get('opm'), ' %')}", "val"),
             (f"Δ marży brutto r/r\t{v(r.get('dgm'), ' pp')}", "val"),
+            (f"Przychody kw.\t{r['rev_q'] / 1e6:,.0f} mln $" if r.get("rev_q") else "Przychody kw.\t—", "val"),
+            (f"Zysk oper. r/r\t{r['op_d'] / 1e6:+,.1f} mln $" if r.get("op_d") is not None else "Zysk oper. r/r\t—", "val"),
+            (f"Wycena P/S\t{r['ps']:.1f}" if r.get("ps") else "Wycena P/S\t—", "val"),
+            (f"Rozwodnienie r/r\t{v(r.get('dil'), ' %')}", "val"),
             (f"Obrót dzienny\t{r['turnover'] / 1e6:.0f} mln $" if r.get("turnover") else "Obrót dzienny\t—", "val"),
             (f"Do Green Line\t{v(r.get('glb_pct'), ' %')}", "val"), ("LISTA KONTROLNA", "sec")]
 
     def item(ok, txt):
         out.append((("✓ " if ok is True else "✗ " if ok is False else "— ") + txt, "ok" if ok is True else "no" if ok is False else "na"))
-    item(bool(r.get("ok")), "warunki strategii (obrót ≥ 50 mln $, przychody ≥ 15 %, Δ marży oper. ≥ 3 pp)")
-    item(bool(r.get("strong")), "Mocne: Δ marży oper. ≥ 10 pp (+5,1 % vs +2,9 % na transakcję)")
+    item(bool(r.get("ok")), "warunek konieczny (obrót ≥ 50 mln $, przychody ≥ 15 % i ≥ 25 mln $, Δ marży ≥ 3 pp i zysk oper. $ ↑, P/S < 20)")
+    item(bool(r.get("strong")), "Mocne: Δ marży oper. ≥ 10 pp i rozwodnienie < 10 % (+8,0 % vs +4,0 % na transakcję)")
     for (_, txt, p), ok in zip(calc.POTENTIAL, r.get("pot_ok") or [None] * len(calc.POTENTIAL)):
-        item(ok, f"{txt} ({str(p).replace('.', ',')} %)")
+        item(ok, f"{txt} (+{str(p).replace('.', ',')} %)")
     st = r.get("glb_state")
     item(True if st in ("WYBICIE", "SYGNAŁ") else None if st == "NAD" else False, f"Green Line: {st or '—'} (kupno 0–10 % nad linią)")
     item(r.get("macd") == "nad", f"MACD tyg. {r.get('macd') or '—'} sygnałem" + (f" · stop {r['macd_stop']:.2f}" if r.get("macd_stop") else ""))
     item(False if r.get("slow") else None if r.get("accel") is None else True, "brak hamowania przychodów")
-    out.append(("W nawiasie: szansa na dalszy ruch ≥ +100 % w 12 mies. (bez warunków 5,1 %).", "dim"))
+    out.append(("W nawiasie: średni wynik transakcji z cechą (spółki z warunkiem bez niej: +4,0 %).", "dim"))
     if pos and r.get("slow"):
         out.append((f"⚠ Masz pozycję, a raport pokazuje hamowanie{' i spadek marży brutto' if r['slow'] == 'HAMUJE+MB' else ''} — spadek ≥ 20 % w 6 mies. "
                     f"w {'50' if r['slow'] == 'HAMUJE+MB' else '44'} % przypadków (normalnie 33 %). Rozważ zacieśnienie stopu.", "warn"))

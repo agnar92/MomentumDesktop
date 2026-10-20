@@ -158,7 +158,7 @@ def test_sync_run_with_fake_sources(tmp_path):
 
     def monthly(ts, cache, log, progress=None):
         for t in ts:
-            cache[t] = {"h": [["2025-01", 50], ["2025-02", 100], ["2025-03", 90], ["2025-04", 90], ["2025-05", 90]], "upto": "2025-05"}
+            cache[t] = {"h": [["2025-01", 50], ["2025-02", 100], ["2025-03", 90], ["2025-04", 90], ["2025-05", 90]], "upto": "2025-05", "raw": 1}
 
     def fund(ts, cache, ua, log, progress=None):
         for t in ts:
@@ -195,3 +195,8 @@ def test_old_settings_filter_becomes_first_scanner(tmp_path):
     store = Store(tmp_path)
     assert store.settings["scanners"][0] == {"name": "Mój filtr", "filters": "cap_largeover", "max_tickers": 1500}
     assert [r["ticker"] for r in store.rows] == ["OLD"] and store.weekly("OLD")
+
+
+def test_monthly_highs_ignores_dividend_adjusted_entries():
+    assert prices.monthly_highs({"h": [["2026-09", 5.0]], "upto": "2026-09"}) == []
+    assert prices.monthly_highs({"h": [["2026-09", 5.0]], "upto": "2026-09", "raw": 1}) == [5.0]

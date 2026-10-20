@@ -44,14 +44,10 @@ jobs:
         shell: bash
         run: |
           pyinstaller --noconfirm --onefile --windowed --name MomentumDesktop \
-            --paths engine \
-            --add-data "engine${{ matrix.sep }}engine" \
-            --add-data "seed_data${{ matrix.sep }}seed_data" \
-            --hidden-import watchlist --hidden-import finviz \
             --collect-submodules yfinance --collect-data yfinance \
             --collect-data certifi --copy-metadata yfinance \
             main.py
-      - name: Selftest zbudowanego pliku (silnik Finviz / yfinance się ładuje)
+      - name: Selftest zbudowanego pliku (biblioteki się ładują)
         shell: bash
         run: |
           if [ "$RUNNER_OS" = "Linux" ]; then xvfb-run -a "dist/MomentumDesktop${{ matrix.ext }}" --selftest; else "dist/MomentumDesktop${{ matrix.ext }}" --selftest; fi

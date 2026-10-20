@@ -1,896 +1,271 @@
-"""Okna aplikacji Momentum Desktop — prosty, „retro” interfejs w stylu TC2000: główne okno (skaner domyślny), własne skanery w osobnych oknach,
-wykresy, boxy, kreator skanerów Finviz, synchronizacja."""
-import contextlib
+"""Główne okno: jedna lista (skan Finviz + warunki strategii), Sync, ustawienia filtra i wykres tygodniowy. Ctrl+K = dowolny symbol."""
 import queue
 import threading
-import traceback
 import tkinter as tk
-from tkinter import filedialog, messagebox, ttk
-
-from . import canslim, changes, darvas, exporter, finviz_codes, merge, scanners, session, store, sync
-from . import columns as columns_mod
-from . import flags as flags_mod
-from .builder import ScannerEditor, ScannerManager, WatchlistEditor
-from .chartwin import ChartWindow
-from .launcher import LauncherWindow
-from .dialogs import (BoxesWindow, CanslimWindow, ColumnsWindow, ExprFilterWindow, FilterWindow, FinvizCriteriaWindow, ListNamesWindow, PinnedWindow, SymbolDialog,
-                      WhatsNewWindow)
-from .theme import BG, FG, PANEL, Flow, MenuBar, apply_dark, autowrap, fit_window, setup_style
-from .widgets import LoadingFrame, StockTable, SyncWindow
-
-
-class ScannerView(tk.Frame):
-    """Lista jednego skanera (własne dane, kolumny, skala, filtr lokalny, wykres) — w głównym oknie albo w osobnym oknie skanera."""
-
-    def __init__(self, master, app, scanner, root_window, loaded=None):
-        super().__init__(master, bg=PANEL)
-        self.app, self.scanner, self.root = app, scanner, root_window
-        default = scanner["id"] == scanners.DEFAULT_ID
-        self.store = loaded or store.Store(scanners.scanner_dir(app.data_root, scanner["id"]), seed=default)
-        self.chart = self.filter_win = self.boxes = None
-        self.main_filter = {}
-        self.kind = scanner.get("kind") or scanners.KIND_FINVIZ
-        tb = Flow(self)   # pasek zawija się do kolejnych wierszy zamiast ucinać przyciski
-        tb.pack(fill="x")
-        self.prices_btn = tk.Button(tb, text="⟳ Ceny (F5)" if default else "⟳ Ceny", command=lambda: self.start_sync(sync.PRICES), width=12, relief="flat")
-        tb.add(self.prices_btn)
-        self.fund_btn = tk.Button(tb, text="⟳ Fundamenty", command=lambda: self.start_sync(sync.FUNDAMENTALS), width=13, relief="flat")
-        if self.kind == scanners.KIND_FINVIZ and "glb" not in scanners.load_config(self.store.dir):   # skan Wish nie pobiera fundamentów
-            tb.add(self.fund_btn)
-        else:
-            self.prices_btn.config(text="⟳ Ceny", width=12)
-        tb.add(tk.Button(tb, text="Filtr…", command=self.open_filter, relief="flat"))
-        tb.add(tk.Button(tb, text="Boxy…", command=self.open_boxes, relief="flat"))
-        self.expr_btn = tk.Button(tb, text="⚗ Filtr kolumn…", command=self.open_expr_filter, relief="flat")   # filtr po dowolnych kolumnach (mały skrypt: kolumna >= wartość)
-        tb.add(self.expr_btn)
-        self.news_btn = tk.Button(tb, text="Co nowego", command=self.open_changes, relief="flat")
-        tb.add(self.news_btn)
-        mb = tk.Menubutton(tb, text="Narzędzia ▾", relief="flat", bg=PANEL, fg=FG, activebackground="#2d3744", padx=8)
-        tools = tk.Menu(mb, tearoff=0)
-        for item in (("Szukaj dowolnego symbolu…  (Ctrl+K lub /)", self.open_symbol_dialog), None,
-                     ("Kolumny…", self.choose_columns), ("Kryteria Finviz (co synchronizujemy)", self.open_criteria), ("✎ Edytuj skaner…", self.edit_scanner), None,
-                     ("Kopiuj tickery (przecinki — np. do TradingView)", lambda: self.copy_tickers(",")), ("Kopiuj tickery (po jednym w linii)", lambda: self.copy_tickers("\n")),
-                     ("Zapisz tickery do pliku .txt…", self.save_tickers), ("Zapisz CSV — Excel PL (średnik)…", lambda: self.save_csv("xl")),
-                     ("Zapisz CSV — standardowy…", lambda: self.save_csv("std")), None, ("Nazwy list (flagi 1–4)…", self.app.edit_list_names)):
-            if item is None:
-                tools.add_separator()
-            else:
-                tools.add_command(label=item[0], command=item[1])
-        mb.config(menu=tools)
-        tb.add(mb)
-        self.tf = tk.StringVar(value=self.store.tf)
-        tb.add(tk.Label(tb, text="Skala:", bg=PANEL))
-        for text, val in (("Tydzień", "W"), ("Dzień", "D")):
-            tb.add(tk.Radiobutton(tb, text=text, value=val, variable=self.tf, command=lambda: self.set_tf(self.tf.get()), bg=PANEL,
-                                  indicatoron=False, padx=9, relief="flat"))
-        tb.add(tk.Label(tb, text="Lista:", bg=PANEL))
-        self.flag_filter = tk.StringVar(value="Wszystkie")
-        self.flag_box = ttk.Combobox(tb, textvariable=self.flag_filter, state="readonly", width=15)
-        tb.add(self.flag_box)
-        self.flag_box.bind("<<ComboboxSelected>>", lambda e: self.refresh_lists())
-        tb.add(tk.Label(tb, text="Szukaj:", bg=PANEL))
-        self.search = tk.StringVar()
-        self.search.trace_add("write", lambda *_: self.refresh_lists())
-        tb.add(tk.Entry(tb, textvariable=self.search, width=12, relief="flat"))
-        self.filter_lbl = tk.Label(tb, text="", bg=PANEL, fg="#ffd166")
-        tb.add(self.filter_lbl)
-        self.age_lbl = tk.Label(tb, text="", bg=PANEL, anchor="e")
-        tb.add(self.age_lbl)
-        self.table = StockTable(self, self.open_chart, self.open_chart_new, self.open_canslim, columns=self.columns(), flags=app.flags, on_flag=self.set_flag)
-        self.status = autowrap(tk.Label(self, text="", bg=PANEL), pad=8)
-        self.status.pack(fill="x", side="bottom")
-        self.table.pack(fill="both", expand=True)
-        self.table.tree.bind("<Up>", lambda e: self.root.after_idle(self._link))
-        self.table.tree.bind("<Down>", lambda e: self.root.after_idle(self._link))
-        self.table.tree.bind("<slash>", lambda e: self.open_symbol_dialog())
-        self.root.bind("<Control-k>", lambda e: self.open_symbol_dialog())
-        self.set_title()
-        self.app.flags.tag(self.store.rows)
-        self.refresh_lists()
-
-    # --- kolumny
-    def columns(self):
-        cols = self.scanner.get("columns") or columns_mod.DEFAULT_COLUMNS
-        return cols if "ticker" in cols else ["ticker"] + list(cols)
-
-    def set_columns(self, cols):
-        self.scanner["columns"] = list(cols)
-        scanners.upsert(self.app.data_root, self.scanner)
-        self.table.set_columns(self.columns())
-        self.table.set_tf_label(self.store.tf)
-
-    def choose_columns(self):
-        ColumnsWindow(self)
-
-    def set_title(self):
-        self.root.title(f"Momentum Desktop — {self.scanner['name']}")
-
-    # --- skala czasu
-    def set_tf(self, tf):
-        self.store.set_tf(tf)
-        self.tf.set(self.store.tf)
-        if tf == "D" and self.store.tf != "D":
-            messagebox.showinfo("Skala dzienna", "Brak danych dziennych — zrób Sync cen.", parent=self.root)
-        self.refresh_lists()
-
-    # --- lista
-    FLAG_CHOICES = {"Wszystkie": "", "Dowolna lista": "any", "Bez listy": "none"}
-
-    def _flag_code(self):
-        name = self.flag_filter.get()
-        if name in self.FLAG_CHOICES:
-            return self.FLAG_CHOICES[name]
-        return next((lst["id"] for lst in self.app.flags.lists if f"{lst['icon']} {lst['name']}" == name), "")
-
-    def _rows(self):
-        self.flag_box.config(values=list(self.FLAG_CHOICES) + [f"{lst['icon']} {lst['name']}" for lst in self.app.flags.lists])
-        return self._apply_expr(store.scan(self.store.rows, {**self.main_filter, "text": self.search.get(), "flag": self._flag_code()}))
-
-    # --- filtr po kolumnach (mały skrypt: kolumna >= wartość) — dla skanów i watchlist
-    def _apply_expr(self, rows):
-        text = (self.scanner.get("filter") or "").strip()
-        self.expr_error = ""
-        if text:
-            from . import exprfilter
-            try:
-                keys = columns_mod.available(self.store.rows, self.scanner.get("extra") or [])
-                rows = exprfilter.apply(rows, text, keys)
-            except exprfilter.ExprError as e:
-                self.expr_error = str(e)   # błędny skrypt nie ukrywa listy — pokazujemy całość i błąd w pasku statusu
-        return rows
-
-    def _update_expr_btn(self):
-        on = bool((self.scanner.get("filter") or "").strip())
-        self.expr_btn.config(text="⚗ Filtr kolumn ●…" if on else "⚗ Filtr kolumn…", fg="#ffd166" if on else FG)
-
-    def open_expr_filter(self):
-        win = getattr(self, "expr_win", None)
-        if win is not None and win.winfo_exists():
-            win.lift()
-        else:
-            self.expr_win = ExprFilterWindow(self)
-
-    def set_expr_filter(self, text):
-        """Zapisuje filtr po kolumnach przy skanerze / watchliście i odświeża listę."""
-        self.scanner["filter"] = text
-        scanners.upsert(self.app.data_root, self.scanner)
-        self.refresh_lists()
-
-    def set_flag(self, ticker, lid):
-        if ticker:
-            self.app.flags.set(ticker, lid)
-            self.app.refresh_flag_views()
-
-    def refresh_lists(self):
-        rows = self._rows()
-        self.table.set_rows(rows)
-        self.table.set_tf_label(self.store.tf)
-        wl = self.store.watchlist
-        regime = canslim.market_line(wl)
-        self.status.config(text=f"  Dane z sesji: {wl.get('data_as_of', 'brak — kliknij Sync')}   Spółek: {len(rows)}/{len(self.store.rows)}   Rynek: {regime}"
-                                f"   Finviz: {'(stare dane!)' if wl.get('finviz_stale') else 'ok'}   Katalog: {self.store.dir}")
-        self.filter_lbl.config(text="⚑ filtr aktywny" if any(v for v in self.main_filter.values()) else "")
-        self._update_expr_btn()
-        if self.expr_error:
-            self.status.config(text=self.status.cget("text") + f"   ⚠ filtr kolumn: {self.expr_error}")
-        n = changes.total(self.store.changes["diff"])
-        self.news_btn.config(text=f"Co nowego ({n})" if n else "Co nowego", fg="#ffd166" if n else FG)
-        self.update_age()
-        if self.filter_win and self.filter_win.winfo_exists():
-            self.filter_win.run()
-            self.filter_win.table.set_tf_label(self.store.tf)
-        if self.boxes and self.boxes.winfo_exists():
-            self.boxes.refresh()
-
-    def update_age(self):
-        """Wiek ostatnich synchronizacji: fundamenty starsze niż tydzień podświetlamy na pomarańczowo."""
-        st = sync.read_state(self.store.dir)
-
-        def fmt(iso):
-            d = sync.age_days(iso)
-            return "brak" if d is None else "dziś" if d < 1 else f"{int(d)} d temu"
-
-        fd = sync.age_days(st.get("fundamentals"))
-        stale = fd is None or fd > sync.FUNDAMENTALS_STALE_DAYS
-        self.age_lbl.config(text=f"Ceny: {fmt(st.get('prices'))}   Fundamenty: {fmt(st.get('fundamentals'))}{'  ⚠ czas na Sync fundamentów' if stale else ''}",
-                            fg="#ff9f43" if stale else FG)
-
-    def apply_main_filter(self, f):
-        self.main_filter = {k: v for k, v in f.items() if v not in (None, "", [], False)}
-        self.refresh_lists()
-
-    def reload(self):
-        self.store.reload()
-        self.store.set_tf(self.store.tf)
-        self.app.flags.tag(self.store.rows)
-        self.table.set_columns(self.columns())
-        self.refresh_lists()
-        if self.filter_win and self.filter_win.winfo_exists():
-            self.filter_win.refresh()
-
-    def set_sync_enabled(self, on):
-        for b in (self.prices_btn, self.fund_btn):
-            b.config(state="normal" if on else "disabled")
-
-    # --- okna
-    def open_chart(self, ticker, focus=None):
-        if not ticker:
-            return
-        if self.chart is None or not self.chart.winfo_exists():
-            self.chart = ChartWindow(self, ticker)
-            if focus:
-                self.chart.set_focus(focus)
-                self.chart.redraw()
-        else:
-            self.chart.set_ticker(ticker, focus)
-            self.chart.lift()
-
-    def open_chart_new(self, ticker):
-        if ticker:
-            ChartWindow(self, ticker)
-
-    def open_canslim(self, ticker):
-        if ticker and self.store.row(ticker):
-            CanslimWindow(self, ticker)
-
-    def open_criteria(self):
-        FinvizCriteriaWindow(self)
-
-    def step_chart(self, delta):
-        t = self.table.step(delta)
-        if t:
-            self.open_chart(t)
-
-    def _link(self):
-        if self.chart is not None and self.chart.winfo_exists() and self.table.current():
-            self.chart.set_ticker(self.table.current())
-
-    def open_symbol_dialog(self):
-        SymbolDialog(self)
-
-    def open_symbol(self, symbol):
-        """Otwiera wykres symbolu spoza skanera (pobiera go, jeśli trzeba)."""
-        d = SymbolDialog(self)
-        d.var.set(symbol)
-        d.go()
-
-    def open_filter(self):
-        if self.filter_win is None or not self.filter_win.winfo_exists():
-            self.filter_win = FilterWindow(self)
-        self.filter_win.lift()
-
-    def open_boxes(self):
-        if self.boxes is None or not self.boxes.winfo_exists():
-            self.boxes = BoxesWindow(self)
-        self.boxes.lift()
-
-    # --- co nowego, eksport
-    def open_changes(self):
-        WhatsNewWindow(self)
-
-    def clear_changes(self):
-        self.store.set_changes({}, self.store.changes.get("at"))
-        self.refresh_lists()
-
-    def copy_tickers(self, sep):
-        text = exporter.tickers_text(self._shown_rows(), sep)
-        self.root.clipboard_clear()
-        self.root.clipboard_append(text)
-        self.status.config(text=f"  Skopiowano {len(self._shown_rows())} tickerów do schowka.")
-
-    def _shown_rows(self):
-        """Wiersze w kolejności, w jakiej widać je na liście (po filtrach i sortowaniu)."""
-        by = {r["ticker"]: r for r in self.table.rows}
-        return [by[t] for t in self.table.visible() if t in by]
-
-    def save_tickers(self):
-        path = filedialog.asksaveasfilename(parent=self.root, defaultextension=".txt", initialfile=f"{self.scanner['id']}-tickery.txt", filetypes=[("Tekst", "*.txt")])
-        if path:
-            with open(path, "w", encoding="utf-8") as f:
-                f.write(exporter.tickers_text(self._shown_rows(), ","))
-
-    def save_csv(self, fmt):
-        path = filedialog.asksaveasfilename(parent=self.root, defaultextension=".csv", initialfile=f"{self.scanner['id']}.csv", filetypes=[("CSV", "*.csv")])
-        if path:
-            flag_labels = {lst["id"]: f"{lst['icon']} {lst['name']}" for lst in self.app.flags.lists}
-            with open(path, "w", encoding="utf-8-sig", newline="") as f:
-                f.write(exporter.to_csv(self._shown_rows(), self.table.columns, fmt, store.STATE_LABELS, flag_labels))
-
-    def edit_scanner(self):
-        self.app.edit_scanner(self.scanner["id"])
-
-    def start_sync(self, mode=sync.PRICES, skip_finviz=False):
-        self.app.start_sync(self, mode, skip_finviz)
-
-
-class ChartHost:
-    """Lekki „widok” dla wykresu otwieranego spoza okna skanera (okno przypiętych boxów): ma dane skanera z dysku, ale NIE otwiera okna
-    skanera ani watchlisty. Zapewnia to, czego oczekuje ChartWindow (store, root, open_canslim, step_chart…). Jeden host obsługuje cały
-    wykres — przy przejściu na box z innego skanera podmieniamy tylko dane (`use`), więc strzałki ↑/↓ przechodzą przez całą listę."""
-
-    def __init__(self, app, parent):
-        self.app, self.root, self.parent = app, parent, parent
-        self.scanner = self.store = None
-        self.chart = None
-
-    def use(self, scanner):
-        """Przełącza dane na skaner `scanner` (świeże z dysku, tylko gdy to inny skaner niż poprzednio)."""
-        if self.scanner is None or self.scanner["id"] != scanner["id"]:
-            self.scanner = scanner
-            self.store = store.Store(scanners.scanner_dir(self.app.data_root, scanner["id"]), seed=scanner["id"] == scanners.DEFAULT_ID)
-
-    def open_chart(self, ticker, focus=None):
-        if not ticker:
-            return
-        if self.chart is None or not self.chart.winfo_exists():
-            self.chart = ChartWindow(self, ticker)
-            if focus:
-                self.chart.set_focus(focus)
-                self.chart.redraw()
-        else:
-            self.chart.set_ticker(ticker, focus)
-            self.chart.lift()
-
-    def open_canslim(self, ticker):
-        if ticker and self.store.row(ticker):
-            CanslimWindow(self, ticker)
-
-    def step_chart(self, delta):
-        """↑/↓ w oknie wykresu: przechodzi do następnego / poprzedniego boxa na liście przypiętych."""
-        if self.parent.winfo_exists():
-            self.parent.step(delta)
-
-    def open_symbol_dialog(self):
-        pass
-
-    def refresh_lists(self):
-        """Po przypięciu / odpięciu na wykresie: odśwież listę przypiętych i otwarty widok tego skanera (zapis jest na dysku)."""
-        view = self.app.view_for(self.scanner["id"]) if self.scanner else None
-        if view is not None and view.store is not self.store:
-            view.store.pinned = dict(self.store.pinned)
-            view.refresh_lists()
-        if self.parent.winfo_exists():
-            self.parent.refresh(keep=True)
-
-
-class WatchlistView(ScannerView):
-    """Watchlista: mała lista tickerów (z kilku skanów wg kryteriów) do odpalania Dar-Card i wykresu słupkowego. Bez filtrów i paska narzędzi skanera —
-    kliknięcie tickera (albo ↑/↓) otwiera / przełącza wykres."""
-
-    DEFAULT_COLUMNS = ["ticker", "flag", "price", "qm_max_ratio", "low_ratio_1m", "low_ratio_3m", "low_ratio_6m", "qm_windows", "darvas"]
-
-    def __init__(self, master, app, scanner, root_window, loaded=None):
-        tk.Frame.__init__(self, master, bg=PANEL)
-        self.app, self.scanner, self.root = app, scanner, root_window
-        self.store = loaded or store.Store(scanners.scanner_dir(app.data_root, scanner["id"]), seed=False)
-        self.chart = self.filter_win = self.boxes = None
-        self.main_filter = {}
-        self.kind = scanners.KIND_WATCHLIST
-        self.tf = tk.StringVar(value=self.store.tf)
-        self.search, self.flag_filter = tk.StringVar(), tk.StringVar(value="Wszystkie")
-        tb = Flow(self)
-        tb.pack(fill="x")
-        self.prices_btn = tk.Button(tb, text="⟳ Odśwież", command=lambda: self.start_sync(sync.PRICES), relief="flat")
-        tb.add(self.prices_btn)
-        tb.add(tk.Button(tb, text="✎ Kryteria…", command=self.edit_scanner, relief="flat"))
-        tb.add(tk.Button(tb, text="▤ Kolumny…", command=self.choose_columns, relief="flat"))   # dodatkowe dane ze skanów do sortowania (klik w nagłówek)
-        self.expr_btn = tk.Button(tb, text="⚗ Filtr kolumn…", command=self.open_expr_filter, relief="flat")   # filtr po dowolnych kolumnach (mały skrypt: kolumna >= wartość)
-        tb.add(self.expr_btn)
-        for text, val in (("Tydz.", "W"), ("Dzień", "D")):
-            tb.add(tk.Radiobutton(tb, text=text, value=val, variable=self.tf, command=lambda: self.set_tf(self.tf.get()), bg=PANEL,
-                                  indicatoron=False, padx=7, relief="flat"))
-        self.status = autowrap(tk.Label(self, text="", bg=PANEL, fg="#8b95a3"), pad=8)
-        self.status.pack(fill="x", side="bottom")
-        self.table = StockTable(self, self.open_chart, self.open_chart_new, self.open_canslim, columns=self.columns(), flags=app.flags, on_flag=self.set_flag)
-        self.table.pack(fill="both", expand=True)
-        if "qm_max_ratio" in self.table.columns:   # lista Qullamaggie: domyślnie od największego cena / min Low (klik w nagłówek zmienia sortowanie)
-            self.table.sort_col, self.table.sort_rev = "qm_max_ratio", True
-            self.table._fill()
-        self.table.on_select = lambda t: self.open_chart(t)   # zaznaczenie (kliknięcie, ↑/↓) przełącza wykres
-        self.table.tree.bind("<slash>", lambda e: self.open_symbol_dialog())
-        self.set_title()
-        self.app.flags.tag(self.store.rows)
-        self.refresh_lists()
-
-    def columns(self):
-        cols = self.scanner.get("columns") or self.DEFAULT_COLUMNS
-        return cols if "ticker" in cols else ["ticker"] + list(cols)
-
-    def set_title(self):
-        self.root.title(f"Watchlista — {self.scanner['name']}")
-
-    def _rows(self):
-        return self._apply_expr(list(self.store.rows))
-
-    def refresh_lists(self):
-        rows = self._rows()
-        self._update_expr_btn()
-        self.table.set_rows(rows)
-        self.table.set_tf_label(self.store.tf)
-        wl = self.store.watchlist
-        src = ", ".join(x["name"] for x in (scanners.get(self.app.data_root, s["id"]) for s in self.scanner.get("sources") or []) if x)
-        total = len(self.store.rows)
-        flt = f" (filtr: {len(rows)} z {total})" if (self.scanner.get("filter") or "").strip() and not self.expr_error else ""
-        err = f"  ⚠ filtr: {self.expr_error}" if self.expr_error else ""
-        self.status.config(text=f"  {len(rows)} tickerów{flt} · dane z sesji: {wl.get('data_as_of', '—')} · ze skanów: {src or '—'}{err}")
-        if self.boxes and self.boxes.winfo_exists():
-            self.boxes.refresh()
-
-    def update_age(self):
-        pass
-
-    def set_sync_enabled(self, on):
-        self.prices_btn.config(state="normal" if on else "disabled")
-
-
-def load_store_async(root, scanner, app, done):
-    """Wczytuje dane skanera w wątku (okno z kręcącym się kółkiem nie zamarza); `done(store)` woła się w pętli Tk, store=None przy błędzie."""
-    result = {}
-
-    def work():
-        try:
-            result["store"] = store.Store(scanners.scanner_dir(app.data_root, scanner["id"]), seed=scanner["id"] == scanners.DEFAULT_ID)
-        except Exception:   # noqa: BLE001 — okno zbuduje wtedy własny Store i pokaże błąd normalnie
-            result["store"] = None
-
-    def poll():
-        if "store" in result:
-            done(result["store"])
-        else:
-            root.after(40, poll)
-
-    threading.Thread(target=work, daemon=True).start()
-    root.after(40, poll)
-
-
-class _ScannerWindowBase(tk.Toplevel):
-    """Wspólne dla okien skanera i watchlisty: przy `defer=True` (start programu) okno pokazuje się od razu z kółkiem „wczytuję”, a dane
-    dochodzą w tle; `self.view` jest None, dopóki nie skończą się wczytywać."""
-
-    VIEW = None
-    SIZE = (1360, 720)
-
-    def __init__(self, app, scanner, defer=False):
-        super().__init__(app.root)
-        self.app, self.scanner, self.view, self.loader = app, scanner, None, None
-        self.configure(bg=BG)
-        self.title(f"{scanner['name']} — wczytuję…")
-        apply_dark(self)
-        self.protocol("WM_DELETE_WINDOW", lambda: app.window_closed(scanner["id"]))
-        if defer:
-            self.geometry(f"{self.SIZE[0]}x{self.SIZE[1]}")
-            self.loader = LoadingFrame(self, f"Wczytuję „{scanner['name']}”…")
-            self.loader.pack(fill="both", expand=True)
-            load_store_async(self, scanner, app, self._finish)
-        else:
-            self._build(None)
-
-    def _finish(self, loaded):
-        if self.winfo_exists():
-            self._build(loaded, resize=False)
-            self.app.refresh_launcher()
-
-    def _build(self, loaded, resize=True):
-        if self.loader is not None:
-            self.loader.destroy()
-            self.loader = None
-        self.view = self.VIEW(self, self.app, self.scanner, self, loaded=loaded)
-        self.view.pack(fill="both", expand=True)
-        self.after_build(resize)
-
-    def after_build(self, resize):
-        pass
-
-
-class WatchlistWindow(_ScannerWindowBase):
-    """Małe okno watchlisty (wąskie, z samymi tickerami)."""
-
-    VIEW = WatchlistView
-    SIZE = (560, 620)
-
-    def after_build(self, resize):
-        width = sum(columns_mod.DEFS[c][1] for c in self.view.columns() if c in columns_mod.DEFS) + 40   # szerokość = suma kolumn
-        if resize:
-            fit_window(self, min(max(width, 430), 900), 620, min_w=360)
-        else:
-            self.geometry(f"{min(max(width, 430), 900)}x620")
-            self.minsize(360, 300)
-
-
-class ScannerListWindow(_ScannerWindowBase):
-    """Osobne okno własnego skanera."""
-
-    VIEW = ScannerView
-
-    def after_build(self, resize):
-        if resize:
-            fit_window(self, 1360, 720)
-        self.bind("<F5>", lambda e: self.view.start_sync(sync.PRICES))
-        self.bind("<Shift-F5>", lambda e: self.view.start_sync(sync.FUNDAMENTALS))
+from tkinter import messagebox, ttk
+
+from . import calc, finviz, sec, sync
+from .chart import ChartWindow
+from .store import Store
+from .theme import BG, PANEL, apply_dark, autowrap, setup_style
+
+COLUMNS = [  # (klucz, nagłówek, szerokość, format)
+    ("ticker", "Ticker", 70, "s"), ("company", "Spółka", 200, "s"), ("sector", "Sektor", 140, "s"), ("price", "Cena", 80, "p"),
+    ("glb", "Green Line", 90, "p"), ("glb_pct", "Do linii %", 85, "%"), ("glb_state", "GLB", 85, "s"), ("macd", "MACD", 60, "s"),
+    ("macd_stop", "Stop MACD", 85, "p"), ("dopm", "Δ marża oper. pp", 120, "%"), ("rev_rr", "Przychody r/r %", 115, "%"),
+    ("dgm", "Δ marża brutto pp", 125, "%"), ("quarter", "Kwartał", 105, "s"), ("turnover", "Obrót mln $", 95, "m"),
+    ("ok", "Warunki", 75, "b"),
+]
+SIGNAL = ("WYBICIE", "SYGNAŁ")
+
+
+def cell(v, f):
+    if v is None:
+        return ""
+    if f == "p":
+        return f"{v:,.2f}"
+    if f == "%":
+        return f"{v:+.1f}"
+    if f == "m":
+        return f"{v / 1e6:,.0f}"
+    if f == "b":
+        return "✓" if v else ""
+    return str(v)
+
+
+def default_order(r):
+    """Najpierw spółki spełniające warunki z sygnałem GLB, potem spełniające warunki, w grupie od największej zmiany marży operacyjnej."""
+    return (not (r.get("ok") and r.get("glb_state") in SIGNAL), not r.get("ok"), -(r.get("dopm") if r.get("dopm") is not None else -1e9))
 
 
 class App:
-    def __init__(self, data_base=None):
+    def __init__(self, base=None):
         self.root = tk.Tk()
-        self.root.geometry("1420x760")
+        self.root.title("Momentum Desktop — GLB + marża operacyjna")
+        self.root.geometry("1500x780")
         setup_style(self.root)
         apply_dark(self.root)
-        self.data_root = store.data_dir(data_base)
-        self.windows = {}   # id skanera -> ScannerListWindow
-        self.flags = flags_mod.Flags(self.data_root)
-        self.q = queue.Queue()
-        self.syncing = {}   # id skanera -> okno dziennika; synchronizacje różnych skanerów mogą trwać równolegle
-        self.session = session.prune(session.load(self.data_root), [s["id"] for s in scanners.load(self.data_root)])
-        darvas.PURE = bool(self.session.get("darvas_pure"))   # „czysty Darvas”: ustawienie globalne, pamiętane między uruchomieniami
-        self.launcher = None
-        self.root.protocol("WM_DELETE_WINDOW", self.close_main)
-        self.main_hidden = False
-        self.menubar = MenuBar(self.root, self._menu_spec())
-        self.menubar.pack(fill="x")
-        self.view = ScannerView(self.root, self, scanners.get(self.data_root, scanners.DEFAULT_ID), self.root)
-        self.view.pack(fill="both", expand=True)
-        self.manager = None
-        self.root.bind("<F5>", lambda e: self.view.start_sync(sync.PRICES))
-        self.root.bind("<Shift-F5>", lambda e: self.view.start_sync(sync.FUNDAMENTALS))
+        self.store = Store(base)
+        self.q, self.chart, self.sort = queue.Queue(), None, None
+        bar = tk.Frame(self.root, bg=PANEL)
+        bar.pack(fill="x")
+        self.sync_btn = tk.Button(bar, text="⟳ Sync (F5)", command=self.start_sync, relief="flat")
+        self.sync_btn.pack(side="left", padx=4, pady=4)
+        tk.Button(bar, text="Filtr Finviz / ustawienia…", command=self.open_settings, relief="flat").pack(side="left", padx=4)
+        self.only_ok = tk.BooleanVar(value=True)
+        tk.Checkbutton(bar, text="tylko spełniające warunki", variable=self.only_ok, command=self.refresh, bg=PANEL).pack(side="left", padx=8)
+        tk.Label(bar, text="Szukaj:", bg=PANEL).pack(side="left")
+        self.search = tk.StringVar()
+        self.search.trace_add("write", lambda *_: self.refresh())
+        tk.Entry(bar, textvariable=self.search, width=12, relief="flat").pack(side="left", padx=4)
+        tk.Label(bar, text="Ctrl+K — dowolny symbol (np. SPY, NVDA)", bg=PANEL, fg="#8b95a3").pack(side="left", padx=12)
+        frame = tk.Frame(self.root, bg=BG)
+        frame.pack(fill="both", expand=True)
+        self.tree = ttk.Treeview(frame, columns=[c[0] for c in COLUMNS], show="headings", selectmode="browse")
+        for key, head, width, _ in COLUMNS:
+            self.tree.heading(key, text=head, command=lambda k=key: self.sort_by(k))
+            self.tree.column(key, width=width, anchor="w" if key in ("ticker", "company", "sector", "glb_state", "macd") else "e", stretch=key == "company")
+        sb = ttk.Scrollbar(frame, orient="vertical", command=self.tree.yview)
+        self.tree.configure(yscrollcommand=sb.set)
+        self.tree.pack(side="left", fill="both", expand=True)
+        sb.pack(side="right", fill="y")
+        self.tree.tag_configure("signal", background="#123a24")
+        self.tree.tag_configure("dim", foreground="#6b7684")
+        self.tree.bind("<Double-1>", lambda e: self.open_chart(self.current()))
+        self.tree.bind("<Return>", lambda e: self.open_chart(self.current()))
+        self.tree.bind("<<TreeviewSelect>>", lambda e: self._follow())
+        self.status = autowrap(tk.Label(self.root, text="", bg=PANEL, padx=8))
+        self.status.pack(fill="x", side="bottom")
+        self.root.bind("<F5>", lambda e: self.start_sync())
+        self.root.bind("<Control-k>", lambda e: self.open_symbol())
+        self.root.bind("<slash>", lambda e: self.open_symbol() if e.widget is self.tree else None)
         self.root.after(150, self._poll)
-        self.restore_session()
+        self.refresh()
 
-    # skróty do widoku głównego (domyślny skaner)
-    @property
-    def store(self):
-        return self.view.store
+    # --- lista
+    def rows(self):
+        text = self.search.get().strip().upper()
+        rows = [r for r in self.store.rows if (not self.only_ok.get() or r.get("ok")) and (not text or text in r["ticker"] or text in (r.get("company") or "").upper())]
+        if self.sort:
+            key, rev = self.sort
+            filled = sorted((r for r in rows if r.get(key) is not None), key=lambda r: r[key], reverse=rev)
+            return filled + [r for r in rows if r.get(key) is None]
+        rows.sort(key=default_order)
+        return rows
 
-    @property
-    def table(self):
-        return self.view.table
+    def refresh(self):
+        sel = self.current()
+        self.tree.delete(*self.tree.get_children())
+        for r in self.rows():
+            tag = "signal" if r.get("ok") and r.get("glb_state") in SIGNAL else "" if r.get("ok") else "dim"
+            self.tree.insert("", "end", iid=r["ticker"], values=[cell(r.get(k), f) for k, _, _, f in COLUMNS], tags=(tag,))
+        if sel and self.tree.exists(sel):
+            self.tree.selection_set(sel)
+        n_ok = sum(1 for r in self.store.rows if r.get("ok"))
+        n_sig = sum(1 for r in self.store.rows if r.get("ok") and r.get("glb_state") in SIGNAL)
+        self.status.config(text=f"  Dane: {self.store.at or 'brak — kliknij ⟳ Sync'}   Spółek: {len(self.store.rows)}   spełnia warunki: {n_ok}   sygnał GLB: {n_sig}"
+                                f"   (warunki: obrót ≥ {calc.MIN_TURNOVER / 1e6:.0f} mln $, przychody ≥ +{calc.MIN_REV_GROWTH:.0f} %, marża oper. ≥ +{calc.MIN_DOPM:.0f} pp r/r;"
+                                f" sygnał: zamknięcie tyg. 0–{calc.ENTRY_MAX_PCT:.0f} % nad Green Line; wyjście: MACD tyg. + stop {calc.STOP_PCT:.0f} %)")
 
-    def _menu_spec(self):
-        v = lambda: self.view   # noqa: E731
-        return [
-            ("Plik", [("Sync cen (Finviz + yfinance, szybko)\tF5", lambda: v().start_sync(sync.PRICES)),
-                      ("Sync fundamentów (EPS, estymaty — raz w tygodniu)\tShift+F5", lambda: v().start_sync(sync.FUNDAMENTALS)),
-                      ("Ceny tylko z yfinance (bez Finviz)", lambda: v().start_sync(sync.PRICES, skip_finviz=True)),
-                      ("Wczytaj dane z dysku", lambda: v().reload()), None, ("Zakończ", self.quit_app)]),
-            ("Skanery", [("🧭 Krok po kroku (rynek → sektory → akcje)…", self.open_krok), ("Szybkie okno skanerów", self.open_launcher), ("📌 Przypięte boxy (wszystkie skanery)", self.open_pinned), ("Moje skanery…", self.open_manager), ("Nowy skaner Finviz…", self.new_scanner),
-                         ("Nowy skan Qullamaggie (dane do watchlisty)…", lambda: self.new_scanner(scanners.KIND_QM)),
-                         ("Nowy skan Wish (Green Line Breakout)…", lambda: self.new_scanner(preset="wish")),
-                         ("Nowa watchlista (lista tickerów z kilku skanów)…", lambda: self.new_scanner(scanners.KIND_WATCHLIST)),
-                         ("Edytuj skaner domyślny…", lambda: self.edit_scanner(scanners.DEFAULT_ID))]),
-            ("Widok", [("Filtr listy…", lambda: v().open_filter()), ("Boxy Darvasa…", lambda: v().open_boxes()), ("Kolumny…", lambda: v().choose_columns()),
-                       ("Kryteria Finviz (co synchronizujemy)…", lambda: v().open_criteria()),
-                       ("Wyczyść filtr listy", lambda: v().apply_main_filter({}))]),
-            ("Okno", [("Wykres wybranej spółki", lambda: v().open_chart(v().table.current())),
-                      ("Wykres w nowym oknie", lambda: v().open_chart_new(v().table.current())),
-                      ("CANSLIM wybranej spółki…", lambda: v().open_canslim(v().table.current()))]),
-            ("Pomoc", [("O programie", lambda: messagebox.showinfo(
-                "Momentum Desktop", "Własne skanery Finviz + ceny z yfinance, wykresy Dar-Card i słupkowy (tygodniowe i dzienne), CANSLIM.\n"
-                "Logika jak w Momentum. Tylko informacyjnie — nie jest to porada inwestycyjna.\n\nDane: " + str(self.data_root)))]),
-        ]
+    def sort_by(self, key):
+        self.sort = (key, not self.sort[1]) if self.sort and self.sort[0] == key else (key, key not in ("ticker", "company", "sector"))
+        self.refresh()
 
-    def all_views(self):
-        return [self.view] + [w.view for w in self.windows.values() if w.winfo_exists() and w.view is not None]
+    def current(self):
+        s = self.tree.selection()
+        return s[0] if s else None
 
-    def set_darvas_pure(self, pure):
-        """„Czysty Darvas” (KUP = samo przebicie góry, bez filtru wolumenu i limitu +10 %) — dla wszystkich skanerów naraz."""
-        self.session["darvas_pure"] = bool(pure)
-        self.save_session()
-        for v in self.all_views():
-            v.store.set_pure(pure)
-            v.refresh_lists()
+    def step(self, ticker, d):
+        ids = list(self.tree.get_children())
+        if ticker not in ids:
+            return ids[0] if ids else None
+        i = max(0, min(len(ids) - 1, ids.index(ticker) + d))
+        self.tree.selection_set(ids[i])
+        self.tree.see(ids[i])
+        return ids[i]
 
-    def refresh_flag_views(self):
-        """Flagi są wspólne dla wszystkich skanerów: po zmianie odświeżamy wszystkie listy."""
-        for v in self.all_views():
-            self.flags.tag(v.store.rows)
-            v.refresh_lists()
-
-    def remember_symbol(self, sym):
-        self.session["symbols"] = [sym] + [s for s in self.session.get("symbols", []) if s != sym][:14]
-        self.save_session()
-
-    def edit_list_names(self):
-        ListNamesWindow(self)
-
-    # --- skanery
-    def view_for(self, sid):
-        if sid == scanners.DEFAULT_ID:
-            return self.view
-        w = self.windows.get(sid)
-        return w.view if w is not None and w.winfo_exists() else None
-
-    def open_krok(self):
-        from .krok import KrokWindow
-        if getattr(self, "krok_win", None) is None or not self.krok_win.winfo_exists():
-            self.krok_win = KrokWindow(self)
-        self.krok_win.lift()
-
-    def open_pinned(self):
-        if getattr(self, "pinned_win", None) is None or not self.pinned_win.winfo_exists():
-            self.pinned_win = PinnedWindow(self)
+    # --- wykres
+    def open_chart(self, ticker):
+        if not ticker:
+            return
+        if self.chart is None or not self.chart.winfo_exists():
+            self.chart = ChartWindow(self, ticker)
         else:
-            self.pinned_win.refresh()
-        self.pinned_win.lift()
+            self.chart.set_ticker(ticker)
+            self.chart.lift()
 
-    def open_manager(self):
-        if self.manager is None or not self.manager.winfo_exists():
-            self.manager = ScannerManager(self)
-        self.manager.refresh()
-        self.manager.lift()
+    def _follow(self):
+        if self.chart is not None and self.chart.winfo_exists() and self.current() and self.current() != self.chart.ticker:
+            self.chart.set_ticker(self.current())
 
-    def new_scanner(self, kind=scanners.KIND_FINVIZ, preset=None):
-        (WatchlistEditor(self) if kind == scanners.KIND_WATCHLIST else ScannerEditor(self, kind=kind, preset=preset))
-
-    def edit_scanner(self, sid):
-        sc = scanners.get(self.data_root, sid)
-        if sc:
-            (WatchlistEditor(self, sc) if sc.get("kind") == scanners.KIND_WATCHLIST else ScannerEditor(self, sc))
-
-    def open_scanner_window(self, sid, defer=False):
-        session.touch(self.session, sid)
-        if sid == scanners.DEFAULT_ID:
-            self.show_main()
-        else:
-            w = self.windows.get(sid)
-            if w is not None and w.winfo_exists():
-                w.lift()
-            else:
-                sc = scanners.get(self.data_root, sid)
-                if sc:
-                    self.windows[sid] = (WatchlistWindow if sc.get("kind") == scanners.KIND_WATCHLIST else ScannerListWindow)(self, sc, defer=defer)
-        self.save_session()
-        self.refresh_launcher()
-
-    def window_closed(self, sid):
-        w = self.windows.pop(sid, None)
-        if w is not None and w.winfo_exists():
-            w.destroy()
-        if self.main_hidden and not self.other_windows():   # nic nie zostało na ekranie: zostawiamy małe okno jako punkt wejścia
-            self.open_launcher()
-        self.save_session()
-        self.refresh_launcher()
-
-    def other_windows(self, ignore_launcher=False):
-        """Okna widoczne poza głównym (skanery, wykresy, małe okno, dialogi)."""
-        return [w for w in self.root.winfo_children() if isinstance(w, tk.Toplevel) and w.winfo_exists() and w.state() != "withdrawn"
-                and not (ignore_launcher and w is self.launcher)]
-
-    def close_main(self):
-        """Zamknięcie głównego okna (skaner domyślny) nie kończy programu, dopóki są inne okna: chowamy je, a wrócić można z małego okna skanerów."""
-        if self.other_windows():
-            self.root.withdraw()
-            self.main_hidden = True
-            self.open_launcher()
-            self.save_session()
-        else:
-            self.quit_app()
-
-    def show_main(self):
-        self.main_hidden = False
-        self.root.deiconify()
-        self.root.lift()
-        self.save_session()
-
-    # --- szybkie okno i pamięć sesji
-    def open_launcher(self):
-        if self.launcher is None or not self.launcher.winfo_exists():
-            self.launcher = LauncherWindow(self)
-            self.launcher.protocol("WM_DELETE_WINDOW", self._close_launcher)
-        self.launcher.refresh()
-        self.launcher.lift()
-        self.save_session()
-
-    def _close_launcher(self):
-        self.launcher.destroy()
-        if self.main_hidden and not self.other_windows():   # to było ostatnie okno — kończymy program
-            self.quit_app()
+    # --- Sync i symbole (w wątkach; komunikaty przez kolejkę do pętli Tk)
+    def start_sync(self):
+        if self.sync_btn["state"] == "disabled":
             return
-        self.save_session()
-
-    def refresh_launcher(self):
-        if self.launcher is not None and self.launcher.winfo_exists():
-            self.launcher.refresh()
-
-    def save_session(self):
-        self.session["open"] = [sid for sid, w in self.windows.items() if w.winfo_exists()]
-        self.session["launcher"] = self.launcher is not None and self.launcher.winfo_exists()
-        self.session["main_hidden"] = self.main_hidden
-        session.save(self.data_root, self.session)
-
-    def restore_session(self):
-        """Po starcie otwiera skanery, które były otwarte przy ostatnim zamknięciu, i małe okno szybkiego startu.
-        Stan odczytujemy z góry: otwieranie okien zapisuje sesję i nadpisałoby flagę szybkiego okna."""
-        to_open, want_launcher, hidden = list(self.session["open"]), self.session["launcher"], self.session["main_hidden"]
-        if hidden:   # główne okno było schowane — chowamy je i dajemy małe okno jako punkt wejścia
-            self.root.withdraw()
-            self.main_hidden, want_launcher = True, True
-        for sid in to_open:
-            if sid != scanners.DEFAULT_ID and scanners.get(self.data_root, sid):
-                self.open_scanner_window(sid, defer=True)   # okno od razu z kółkiem „wczytuję”, dane w tle
-        if want_launcher:
-            self.open_launcher()
-
-    def quit_app(self):
-        self.save_session()
-        self.root.destroy()
-
-    def scanner_saved(self, sc, then_sync=None):
-        """Po zapisie w edytorze: odśwież widoki; nowy skaner od razu otwieramy w oknie; opcjonalnie od razu Sync."""
-        view = self.view_for(sc["id"])
-        if view is not None:
-            view.scanner.update(sc)
-            view.set_title()
-            view.table.set_columns(view.columns())
-        elif sc["id"] != scanners.DEFAULT_ID:
-            self.open_scanner_window(sc["id"])
-            view = self.view_for(sc["id"])
-        if self.manager is not None and self.manager.winfo_exists():
-            self.manager.refresh()
-        self.refresh_launcher()
-        if then_sync and view is not None:
-            self.start_sync(view, then_sync)
-
-    def delete_scanner(self, sid):
-        w = self.windows.pop(sid, None)
-        if w is not None and w.winfo_exists():
-            w.destroy()
-        scanners.delete(self.data_root, sid)
-        session.prune(self.session, [s["id"] for s in scanners.load(self.data_root)])
-        self.save_session()
-        self.refresh_launcher()
-
-    # --- synchronizacja: każdy skaner w osobnym procesie, więc kilka może trwać równolegle
-    def start_sync(self, view, mode=sync.PRICES, skip_finviz=False):
-        sid = view.scanner["id"]
-        if sid in self.syncing:
-            messagebox.showinfo("Synchronizacja", "Ten skaner już się synchronizuje — poczekaj, aż skończy (inne skanery możesz synchronizować równolegle).", parent=view.root)
-            return
-        kind = view.scanner.get("kind") or scanners.KIND_FINVIZ
-        if kind == scanners.KIND_WATCHLIST:
-            self.start_merge(view)
-            return
-        is_glb = "glb" in scanners.load_config(view.store.dir)   # skan Wish potrzebuje samych cen (+ danych miesięcznych), nie fundamentów
-        if is_glb:
-            mode = sync.PRICES
-        # Przyciski robią dokładnie to, co mówią: „ceny” = tylko ceny (zamknięcia, High, Low), „fundamenty” = ceny + EPS i estymaty. Żadnego dociągania fundamentów po cichu.
-        view.set_sync_enabled(False)
-        fund = mode == sync.FUNDAMENTALS
-        name = view.scanner["name"]
-        win = SyncWindow(self, f"Synchronizacja {'fundamentów' if fund else 'cen'} — {name}")
-        self.syncing[sid] = win
-        win.log(f"Skaner: {name}")
-        if mode == sync.PRICES and sid != scanners.DEFAULT_ID and not (view.store.dir / "sync_state.json").exists():
-            win.log("Tylko ceny (zamknięcia, High, Low); EPS i estymaty bierzemy ze wspólnego cache — spółki bez nich dostaną dane po „Fundamenty”.")
-        if scanners.load_config(view.store.dir).get("tickers"):
-            win.log("Stała lista spółek z 🧭 Krok po kroku — bez Finviz.")
-        elif not skip_finviz:   # co dokładnie pobieramy z Finviz
-            cfg = view.store.finviz_config()
-            for line in finviz_codes.summary_lines(cfg.get("filters"), cfg.get("max_tickers")):
-                win.log(line)
-            if view.scanner.get("extra"):
-                win.log(f"  + dodatkowe kolumny z Finviz: {', '.join(view.scanner['extra'])}")
-        if is_glb:
-            win.log("Skan Wish: tylko ceny z yfinance (bez EPS i estymat) + miesięczne zamknięcia do Green Line Breakout (zakończone miesiące z pamięci podręcznej).")
-        if kind == scanners.KIND_QM:
-            two = (scanners.load_config(view.store.dir).get("qm") or {}).get("two_stage")
-            win.log("Skaner Qullamaggie: tylko ceny (bez EPS i estymat). Lista z Finviz dzielona po sektorach (darmowy screener oddaje max 1000 wierszy). "
-                    + ("Szybki Sync: etap 1 = tylko Finviz (cały zbiór), etap 2 = ceny z yfinance tylko dla kandydatów — kilka minut."
-                       if two else "Pełny Sync: ceny z yfinance dla całego zbioru — to potrwa kilka–kilkanaście minut.") + " Zostają spółki powyżej progów pobierania.")
-        win.log("Start: Finviz → yfinance → EPS i estymaty analityków → obliczenia (kilka–kilkanaście minut)…" if fund
-                else "Start: " + ("yfinance (ceny)" if skip_finviz else "Finviz (tylko lista i ceny, bez fundamentów) → yfinance (ceny)") + " → obliczenia na zapisanych fundamentach…")
-        data_dir, extra = view.store.dir, list(view.scanner.get("extra") or [])
-        shared = None if sid == scanners.DEFAULT_ID else self.data_root
-
-        def work():
-            code = sync.run_in_subprocess(data_dir, lambda s: self.q.put(("log", sid, s)), mode=mode, skip_finviz=skip_finviz,
-                                          extra_keys=extra, shared_root=shared)
-            self.q.put(("done", sid, code == 0))
-
-        threading.Thread(target=work, daemon=True).start()
-        self.refresh_launcher()
-
-    def start_merge(self, view):
-        """Watchlista: składa listę z danych skanów wg kryteriów (bez sieci)."""
-        sid = view.scanner["id"]
-        if sid in self.syncing:
-            return
-        sc = scanners.get(self.data_root, sid) or view.scanner
-        view.set_sync_enabled(False)
-        win = SyncWindow(self, f"Watchlista — {sc['name']}")
-        self.syncing[sid] = win
-        win.log("Składam z: " + ", ".join(s["name"] for s in (scanners.get(self.data_root, x["id"]) for x in sc.get("sources") or []) if s))
+        self.sync_btn.config(state="disabled")
+        log = lambda s: self.q.put(("log", s))   # noqa: E731
 
         def work():
             try:
-                n = merge.build(self.data_root, sc, log=lambda s: self.q.put(("log", sid, s)))
-                self.q.put(("done", sid, n > 0))
-            except Exception as e:   # błąd składania listy nie może zawiesić okna synchronizacji
-                self.q.put(("log", sid, f"❌ Błąd składania watchlisty: {e}"))
-                self.q.put(("done", sid, False))
-
+                sync.run(self.store, log=log)
+                self.q.put(("synced", None))
+            except Exception as e:   # błąd sieci / Finviz: lista zostaje stara, komunikat w pasku
+                self.q.put(("error", str(e)))
         threading.Thread(target=work, daemon=True).start()
 
-    def refresh_merges(self, source_id):
-        """Po Sync skanu odświeża watchlisty, które z niego korzystają (po cichu)."""
-        for sc in scanners.load(self.data_root):
-            if sc.get("kind") == scanners.KIND_WATCHLIST and any(x["id"] == source_id for x in sc.get("sources", [])):
-                v = self.view_for(sc["id"])
-                try:
-                    merge.build(self.data_root, sc, log=lambda s: None)
-                except Exception:
-                    continue
-                if v is not None:
-                    v.reload()
+    def open_symbol(self):
+        SymbolDialog(self)
 
     def _poll(self):
-        """Odbiera komunikaty procesów synchronizacji. Wyjątek w obsłudze jednego komunikatu nie może zabić pętli (wtedy okno synchronizacji „pracowałoby”
-        w nieskończoność, a lista nigdy by się nie odświeżyła) — błąd trafia do dziennika synchronizacji i pliku data/error.log, a pętla działa dalej."""
         try:
             while True:
-                try:
-                    kind, sid, val = self.q.get_nowait()
-                except queue.Empty:
-                    break
-                try:
-                    self._handle(kind, sid, val)
-                except Exception:   # noqa: BLE001
-                    self._report_error(sid, traceback.format_exc())
-        finally:
-            self.root.after(150, self._poll)
+                kind, val = self.q.get_nowait()
+                if kind == "log":
+                    self.status.config(text="  " + val)
+                elif kind == "synced":
+                    self.sync_btn.config(state="normal")
+                    self.refresh()
+                    if self.chart is not None and self.chart.winfo_exists():
+                        self.chart.set_ticker(self.chart.ticker)
+                elif kind == "error":
+                    self.sync_btn.config(state="normal")
+                    self.status.config(text=f"  ❌ {val}")
+        except queue.Empty:
+            pass
+        self.root.after(150, self._poll)
 
-    def _report_error(self, sid, tb):
-        win = self.syncing.get(sid)
-        if win is not None and win.winfo_exists():
-            win.log("❌ Błąd programu przy obsłudze synchronizacji:\n" + tb)
-        with contextlib.suppress(OSError):
-            with open(self.data_root / "error.log", "a", encoding="utf-8") as f:
-                f.write(f"--- {sync.now_iso()} ({sid})\n{tb}\n")
-
-    def _handle(self, kind, sid, val):
-        win = self.syncing.get(sid)
-        if kind == "log":
-            if win is not None and win.winfo_exists():
-                win.log(val)
-        elif kind == "done":
-            self.syncing.pop(sid, None)
-            try:
-                view = self.view_for(sid)
-                if view is not None:
-                    view.set_sync_enabled(True)
-                    if val:
-                        view.reload() if view.kind == scanners.KIND_WATCHLIST else self.after_sync(view)
-                if val:
-                    self.refresh_merges(sid)
-                if self.manager is not None and self.manager.winfo_exists():
-                    self.manager.refresh()
-                self.refresh_launcher()
-            except Exception:   # noqa: BLE001 — okno synchronizacji zawsze się kończy, nawet gdy odświeżenie listy się nie udało
-                tb = traceback.format_exc()
-                if win is not None and win.winfo_exists():
-                    win.log("❌ Błąd odświeżania listy po synchronizacji:\n" + tb)
-                with contextlib.suppress(OSError):
-                    with open(self.data_root / "error.log", "a", encoding="utf-8") as f:
-                        f.write(f"--- {sync.now_iso()} ({sid})\n{tb}\n")
-            finally:
-                if win is not None and win.winfo_exists():
-                    win.done(val)
-
-    def after_sync(self, view):
-        """Przeładowuje dane skanera i porównuje listę z poprzednią (co nowego); okno zmian otwiera się samo, gdy coś się zmieniło."""
-        old = changes.snapshot(view.store.rows)
-        view.reload()
-        new = changes.snapshot(view.store.rows)
-        fresh = changes.diff(old, new)
-        d = changes.merge(view.store.changes["diff"], fresh) if old else view.store.changes["diff"]
-        names = {t: old[t].get("name") for t in d.get("dropped", []) if t in old}
-        names = {**view.store.changes.get("names", {}), **names}
-        view.store.set_changes(d, sync.now_iso(), names)
-        view.refresh_lists()
-        if changes.total(fresh):
-            view.open_changes()
+    def open_settings(self):
+        SettingsDialog(self)
 
     def run(self):
         self.root.mainloop()
 
 
+class SettingsDialog(tk.Toplevel):
+    def __init__(self, app):
+        super().__init__(app.root)
+        self.app = app
+        self.title("Filtr Finviz i ustawienia")
+        self.configure(bg=PANEL)
+        apply_dark(self)
+        s = app.store.settings
+        tk.Label(self, text="Filtr Finviz (kody f= z adresu screenera; tylko wstępne cięcie listy do pobrania):", bg=PANEL).pack(anchor="w", padx=10, pady=(10, 2))
+        self.filters = tk.StringVar(value=s.get("filters"))
+        tk.Entry(self, textvariable=self.filters, width=90).pack(padx=10, fill="x")
+        tk.Label(self, text=f"Domyślny (bezpieczny — nie odcina dużych zwycięzców z testu): {finviz.DEFAULT_FILTERS}", bg=PANEL, fg="#8b95a3").pack(anchor="w", padx=10)
+        tk.Label(self, text="User-Agent dla SEC (SEC prosi o nazwę i e-mail kontaktowy):", bg=PANEL).pack(anchor="w", padx=10, pady=(10, 2))
+        self.ua = tk.StringVar(value=s.get("sec_ua"))
+        tk.Entry(self, textvariable=self.ua, width=90).pack(padx=10, fill="x")
+        row = tk.Frame(self, bg=PANEL)
+        row.pack(fill="x", padx=10, pady=10)
+        tk.Button(row, text="Zapisz", command=self.save, relief="flat").pack(side="left")
+        tk.Button(row, text="Przywróć domyślne", command=lambda: (self.filters.set(finviz.DEFAULT_FILTERS), self.ua.set(sec.UA)), relief="flat").pack(side="left", padx=8)
+        self.bind("<Escape>", lambda e: self.destroy())
+
+    def save(self):
+        self.app.store.settings.update(filters=self.filters.get().strip() or finviz.DEFAULT_FILTERS, sec_ua=self.ua.get().strip() or sec.UA)
+        self.app.store.save_settings()
+        self.destroy()
+
+
+class SymbolDialog(tk.Toplevel):
+    """Ctrl+K: spółka z listy otwiera się od razu, każda inna (np. SPY, ^GSPC) jest pobierana z yfinance (i SEC, jeśli to spółka z USA)."""
+
+    def __init__(self, app):
+        super().__init__(app.root)
+        self.app, self.q = app, queue.Queue()
+        self.title("Szukaj symbolu")
+        self.configure(bg=PANEL)
+        apply_dark(self)
+        tk.Label(self, text="Symbol (np. NVDA, SPY, ^GSPC) i Enter:", bg=PANEL).pack(padx=12, pady=(10, 4))
+        self.var = tk.StringVar()
+        box = ttk.Combobox(self, textvariable=self.var, values=app.store.settings.get("symbols", []), width=24)
+        box.pack(padx=12)
+        box.focus_set()
+        self.msg = tk.Label(self, text="", bg=PANEL, fg="#8b95a3", wraplength=300)
+        self.msg.pack(padx=12, pady=8)
+        box.bind("<Return>", lambda e: self.go())
+        self.bind("<Escape>", lambda e: self.destroy())
+
+    def go(self):
+        sym = self.var.get().strip().upper()
+        if not sym:
+            return
+        if self.app.store.weekly(sym):
+            self.done(sym)
+            return
+        self.msg.config(text=f"Pobieram {sym}…")
+
+        def work():
+            try:
+                sync.symbol(sym, self.app.store, log=lambda s: None)
+                self.q.put(("ok", sym))
+            except Exception as e:
+                self.q.put(("err", str(e)))
+        threading.Thread(target=work, daemon=True).start()
+        self.after(150, self.poll)
+
+    def poll(self):
+        try:
+            kind, val = self.q.get_nowait()
+        except queue.Empty:
+            self.after(150, self.poll)
+            return
+        if kind == "ok":
+            self.done(val)
+        else:
+            self.msg.config(text=val, fg="#ff5c5c")
+
+    def done(self, sym):
+        s = self.app.store.settings
+        s["symbols"] = [sym] + [x for x in s.get("symbols", []) if x != sym][:14]
+        self.app.store.save_settings()
+        self.destroy()
+        self.app.open_chart(sym)
+
+
 def main():
-    App().run()
+    try:
+        App().run()
+    except tk.TclError as e:
+        messagebox.showerror("Momentum Desktop", str(e))

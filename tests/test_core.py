@@ -223,7 +223,8 @@ def test_guard_tiny_revenue_and_growing_operating_loss():
     """RGTI: przychody 5,1 mln $, strata oper. −28 mln $ (rok wcześniej −20), „Δ marży” +558 pp -> nie spełnia warunków."""
     w = {"d": ["2026-01-05"] * 40, "o": [1] * 40, "h": [1] * 40, "l": [1] * 40, "c": [100.0] * 40, "v": [5e6] * 40}
     rgti = {"rev_rr": 185, "dopm": 558, "op_d": -8.2e6, "rev_q": 5.1e6}
-    assert not calc.build_row({"ticker": "RGTI"}, w, [], rgti)["ok"]
+    r = calc.build_row({"ticker": "RGTI"}, w, [], {**rgti, "dgm": 5})
+    assert not r["ok"] and r["pot"] == 0 and r["pot_ok"] == [None, None, None]     # bez warunku koniecznego nie ma gwiazdek
     assert not calc.build_row({"ticker": "X"}, w, [], {**rgti, "op_d": 5e6})["ok"]          # same małe przychody
     assert not calc.build_row({"ticker": "Y"}, w, [], {**rgti, "rev_q": 80e6})["ok"]        # sama rosnąca strata
     good = calc.build_row({"ticker": "Z"}, w, [], {"rev_rr": 30, "dopm": 12, "op_d": 9e6, "rev_q": 80e6})

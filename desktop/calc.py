@@ -204,7 +204,7 @@ def build_row(base, weekly, months, fund):
     row["ps"] = mcap / f["ttm_rev"] if _ok(mcap) and _ok(f.get("ttm_rev")) and f["ttm_rev"] > 0 else None
     row["ok"] = passes(row)
     row["strong"] = strong(row)
-    pot = potential(row)
+    pot = potential(row) if row["ok"] else [(k, txt, None) for k, txt, _ in POTENTIAL]   # gwiazdki tylko po warunku koniecznym (RGTI)
     row["pot"] = sum(1 for *_, v in pot if v)
     row["pot_ok"] = [v for *_, v in pot]
     row["slow"] = slowdown(row)

@@ -138,11 +138,14 @@ def test_guide_position_and_ibd_panels(app):
     g = ch.geom["g"]
     assert g["spx"][1] < g["price"][0] and g["vol"][1] < g["rev"][0] < g["rev"][1] < g["macd"][0]
     ch.toggle_pos()
-    assert "AAA" in st.alerts["pos"] and "AAA" in st.alerts["watch"] and "⚠" in ch.pot_btn.cget("text")
+    assert "AAA" in st.alerts["pos"] and "AAA" in st.alerts["watch"] and "⚠" in ch.ptext.get("1.0", "end") and "Potencjał" in ch.ptext.get("1.0", "end")
     assert app.tree.item("AAA")["values"][0].startswith("📌") and "poswarn" in app.tree.item("AAA")["tags"]
     lines_ = A.checklist(row, st.alerts["pos"]["AAA"])
     assert any(ln.startswith("⚠ Masz pozycję") for ln in lines_)
     A.GuideDialog(app).destroy()
+    shown = ch.show_panel
+    ch.toggle_panel()
+    assert ch.show_panel != shown and app.store.settings["fund_panel"] == ch.show_panel and ch.fund_btn.cget("text").startswith("◀" if shown else "▶")
     assert A.cell(3, "n") == "★★★☆☆" and A.cell("HAMUJE", "w") == "⚠ hamuje"
 
 

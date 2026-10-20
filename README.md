@@ -36,6 +36,9 @@ Heurystyka z backtestu (spółki z dzisiejszej listy, bez spółek wycofanych z 
   Wykres jak w IBD: S&P 500 (SPY, pobierany przy Sync) nad ceną, przychody kwartalne z r/r % pod wolumenem.
 - **Okno wykresu** jest wyższe niż szersze; po prawej rozwijany panel **FUNDAMENTY** (pasek ze strzałką na całej wysokości): potencjał ★, wartości z ostatnich
   raportów, lista kontrolna i ostrzeżenie dla pozycji (stan panelu zostaje zapamiętany).
+- **📅 Dzienny** (przycisk przełącza tygodniowy → dzienny → miesięczny; klawisze W / D / M): 2 lata świec dziennych z yfinance (raz na spółkę, w tle), RWB
+  Guppy — 6 szybkich EMA (czerwone) i 6 wolnych (niebieskie), jaśniejsze tło = RWB — ● Blue Dot (Stochastic 10,1 ↑ 20 przy RWB nad Green Line) ze stopem
+  pod Low kropki, Stochastic zamiast MACD. Tylko do podglądu: w teście RWB + Blue Dot dawało +1 % na transakcję (GLB tygodniowy +2,9 %, z Mocne +5,1 %).
 - **📅 Tygodniowy / Miesięczny** (przycisk na wykresie albo klawisz M): wykres miesięczny z pełnej historii (yfinance, ceny bez korekty, pobierany raz na spółkę)
   do sprawdzenia Green Line — schodki = linia w czasie, kółko = miesiąc obecnego rekordu („stoi N mies.”), porównanie z linią z listy (⚠ przy różnicy).
   Linie trendu rysujemy na tygodniowym.

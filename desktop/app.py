@@ -560,9 +560,15 @@ Kupno: zamknięcie tygodnia 0–10 % nad Green Line. Stop 10 % pod wejściem; po
 ⚠ Hamowanie (kolumna Hamuje, alert dla 📌 pozycji): tempo przychodów spadło o ≥ 10 pp — spadek ≥ 20 % w 6 mies. w 44 % przypadków (normalnie 33 %);
 ⚠⚠ z marżą brutto spadającą r/r — 50 %, średnio −1,8 % po 3 i 6 mies. Wtedy zacieśnij stop albo nie dokładaj.
 
+RWB + BLUE DOT (wykres dzienny, 📅 / klawisz D) — do podglądu, NIE jako sygnał
+Test 2015–2026, ceny bez korekty: RWB (6 szybkich EMA nad 6 wolnymi) + nad Green Line + Blue Dot (Stochastic 10,1 ↑ 20), kupno na zamknięciu, stop pod Low
+kropki, wyjście MACD: tylko +1,0…+1,2 % na transakcję, trafność 14–15 % (stop pod kropką wybija średnio po 4 sesjach), spadki portfela do −56…−81 %.
+Ze stopem 10 % zamiast Low kropki: +1,6…+1,8 %. Dla porównania GLB 0–10 % na tygodniowym: +2,9 %, z Mocne +5,1 %. Przegapione wejście lepiej
+odpuścić albo czekać na nowe wybicie z linii.
+
 5. CZEGO NIE SZUKAĆ (nic nie wnosiło)
 ROE / ROI, ranking po RS, Blue Dot, samo przyspieszenie przychodów, poziom marży brutto i operacyjnej, „marża oper. > 0”, sam EPS ponad przychody
-i marże, zmiana marży kwartał do kwartału.
+i marże, zmiana marży kwartał do kwartału, RWB + Blue Dot jako wejście.
 Wykres: S&P 500 nad ceną = kierunek rynku; słupki przychodów pod wolumenem — zielony ≥ +25 % r/r, żółty ≥ +15 %.
 
 Heurystyka z backtestu na spółkach notowanych dziś (bez wycofanych z giełdy), nie porada inwestycyjna."""

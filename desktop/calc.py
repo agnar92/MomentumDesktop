@@ -57,6 +57,43 @@ def green_line_series(months, confirm=CONFIRM_MONTHS):
     return out[:len(months)]
 
 
+GMMA_FAST = (3, 5, 8, 10, 12, 15)     # RWB (Guppy, Dr Wish): szybkie EMA — czerwone
+GMMA_SLOW = (30, 35, 40, 45, 50, 60)  # wolne EMA — niebieskie
+
+
+def gmma(closes):
+    """-> (6 szybkich EMA, 6 wolnych EMA) — listy tej samej długości co closes."""
+    return [ema(closes, n) for n in GMMA_FAST], [ema(closes, n) for n in GMMA_SLOW]
+
+
+def rwb(closes):
+    """RWB: najniższa szybka EMA nad najwyższą wolną (przerwa między wstęgami) -> lista bool."""
+    f, s = gmma(closes)
+    return [min(x[i] for x in f) > max(x[i] for x in s) for i in range(len(closes))]
+
+
+def stoch_k(highs, lows, closes, n=10):
+    """Stochastic (n, 1) %K -> lista (None, gdy brak n świec albo zerowy zakres)."""
+    out = []
+    for i in range(len(closes)):
+        if i < n - 1:
+            out.append(None)
+            continue
+        hh = max(h for h in highs[i - n + 1:i + 1] if _ok(h)) if any(_ok(h) for h in highs[i - n + 1:i + 1]) else None
+        ll = min(x for x in lows[i - n + 1:i + 1] if _ok(x)) if any(_ok(x) for x in lows[i - n + 1:i + 1]) else None
+        c = closes[i]
+        out.append((c - ll) / (hh - ll) * 100 if _ok(c) and hh is not None and ll is not None and hh > ll else None)
+    return out
+
+
+def blue_dots(highs, lows, closes, level, lvl=20):
+    """Blue Dot (Dr Wish): %K Stochastic (10, 1) przecina `lvl` od dołu, gdy jest RWB i zamknięcie nad Green Line `level` -> indeksy świec.
+    Kupno na zamknięciu kropki, stop pod jej Low; dalej wyjście po MACD."""
+    k, r = stoch_k(highs, lows, closes), rwb([c if _ok(c) else 0 for c in closes])
+    return [i for i in range(1, len(closes)) if k[i] is not None and k[i - 1] is not None and k[i - 1] < lvl <= k[i] and r[i]
+            and _ok(level) and _ok(closes[i]) and closes[i] >= level]
+
+
 def glb_state(price, prev, level, max_pct=ENTRY_MAX_PCT):
     """Stan na zamknięciu tygodnia: SYGNAŁ (0–max_pct % nad linią; „WYBICIE”, gdy poprzedni tydzień był pod nią), NAD (dalej), POD, BRAK."""
     if not (_ok(price) and _ok(level) and level > 0):

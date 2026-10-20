@@ -18,6 +18,7 @@ UP, DOWN = "#d5d9e0", "#e5484d"
 SMA_COLORS = {10: "#e5484d", 30: "#f0b429"}
 TLINE = "#22d3ee"
 GLB_COLOR, STOP_COLOR, MACD_C, SIG_C, SPX_C = "#3ddc84", "#ff5c5c", "#4aa3ff", "#f0b429", "#b392f0"
+FAST_C, SLOW_C, RWB_BG, BLUE_DOT = "#e5484d", "#3b82f6", "#232a33", "#4aa3ff"
 FONT = ("Consolas", 9)
 RIGHT, LEFT, TOP = 64, 6, 22
 
@@ -159,7 +160,7 @@ def draw(cv, data, row=None, w=None, h=None, n_show=None, end=None, tlines=(), s
         return None
     i0, i1 = window(total, n_show, end)
     cfull = [v if v is not None else 0 for v in data["c"]]
-    smas = {k: calc.sma(cfull, k)[i0:i1] for k in SMA_COLORS}
+    smas = {} if period == "D" else {k: calc.sma(cfull, k)[i0:i1] for k in SMA_COLORS}
     mac, sig, hist = (x[i0:i1] for x in calc.macd(cfull))
     crosses = [i - i0 for i in calc.macd_cross_down(calc.macd(cfull)[2]) if i0 <= i < i1]
     vavg = calc.sma([x or 0 for x in data["v"]], 10)[i0:i1]
@@ -185,7 +186,9 @@ def draw(cv, data, row=None, w=None, h=None, n_show=None, end=None, tlines=(), s
         y = yf(t)
         cv.create_line(x0, y, x1, y, fill=GRID)
         cv.create_text(x1 + 4, y, text=fmt(t), anchor="w", fill=DIM, font=FONT)
-    u = "mies." if period == "M" else "tyg."
+    u = {"M": "mies.", "D": "sesji"}.get(period, "tyg.")
+    if period == "D":
+        draw_rwb(cv, data, row, i0, i1, xf, yf, g, step, cfull)
     yrs = max(1, math.ceil(60 / max(1e-9, step * 12)))     # wykres miesięczny: co ile lat podpis, żeby się nie nakładały
     every = max(1, math.ceil(62 / max(1e-9, step * 13)))   # tygodniowy: co który kwartał podpis (wąski wykres)
     q_no = 0
@@ -244,19 +247,31 @@ def draw(cv, data, row=None, w=None, h=None, n_show=None, end=None, tlines=(), s
     def ym(v):
         return mid - v / rng * (m1 - m0) / 2
 
-    cv.create_line(x0, mid, x1, mid, fill=GRID)
-    for i in range(n):
-        cv.create_rectangle(xf(i) - step * 0.3, ym(hist[i]), xf(i) + step * 0.3, mid, fill="#2f9e5a" if hist[i] >= 0 else "#a33a3e", outline="")
-    for s, col in ((mac, MACD_C), (sig, SIG_C)):
-        cv.create_line(*[p for i, v in enumerate(s) for p in (xf(i), ym(v))], fill=col, width=1.3)
-    for i in crosses:
-        cv.create_text(xf(i), m1 - 6, text="▼", fill=STOP_COLOR, font=FONT)
-    cv.create_text(x0 + 4, m0 + 6, text=f"MACD (12, 26, 9) {u}" + (" · ▼ przecięcie w dół = stop pod Low tego tygodnia" if period == "W" else ""),
-                   anchor="w", fill=DIM, font=FONT)
-    legend = "  ".join(f"SMA {k} {u}" for k in SMA_COLORS)
+    if period == "D":   # dzienny: Stochastic (10, 1) z poziomem 20 zamiast MACD (wyjście i tak po tygodniowym MACD)
+        k = calc.stoch_k(data["h"], data["l"], data["c"])[i0:i1]
+
+        def ys(v):
+            return m1 - 4 - v / 100 * (m1 - m0 - 14)
+        for lv_, col in ((20, BLUE_DOT), (80, GRID)):
+            cv.create_line(x0, ys(lv_), x1, ys(lv_), fill=col, dash=(4, 3))
+        pts = [(xf(i), ys(v)) for i, v in enumerate(k) if v is not None]
+        if len(pts) > 1:
+            cv.create_line(*[p for xy in pts for p in xy], fill=FG, width=1.2)
+        cv.create_text(x0 + 4, m0 + 6, text="Stochastic (10, 1) dzienny · przecięcie 20 od dołu = Blue Dot (przy RWB nad Green Line)", anchor="w", fill=DIM, font=FONT)
+    else:
+        cv.create_line(x0, mid, x1, mid, fill=GRID)
+        for i in range(n):
+            cv.create_rectangle(xf(i) - step * 0.3, ym(hist[i]), xf(i) + step * 0.3, mid, fill="#2f9e5a" if hist[i] >= 0 else "#a33a3e", outline="")
+        for s, col in ((mac, MACD_C), (sig, SIG_C)):
+            cv.create_line(*[p for i, v in enumerate(s) for p in (xf(i), ym(v))], fill=col, width=1.3)
+        for i in crosses:
+            cv.create_text(xf(i), m1 - 6, text="▼", fill=STOP_COLOR, font=FONT)
+        cv.create_text(x0 + 4, m0 + 6, text=f"MACD (12, 26, 9) {u}" + (" · ▼ przecięcie w dół = stop pod Low tego tygodnia" if period == "W" else ""),
+                       anchor="w", fill=DIM, font=FONT)
+    legend = "GMMA: 6 szybkich EMA (czerwone) / 6 wolnych (niebieskie) · jasne tło = RWB · ● Blue Dot" if period == "D" else "  ".join(f"SMA {k} {u}" for k in SMA_COLORS)
     if period == "M":
         draw_glb_history(cv, data, i0, i1, xf, yf, g, pmin, pmax, level)
-    cv.create_text(x0 + 4, y0 + 10, text=legend, anchor="w", fill=FG, font=FONT)
+    cv.create_text(x0 + 4, y1 - 10 if period == "D" else y0 + 10, text=legend, anchor="w", fill=FG, font=FONT)
     # S&P 500 nad wykresem: kierunek rynku (skala log w oknie)
     s0, s1 = g["spx"]
     sv = []
@@ -339,6 +354,37 @@ def draw_lines(cv, data, tlines, sel, i0, i1, xf, yf, g, step, w):
         if ln.get("alert") is not False and s["xe"] >= x1 - step and y0 < s["ye"] < y1:
             cv.create_text(x1 + 4, s["ye"], text=f"🔔 {fmt(L.line_at(ln, data['d'], i1 - 1))}", anchor="w", fill=TLINE, font=FONT)
     return segs
+
+
+def draw_rwb(cv, data, row, i0, i1, xf, yf, g, step, cfull):
+    """Dzienny: jasne tło przy RWB, 6 szybkich (czerwone) i 6 wolnych (niebieskie) EMA, ● Blue Dot pod świecą i stop pod Low ostatniej kropki."""
+    y0, y1 = g["price"]
+    fast, slow = calc.gmma(cfull)
+    r = calc.rwb(cfull)[i0:i1]
+    a = None
+    for i, on in enumerate(r + [False]):   # odcinki RWB = tło pod świecami
+        if on and a is None:
+            a = i
+        elif not on and a is not None:
+            cv.create_rectangle(xf(a) - step / 2, y0, xf(i - 1) + step / 2, y1, fill=RWB_BG, outline="")
+            a = None
+    for lines_, col in ((slow, SLOW_C), (fast, FAST_C)):
+        for s in lines_:
+            pts = [(xf(i), yf(v)) for i, v in enumerate(s[i0:i1]) if v]
+            if len(pts) > 1:
+                cv.create_line(*[p for xy in pts for p in xy], fill=col, width=1)
+    dots = [i for i in calc.blue_dots(data["h"], data["l"], data["c"], (row or {}).get("glb")) if i0 <= i < i1]
+    for i in dots:
+        lo = data["l"][i]
+        if lo:
+            y = yf(lo) + 9
+            cv.create_oval(xf(i - i0) - 4, y - 4, xf(i - i0) + 4, y + 4, fill=BLUE_DOT, outline="")
+    if dots:
+        j = dots[-1]
+        lo = data["l"][j]
+        cv.create_line(xf(j - i0), yf(lo), g["x1"], yf(lo), fill=BLUE_DOT, dash=(2, 3))
+        cv.create_text(xf(j - i0) + 6, yf(lo) + 22, text=f"Blue Dot {data['d'][j]} · stop pod Low {fmt(lo)}", anchor="w", fill=BLUE_DOT, font=FONT)
+    return dots
 
 
 def draw_glb_history(cv, data, i0, i1, xf, yf, g, pmin, pmax, level):
@@ -428,7 +474,7 @@ class ChartWindow(tk.Toplevel):
         self.geometry(f"{int(hh * 0.92)}x{hh}+40+10")
         apply_dark(self)
         self.sel, self.gest = None, None   # zaznaczona linia trendu, gest myszy na wykresie
-        self.period, self.monthly = "W", {}   # W = tygodniowy, M = miesięczny (pełna historia, w pamięci)
+        self.period, self.other = "W", {"M": {}, "D": {}}   # W = tygodniowy, D = dzienny (2 lata), M = miesięczny (pełna historia) — w pamięci
         top = tk.Frame(self, bg=PANEL)
         top.pack(fill="x")
         self.watch_btn = tk.Button(top, text="🔕 Obserwuj", command=self.toggle_watch, relief="flat")
@@ -477,7 +523,9 @@ class ChartWindow(tk.Toplevel):
         self.cv.bind("<ButtonRelease-1>", self.release)
         self.cv.bind("<Button-3>", self.right_click)
         self.bind("<Delete>", lambda e: self.delete_selected())
-        self.bind("m", lambda e: self.toggle_period())
+        self.bind("m", lambda e: self.toggle_period("M"))
+        self.bind("d", lambda e: self.toggle_period("D"))
+        self.bind("w", lambda e: self.toggle_period("W"))
         for w in (self.cv, self.slider):
             w.bind("<MouseWheel>", lambda e: self.zoom(0.85 if e.delta > 0 else 1.18))
             w.bind("<Button-4>", lambda e: self.zoom(0.85))
@@ -492,59 +540,60 @@ class ChartWindow(tk.Toplevel):
         self.set_ticker(ticker)
 
     def data(self):
-        if self.period == "M":
-            return self.monthly.get(self.ticker)
+        if self.period in ("M", "D"):
+            return self.other[self.period].get(self.ticker)
         return self.app.store.weekly(self.ticker)
 
-    def toggle_period(self):
-        """Tydzień / Miesiąc. Miesięczny = pełna historia z yfinance (ceny bez korekty), pobierana raz na spółkę w tle."""
-        self.period = "M" if self.period == "W" else "W"
-        self.n_show, self.end, self.sel = None, None, None
-        self.period_btn.config(text="📅 Miesięczny" if self.period == "M" else "📅 Tygodniowy")
+    def toggle_period(self, to=None):
+        """Tygodniowy → dzienny → miesięczny. Dzienny (2 lata) i miesięczny (pełna historia) z yfinance (ceny bez korekty), raz na spółkę w tle."""
+        self.period = to or {"W": "D", "D": "M", "M": "W"}[self.period]
+        self.n_show, self.end, self.sel = (260 if self.period == "D" else None), None, None   # dzienny: domyślnie ostatni rok
+        self.period_btn.config(text={"W": "📅 Tygodniowy", "D": "📅 Dzienny", "M": "📅 Miesięczny"}[self.period])
         self.load_period()
 
     def load_period(self):
-        t = self.ticker
-        if self.period == "M" and t not in self.monthly:
+        t, per = self.ticker, self.period
+        if per in ("M", "D") and t not in self.other[per]:
             self.cv.delete("all")
-            self.cv.create_text(20, 20, text=f"Pobieram historię miesięczną {t}…", anchor="w", fill=FG)
+            self.cv.create_text(20, 20, text=f"Pobieram {'historię miesięczną' if per == 'M' else 'świece dzienne'} {t}…", anchor="w", fill=FG)
 
             def work():
                 try:
-                    m = prices.monthly_ohlc(t)
+                    m = prices.monthly_ohlc(t) if per == "M" else prices.daily_ohlc(t)
                 except Exception:   # brak sieci: komunikat na wykresie
                     m = None
                 if m:
-                    m["period"] = "M"
-                    m["open_last"] = m["d"][-1][:7] == dt.date.today().strftime("%Y-%m")
+                    m["period"] = per
+                    m["open_last"] = per == "M" and m["d"][-1][:7] == dt.date.today().strftime("%Y-%m")
                 box.append(m)
             box = []   # wynik z wątku odbieramy w pętli Tk (Tk nie jest wielowątkowy)
             threading.Thread(target=work, daemon=True).start()
 
             def poll():
                 if box:
-                    self._got(t, box[0])
+                    self._got(t, box[0], per)
                 elif self.winfo_exists():
                     self.after(100, poll)
             self.after(100, poll)
             return
-        self.title(f"{t} — {'miesięczny' if self.period == 'M' else 'tygodniowy'}")
+        name = {"M": "miesięczny", "D": "dzienny"}.get(per, "tygodniowy")
+        self.title(f"{t} — {name}")
         self.redraw()
 
-    def _got(self, t, m):
+    def _got(self, t, m, per="M"):
         if not m:   # nie zapamiętujemy porażki — kolejne przełączenie spróbuje ponownie
             if t == self.ticker and self.winfo_exists():
                 self.cv.delete("all")
-                self.cv.create_text(20, 20, text=f"Nie udało się pobrać historii miesięcznej {t} (sieć / yfinance) — 📅 wraca do tygodniowego.", anchor="w", fill=FG)
+                self.cv.create_text(20, 20, text=f"Nie udało się pobrać danych {t} (sieć / yfinance) — 📅 przełącza dalej.", anchor="w", fill=FG)
             return
-        self.monthly[t] = m
+        self.other[per][t] = m
         if t == self.ticker and self.winfo_exists():
             self.load_period()
 
     def set_ticker(self, ticker):
         self.ticker, self.end, self.sel, self.gest = ticker, None, None, None
-        if self.period == "M":
-            self.n_show = None
+        if self.period != "W":
+            self.n_show = 260 if self.period == "D" else None
         r = self.app.store.row(ticker) or {}
         self.head.config(text="  ·  ".join(x for x in (ticker, r.get("company")) if x))
         self.tools()
@@ -568,7 +617,7 @@ class ChartWindow(tk.Toplevel):
     def draw_slider(self):
         data = self.data()
         if data:
-            draw_slider(self.slider, data["c"], self.n_show, self.end, "mies." if self.period == "M" else "tyg.")
+            draw_slider(self.slider, data["c"], self.n_show, self.end, {"M": "mies.", "D": "sesji"}.get(self.period, "tyg."))
         else:
             self.slider.delete("all")
 
@@ -655,7 +704,7 @@ class ChartWindow(tk.Toplevel):
         return data["d"][k], float(f"{p:.6g}"), k
 
     def press(self, e):
-        if not self.geom or not self.data() or self.period == "M":   # linie trendu rysujemy na tygodniowym
+        if not self.geom or not self.data() or self.period != "W":   # linie trendu rysujemy na tygodniowym
             return
         self.cv.focus_set()
         hit = L.hit_line(self.geom["segs"], e.x, e.y, 7)

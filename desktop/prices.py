@@ -187,3 +187,13 @@ def monthly_ohlc(ticker):
         return None
     s = _series(f)
     return s if len(s["d"]) >= 2 else None
+
+
+def daily_ohlc(ticker, period="2y"):
+    """Świece dzienne {d, o, h, l, c, v} jednej spółki z ostatnich `period` (wykres dzienny w desktopie). -> seria albo None."""
+    df = _yf().download([ticker], period=period, interval="1d", auto_adjust=AUTO_ADJUST, group_by="ticker", progress=False, threads=False)
+    f = _frames(df, [ticker]).get(ticker)
+    if f is None:
+        return None
+    s = _series(f)
+    return s if len(s["d"]) >= 30 else None

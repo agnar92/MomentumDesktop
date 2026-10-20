@@ -161,7 +161,7 @@ def test_monthly_chart_shows_green_line_history(app, monkeypatch):
     app.open_chart("AAA")
     ch = app.chart
     ch.update()
-    ch.toggle_period()
+    ch.toggle_period("M")
     for _ in range(50):
         app.root.update()
         if ch.geom and ch.geom["n"] == len(h):
@@ -170,5 +170,31 @@ def test_monthly_chart_shows_green_line_history(app, monkeypatch):
     assert ch.period == "M" and ch.geom["n"] == len(h)
     texts = [ch.cv.itemcget(i, "text") for i in ch.cv.find_all() if ch.cv.type(i) == "text"]
     assert any(t.startswith("rekord ") for t in texts) and any(t.startswith("Green Line z wykresu") for t in texts)
-    ch.toggle_period()
+    ch.toggle_period("W")
     assert ch.period == "W" and ch.geom["n"] == 156
+
+
+def test_daily_chart_rwb_and_blue_dot(app, monkeypatch):
+    import time
+    from desktop import calc as C, prices
+    n = 160
+    c = [50 + i * 0.4 for i in range(n)]
+    c[150:154] = [c[149] - 3, c[149] - 6, c[149] - 7, c[149] - 1]       # korekta w trendzie, potem odbicie: Stochastic przecina 20 w górę
+    d = [f"2026-{1 + i // 28:02d}-{1 + i % 28:02d}" for i in range(n)]
+    m = {"d": d, "o": c, "h": [x + 1 for x in c], "l": [x - 1 for x in c], "c": c, "v": [1e6] * n}
+    assert C.rwb(c)[148] and not C.rwb([100 - i for i in range(80)])[-1]   # spadek: szybkie pod wolnymi
+    dots = C.blue_dots(m["h"], m["l"], c, 40)
+    assert dots and dots[-1] >= 150 and not C.blue_dots(m["h"], m["l"], c, 1e9)   # pod Green Line nie ma kropek
+    monkeypatch.setattr(prices, "daily_ohlc", lambda t: dict(m))
+    app.open_chart("AAA")
+    ch = app.chart
+    ch.update()
+    ch.toggle_period("D")
+    for _ in range(50):
+        app.root.update()
+        if ch.geom and ch.geom["n"] == min(n, 260):
+            break
+        time.sleep(0.02)
+    assert ch.period == "D" and ch.geom["n"] == min(n, 260)
+    texts = [ch.cv.itemcget(i, "text") for i in ch.cv.find_all() if ch.cv.type(i) == "text"]
+    assert any(t.startswith("Stochastic (10, 1)") for t in texts)

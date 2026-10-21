@@ -43,7 +43,8 @@ def test_turnover_and_conditions():
     assert calc.turnover([10, 10, 10, 10], [5e7] * 4) == pytest.approx(1e8)
     good = {"turnover": 120e6, "rev_rr": 20, "dopm": 4, "rs": 60, "beat2": True}
     assert calc.passes(good) and calc.passes({**good, "ps": 15}) and calc.passes({**good, "ps": None})
-    for k, v in (("turnover", 80e6), ("rev_rr", 10), ("dopm", 2), ("dopm", None), ("rs", 40), ("rs", None), ("ps", 25), ("beat2", False), ("beat2", None)):
+    assert calc.passes({**good, "turnover": 1e3})                      # obrót nie jest warunkiem (filtr w Finviz)
+    for k, v in (("rev_rr", 10), ("dopm", 2), ("dopm", None), ("rs", 40), ("rs", None), ("ps", 25), ("beat2", False), ("beat2", None)):
         assert not calc.passes({**good, k: v})
 
 
@@ -195,7 +196,7 @@ def test_sync_run_with_fake_sources(tmp_path):
     a = next(r for r in rows if r["ticker"] == "A")
     assert a["ok"] and a["glb_state"] == "SYGNAŁ"
     assert a["rvol_w"] == pytest.approx(1.0) and a["rvol_d"] == pytest.approx(3.0)     # wolumen relatywny: tydzień / 10, sesja / 50
-    assert not next(r for r in rows if r["ticker"] == "B")["ok"]   # za mały obrót
+    assert next(r for r in rows if r["ticker"] == "B")["ok"]       # mały obrót nie blokuje (płynność = filtr Finviz)
     assert Store(tmp_path).rows and Store(tmp_path).weekly("A")["c"][-1] == 104.0
 
 

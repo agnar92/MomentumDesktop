@@ -207,7 +207,7 @@ class App:
         n_ok = sum(1 for r in self.store.rows if r.get("ok"))
         n_sig = sum(1 for r in self.store.rows if r.get("ok") and r.get("glb_state") in SIGNAL)
         self.status.config(text=f"  Skaner: {self.store.settings['scanner']}   Dane: {self.store.at or 'brak — kliknij ⟳ Sync'}   Na liście: {len(self.tree.get_children())} z {len(self.store.rows)}   spełnia warunki: {n_ok}   sygnał GLB: {n_sig}"
-                                f"   (warunki: obrót ≥ {calc.MIN_TURNOVER / 1e6:.0f} mln $, przychody ≥ +{calc.MIN_REV_GROWTH:.0f} %, marża oper. ≥ +{calc.MIN_DOPM:.0f} pp r/r,"
+                                f"   (warunki: przychody ≥ +{calc.MIN_REV_GROWTH:.0f} %, marża oper. ≥ +{calc.MIN_DOPM:.0f} pp r/r,"
                                 f" P/S < {calc.MAX_PS:.0f}, RS 52 tyg. ≥ +{calc.MIN_RS:.0f} pp;"
                                 f" sygnał: zamknięcie tyg. 0–{calc.ENTRY_MAX_PCT:.0f} % nad Green Line; wyjście: MACD tyg. + stop {calc.STOP_PCT:.0f} %)")
 
@@ -632,7 +632,6 @@ class AlertsDialog(tk.Toplevel):
 
 
 GUIDE = """WARUNKI (październik 2026) — tylko to, co w strategii GLB + MACD działało najmocniej (wszystkie sygnały 2015–2026, ceny bez korekty)
-   obrót ≥ 100 mln $ dziennie	odcina małe, dziwne spółki
    przychody kwartału ≥ +15 % r/r	bez tego 34,9 % rocznie
    marża operacyjna ≥ +3 pp r/r	bez tego 28,9 %
    wycena P/S < 20	bez tego 31,5 % (drogie tracą; odpada też RGTI)
@@ -645,6 +644,8 @@ Razem (z niespodziankami EPS): +19,2 % na transakcję, portfel wszystkich sygna�
 Cena za to: mało sygnałów naraz (średnio 2–4) i głębszy spadek portfela (−51 %).
 Wspólny mianownik dużych ruchów po GLB: rosnące przychody i marża (fundamenty) + akcja już jest liderem rynku (siła względna).
 Sama technika (GLB, średnie, RS bez fundamentów, wybicia dzienne w stylu Qullamaggie) w 2020–26 nie pobiła S&P 500.
+Obrót nie jest warunkiem — płynność ustawiasz filtrem skanera w Finviz (np. średni wolumen). Backtest liczono na spółkach z obrotem ≥ 100 mln $
+dziennie; przy mniej płynnych wyniki mogą być inne (sam obrót ≥ 50 mln $: +9,4 % zamiast +15,6 % na transakcję).
 Usunięte, bo przy tych warunkach nic nie zmieniały: przychody kw. ≥ 25 mln $, zysk oper. w $ ↑, „Mocne” (Δ marży ≥ 10 pp), rozwodnienie, potencjał ★.
 
 JAK WYGLĄDA DUŻY RUCH W RAPORTACH
@@ -696,7 +697,7 @@ def checklist(row, pos=None):
               + (f" · 📌 pozycja od {pos['since']} ({pos['price']:.2f})" if pos and pos.get("price") else ""),
               f"Przychody {f(r.get('rev_rr'), ' %')} r/r (kwartał wcześniej {f(r.get('rev_rr1'), ' %')}), Δ marży oper. {f(r.get('dopm'), ' pp')} "
               f"(wcześniej {f(r.get('dopm1'), ' pp')}), marża oper. {f(r.get('opm'), ' %')} · kwartał {r.get('quarter') or '—'}", "",
-              f"{yes(cond(r.get('turnover'), lambda v: v >= calc.MIN_TURNOVER))} Obrót ≥ 100 mln $ dziennie ({t_txt} mln $)",
+              f"Obrót {t_txt} mln $ dziennie (bez progu — płynność ustawiasz filtrem w Finviz)",
               f"{yes(cond(r.get('rev_rr'), lambda v: v >= calc.MIN_REV_GROWTH))} Przychody kw. ≥ +15 % r/r ({f(r.get('rev_rr'), ' %')})",
               f"{yes(cond(r.get('dopm'), lambda v: v >= calc.MIN_DOPM))} Marża oper. ≥ +3 pp r/r ({f(r.get('dopm'), ' pp')})",
               f"{yes(cond(r.get('ps'), lambda v: v < calc.MAX_PS))} Wycena P/S < 20 ({ps_txt})",

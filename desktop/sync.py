@@ -60,9 +60,8 @@ def run(store, log=print, fetch_list=finviz.fetch, weekly=prices.weekly, monthly
     tickers = [r["ticker"] for r in base]
     log(f"Finviz: {len(tickers)} spółek{f' z {total}' if total and total != len(tickers) else ''}")
     series = weekly(tickers + [x for x in (BENCH,) if x not in tickers], log=log, cache=store.series, progress=stage_progress(progress, 1))
-    # fundamenty i historię miesięczną pobieramy tylko dla spółek, które przechodzą próg obrotu (reszta i tak odpada)
-    liquid = [t for t in tickers if t in series and (calc.turnover(series[t]["c"], series[t]["v"]) or 0) >= calc.MIN_TURNOVER]
-    log(f"Obrót ≥ {calc.MIN_TURNOVER / 1e6:.0f} mln $ dziennie: {len(liquid)} spółek")
+    # miesięczne High (Green Line), fundamenty, prognozy i świece dzienne dla wszystkich spółek skanera (bez progu obrotu)
+    liquid = [t for t in tickers if t in series]   # bez progu obrotu — płynność ustawia filtr skanera Finviz
     mcache, scache = store.cache("monthly"), store.cache("sec")
     monthly(liquid, mcache, log=log, progress=stage_progress(progress, 2))
     store.save_cache("monthly", mcache)

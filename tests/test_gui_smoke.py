@@ -227,7 +227,8 @@ def test_period_buttons_and_ibd_rs_line(app):
     ch.redraw()
     assert set(ch.per_btns) == {"M", "W", "D"} and ch.per_btns["W"].cget("text") == "T" and ch.per_btns["W"].cget("bg") == "#1f3b5c"
     texts = [ch.cv.itemcget(i, "text") for i in ch.cv.find_all() if ch.cv.type(i) == "text"]
-    assert any(t.startswith("RS (cena / S&P 500)") for t in texts), [t for t in texts if "RS" in t or "S&P" in t]
+    rs = st.row("AAA")["rs"]
+    assert f"{rs:+.0f} pp" in texts and not any(t.startswith("RS (cena") for t in texts)   # na końcu linii RS tylko liczba pp
     assert A_chart.rs_line([10, 20, None], [5, 4, 2]) == [2, 5, None]
 
 

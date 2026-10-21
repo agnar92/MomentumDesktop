@@ -368,12 +368,11 @@ def draw_rs_line(cv, c, sv, xf, g, rs52=None):
         return b1 - (math.log(v) - lo_) / ((hi_ - lo_) or 1) * (b1 - b0)
     pts = [(xf(i), yr(v)) for i, v in enumerate(rs) if v]
     cv.create_line(*[p for xy in pts for p in xy], fill=RS_C, width=1.4)
-    lab = "RS (cena / S&P 500)" + (f" · 52 tyg. {rs52:+.0f} pp" if rs52 is not None else "")
     last = [v for v in rs[-52:] if v]
-    if rs[-1] and rs[-1] >= max(last):
+    if rs[-1] and rs[-1] >= max(last):   # ● = RS na szczycie 52 tyg.
         cv.create_oval(pts[-1][0] - 4, pts[-1][1] - 4, pts[-1][0] + 4, pts[-1][1] + 4, fill=RS_C, outline="")
-        lab += " · ● RS na szczycie 52 tyg."
-    boxed(cv, g["x0"] + 4, b0 - 8, lab, RS_C)
+    if rs52 is not None:   # na końcu linii tylko liczba: siła względna 52 tyg. w pp vs S&P 500 (jak kolumna RS)
+        boxed(cv, g["x1"] + 4, pts[-1][1], f"{rs52:+.0f} pp", RS_C)
 
 
 def draw_lines(cv, data, tlines, sel, i0, i1, xf, yf, g, step, w):

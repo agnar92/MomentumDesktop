@@ -462,7 +462,12 @@ def draw_rwb(cv, data, row, i0, i1, xf, yf, g, step, cfull):
         j = dots[-1]
         lo = data["l"][j]
         cv.create_line(xf(j - i0), yf(lo), g["x1"], yf(lo), fill=BLUE_DOT, dash=(2, 3))
-        cv.create_text(xf(j - i0) + 6, yf(lo) + 22, text=f"Blue Dot {data['d'][j]} · stop pod Low {fmt(lo)}", anchor="w", fill=BLUE_DOT, font=FONT)
+        # Etykieta po lewej, gdy Blue Dot wypada blisko prawej krawędzi — inaczej cena stopu jest ucinana przez Canvas.
+        bx = xf(j - i0)
+        right_edge = bx > g["x1"] - 230
+        cv.create_text(bx - 6 if right_edge else bx + 6, yf(lo) + 22,
+                       text=f"Blue Dot {data['d'][j]} · stop pod Low {fmt(lo)}",
+                       anchor="e" if right_edge else "w", fill=BLUE_DOT, font=FONT)
     return dots
 
 

@@ -10,7 +10,7 @@ import datetime as dt
 from . import calc, finviz, lines, sec, sync
 from .chart import ChartWindow
 from .store import DEFAULT_SCANNERS, Store, normalize_scanners
-from .theme import BG, PANEL, apply_dark, autowrap, setup_style
+from .theme import BG, FG, PANEL, apply_dark, autowrap, setup_style
 
 COLUMNS = [  # (klucz, nagłówek, szerokość, format)
     ("ticker", "Ticker", 70, "s"), ("company", "Spółka", 200, "s"), ("sector", "Sektor", 140, "s"), ("price", "Cena", 80, "p"),
@@ -550,6 +550,7 @@ class PositionsDialog(tk.Toplevel):
         row = tk.Frame(self, bg=PANEL)
         row.pack(fill="x", padx=10, pady=10)
         tk.Button(row, text="Kolumny…", command=lambda: ColumnsDialog(self.app), relief="flat").pack(side="left")
+        tk.Button(row, text="Edytuj wejście…", command=self.edit_entry, relief="flat").pack(side="left", padx=6)
         tk.Button(row, text="Usuń pozycję", command=self.del_pos, relief="flat").pack(side="left", padx=6)
         tk.Button(row, text="Przestań obserwować", command=self.del_watch, relief="flat").pack(side="left", padx=6)
         tk.Button(row, text="Zamknij", command=self.destroy, relief="flat").pack(side="right")
@@ -596,6 +597,54 @@ class PositionsDialog(tk.Toplevel):
         s = tr.selection()
         if s:
             self.app.open_chart(s[0])
+
+    def edit_entry(self):
+        """Edytuj ręcznie datę i cenę wejścia dla wybranej pozycji."""
+        selected = self.pos.selection()
+        if not selected:
+            messagebox.showinfo("Edytuj wejście", "Najpierw zaznacz pozycję.", parent=self)
+            return
+        ticker = selected[0]
+        pos = self.app.store.alerts["pos"].get(ticker)
+        if not pos:
+            return
+        dlg = tk.Toplevel(self)
+        dlg.title(f"Edytuj wejście · {ticker}")
+        dlg.configure(bg=PANEL)
+        dlg.transient(self)
+        dlg.grab_set()
+        tk.Label(dlg, text=f"{ticker} — rzeczywiste wejście", bg=PANEL, fg=FG).pack(anchor="w", padx=12, pady=(12, 6))
+        form = tk.Frame(dlg, bg=PANEL)
+        form.pack(fill="x", padx=12)
+        tk.Label(form, text="Data wejścia (RRRR-MM-DD)", bg=PANEL, fg=FG).grid(row=0, column=0, sticky="w", pady=4)
+        date_var = tk.StringVar(value=pos.get("since") or "")
+        tk.Entry(form, textvariable=date_var, width=18).grid(row=0, column=1, padx=(10, 0), pady=4)
+        tk.Label(form, text="Cena kupna", bg=PANEL, fg=FG).grid(row=1, column=0, sticky="w", pady=4)
+        price_var = tk.StringVar(value=str(pos.get("price") if pos.get("price") is not None else ""))
+        tk.Entry(form, textvariable=price_var, width=18).grid(row=1, column=1, padx=(10, 0), pady=4)
+        def save():
+            date = date_var.get().strip()
+            raw_price = price_var.get().strip().replace(",", ".")
+            try:
+                dt.date.fromisoformat(date)
+                price = float(raw_price)
+                if price <= 0:
+                    raise ValueError
+            except (ValueError, TypeError):
+                messagebox.showerror("Nieprawidłowe dane", "Podaj datę RRRR-MM-DD i cenę większą od zera.", parent=dlg)
+                return
+            pos["since"] = date
+            pos["price"] = price
+            self.app.store.save_alerts()
+            self.app.refresh()
+            self.fill()
+            dlg.destroy()
+        buttons = tk.Frame(dlg, bg=PANEL)
+        buttons.pack(fill="x", padx=12, pady=12)
+        tk.Button(buttons, text="Zapisz", command=save, relief="flat").pack(side="right", padx=(6, 0))
+        tk.Button(buttons, text="Anuluj", command=dlg.destroy, relief="flat").pack(side="right")
+        dlg.bind("<Return>", lambda e: save())
+        dlg.bind("<Escape>", lambda e: dlg.destroy())
 
     def del_pos(self):
         for t in self.pos.selection():

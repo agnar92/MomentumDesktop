@@ -95,7 +95,8 @@ def run(store, log=print, fetch_list=finviz.fetch, weekly=prices.weekly, monthly
         sd = dser.get(r["ticker"])
         r["rvol_d"] = calc.rel_volume(sd["v"], calc.RVOL_D) if sd else None
         closes = sd.get("c", []) if sd else []
-        r["cc250"] = closes[-1] / closes[-251] if len(closes) >= 251 and closes[-251] else None
+        # C/C[max]: use the oldest available close when fewer than 250 prior sessions exist.
+        r["cc250"] = closes[-1] / closes[max(0, len(closes) - 251)] if len(closes) >= 2 and closes[max(0, len(closes) - 251)] else None
         bd = calc.fresh_blue_dot(sd, r.get("glb")) if r.get("glb_state") == "NAD" else None
         if bd:   # > 10 % nad linią i nie tydzień przebicia: wejście po Blue Dot na dziennym
             r["glb_state"], r["bdot"] = "BLUE DOT", bd

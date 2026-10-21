@@ -124,17 +124,23 @@ class App:
         self.alert_btn = tk.Button(bar, text="🔔 Alerty", command=lambda: AlertsDialog(self), relief="flat")
         self.alert_btn.pack(side="left", padx=4)
         tk.Button(bar, text="📌 Pozycje", command=lambda: PositionsDialog(self), relief="flat").pack(side="left", padx=4)
+        tk.Button(bar, text="Kolumny…", command=lambda: ColumnsDialog(self), relief="flat").pack(side="left", padx=4)
         tk.Label(bar, text="Ctrl+K — dowolny symbol (np. SPY, NVDA)", bg=PANEL, fg="#8b95a3").pack(side="left", padx=12)
         frame = tk.Frame(self.root, bg=BG)
         frame.pack(fill="both", expand=True)
         self.tree = ttk.Treeview(frame, columns=[c[0] for c in COLUMNS], show="headings", selectmode="browse")
         for key, head, width, _ in COLUMNS:
             self.tree.heading(key, text=head, command=lambda k=key: self.sort_by(k))
-            self.tree.column(key, width=width, anchor="w" if key in ("ticker", "company", "sector", "glb_state", "macd") else "e", stretch=key == "company")
+            self.tree.column(key, width=width, minwidth=width, anchor="w" if key in ("ticker", "company", "sector", "glb_state", "macd") else "e", stretch=False)
         sb = ttk.Scrollbar(frame, orient="vertical", command=self.tree.yview)
-        self.tree.configure(yscrollcommand=sb.set)
-        self.tree.pack(side="left", fill="both", expand=True)
-        sb.pack(side="right", fill="y")
+        hsb = ttk.Scrollbar(frame, orient="horizontal", command=self.tree.xview)
+        self.tree.configure(yscrollcommand=sb.set, xscrollcommand=hsb.set)
+        self.tree.grid(row=0, column=0, sticky="nsew")
+        sb.grid(row=0, column=1, sticky="ns")
+        hsb.grid(row=1, column=0, sticky="ew")
+        frame.grid_rowconfigure(0, weight=1)
+        frame.grid_columnconfigure(0, weight=1)
+        self.tree["displaycolumns"] = self.store.settings.get("main_columns") or [c[0] for c in COLUMNS]
         self.tree.tag_configure("signal", background="#123a24")
         self.tree.tag_configure("dim", foreground="#6b7684")
         self.tree.tag_configure("poswarn", foreground="#ffb020")
@@ -310,6 +316,68 @@ class App:
 
     def run(self):
         self.root.mainloop()
+
+
+
+class ColumnsDialog(tk.Toplevel):
+    """Wybór widocznych kolumn dla listy skanera, pozycji i obserwowanych; wybór zapisuje się w settings.json."""
+
+    GROUPS = (
+        ("Lista skanera", "main_columns", [(c[0], c[1]) for c in COLUMNS]),
+        ("Pozycje", "pos_columns", [(c, c) for c in PositionsDialog.POS]),
+        ("Obserwowane", "watch_columns", [(c, c) for c in PositionsDialog.WATCH]),
+    )
+
+    def __init__(self, app):
+        super().__init__(app.root)
+        self.app = app
+        self.title("Widoczne kolumny")
+        self.configure(bg=PANEL)
+        apply_dark(self)
+        self.vars = {}
+        outer = tk.Frame(self, bg=PANEL)
+        outer.pack(fill="both", expand=True, padx=12, pady=12)
+        tk.Label(outer, text="Zaznacz kolumny, które chcesz widzieć. Zmiany zapisują się na przyszłe uruchomienia.",
+                 bg=PANEL, fg="#8b95a3", wraplength=520, justify="left").pack(anchor="w", pady=(0, 8))
+        for title, setting_key, choices in self.GROUPS:
+            group = tk.LabelFrame(outer, text=title, bg=PANEL, fg="#c9d1d9", padx=8, pady=6)
+            group.pack(fill="x", expand=False, pady=4)
+            current = app.store.settings.get(setting_key)
+            selected = set(current) if current else {key for key, _ in choices}
+            for i, (key, label) in enumerate(choices):
+                var = tk.BooleanVar(value=key in selected)
+                self.vars[(setting_key, key)] = var
+                cb = tk.Checkbutton(group, text=label, variable=var, bg=PANEL, anchor="w")
+                cb.grid(row=i // 4, column=i % 4, sticky="w", padx=3, pady=1)
+            for col in range(4):
+                group.grid_columnconfigure(col, weight=1)
+        buttons = tk.Frame(outer, bg=PANEL)
+        buttons.pack(fill="x", pady=(10, 0))
+        tk.Button(buttons, text="Wszystkie", command=self.select_all, relief="flat").pack(side="left")
+        tk.Button(buttons, text="Zapisz", command=self.save, relief="flat").pack(side="right")
+        tk.Button(buttons, text="Anuluj", command=self.destroy, relief="flat").pack(side="right", padx=6)
+        self.bind("<Escape>", lambda e: self.destroy())
+
+    def select_all(self):
+        for var in self.vars.values():
+            var.set(True)
+
+    def save(self):
+        for title, setting_key, choices in self.GROUPS:
+            visible = [key for key, _ in choices if self.vars[(setting_key, key)].get()]
+            if not visible:
+                messagebox.showinfo("Kolumny", f"Wybierz przynajmniej jedną kolumnę: {title}.", parent=self)
+                return
+            self.app.store.settings[setting_key] = visible
+            if setting_key == "main_columns":
+                self.app.tree["displaycolumns"] = visible
+            else:
+                dialog = getattr(self.app, "_positions_dialog", None)
+                if dialog is not None and dialog.winfo_exists():
+                    tree = dialog.pos if setting_key == "pos_columns" else dialog.watch
+                    tree["displaycolumns"] = visible
+        self.app.store.save_settings()
+        self.destroy()
 
 
 class SettingsDialog(tk.Toplevel):
@@ -524,8 +592,8 @@ def watch_rows(store):
 
 class PositionsDialog(tk.Toplevel):
     """📌 Pozycje (plan wyjścia i co zrobić teraz) i 🔔 obserwowane spółki; dwuklik = wykres."""
-    POS = ("Ticker", "Co teraz", "Od", "Kupno", "Cena", "Zmiana %", "Szczyt", "½ przy", "Stop −10 %", "Wyjście", "GLB", "MACD", "C/C[250]")
-    WATCH = ("Ticker", "Cena", "Green Line", "Do linii %", "GLB", "MACD", "SMA 10>30", "RS 52 tyg. pp", "Warunki", "C/C[250]")
+    POS = ("Ticker", "Co teraz", "Od", "Kupno", "Cena", "Zmiana %", "Szczyt", "½ przy", "Stop −10 %", "Wyjście", "GLB", "MACD", "C/C[max]")
+    WATCH = ("Ticker", "Cena", "Green Line", "Do linii %", "GLB", "MACD", "SMA 10>30", "RS 52 tyg. pp", "Warunki", "C/C[max]")
 
     def __init__(self, app):
         super().__init__(app.root)
@@ -536,24 +604,44 @@ class PositionsDialog(tk.Toplevel):
         m = app.store.settings.get("exit", "MACD")
         tk.Label(self, text=f"📌 POZYCJE · metoda wyjścia: {'pod GLB (zamknięcie tygodnia pod Green Line)' if m == 'GLB' else 'MACD (stop pod Low tygodnia przecięcia w dół)'}"
                  " · zawsze stop −10 % i ½ przy −20 % od szczytu · dwuklik = wykres", bg=PANEL, fg="#8b95a3").pack(anchor="w", padx=10, pady=(10, 4))
-        self.pos = self._tree(self.POS, 8)
+        self.pos = self._tree(self.POS, 8, "pos_columns")
         tk.Label(self, text="🔔 OBSERWOWANE (bez pozycji)", bg=PANEL, fg="#8b95a3").pack(anchor="w", padx=10, pady=(10, 4))
-        self.watch = self._tree(self.WATCH, 8)
+        self.watch = self._tree(self.WATCH, 8, "watch_columns")
+        self.app._positions_dialog = self
         row = tk.Frame(self, bg=PANEL)
         row.pack(fill="x", padx=10, pady=10)
-        tk.Button(row, text="Usuń pozycję", command=self.del_pos, relief="flat").pack(side="left")
+        tk.Button(row, text="Kolumny…", command=lambda: ColumnsDialog(self.app), relief="flat").pack(side="left")
+        tk.Button(row, text="Usuń pozycję", command=self.del_pos, relief="flat").pack(side="left", padx=6)
         tk.Button(row, text="Przestań obserwować", command=self.del_watch, relief="flat").pack(side="left", padx=6)
         tk.Button(row, text="Zamknij", command=self.destroy, relief="flat").pack(side="right")
         self.bind("<Escape>", lambda e: self.destroy())
+        self.protocol("WM_DELETE_WINDOW", self._close)
         self.fill()
 
-    def _tree(self, cols, h):
-        tr = ttk.Treeview(self, columns=cols, show="headings", height=h)
+    def _close(self):
+        if getattr(self.app, "_positions_dialog", None) is self:
+            self.app._positions_dialog = None
+        self.destroy()
+
+    def _tree(self, cols, h, setting_key):
+        wrap = tk.Frame(self, bg=BG)
+        wrap.pack(fill="both", expand=True, padx=10)
+        tr = ttk.Treeview(wrap, columns=cols, show="headings", height=h)
         for c in cols:
             tr.heading(c, text=c)
-            tr.column(c, width=230 if c == "Co teraz" else 90 if c in ("Od", "RS 52 tyg. pp", "Green Line", "C/C[250]") else 75, anchor="w" if c in ("Ticker", "Co teraz", "GLB", "MACD") else "e")
+            tr.column(c, width=230 if c == "Co teraz" else 90 if c in ("Od", "RS 52 tyg. pp", "Green Line", "C/C[max]") else 75,
+                      minwidth=230 if c == "Co teraz" else 90 if c in ("Od", "RS 52 tyg. pp", "Green Line", "C/C[max]") else 75,
+                      anchor="w" if c in ("Ticker", "Co teraz", "GLB", "MACD") else "e", stretch=False)
+        vsb = ttk.Scrollbar(wrap, orient="vertical", command=tr.yview)
+        hsb = ttk.Scrollbar(wrap, orient="horizontal", command=tr.xview)
+        tr.configure(yscrollcommand=vsb.set, xscrollcommand=hsb.set)
+        tr.grid(row=0, column=0, sticky="nsew")
+        vsb.grid(row=0, column=1, sticky="ns")
+        hsb.grid(row=1, column=0, sticky="ew")
+        wrap.grid_rowconfigure(0, weight=1)
+        wrap.grid_columnconfigure(0, weight=1)
+        tr["displaycolumns"] = self.app.store.settings.get(setting_key) or list(cols)
         tr.tag_configure("warn", foreground="#ffb020")
-        tr.pack(fill="both", expand=True, padx=10)
         tr.bind("<Double-1>", lambda e, t=tr: self.open(t))
         return tr
 

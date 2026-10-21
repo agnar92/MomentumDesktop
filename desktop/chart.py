@@ -517,7 +517,7 @@ def fund_panel_lines(r, pos=None, plan=None, exit_method="MACD"):
     item(cond(r.get("rs"), lambda x: x >= calc.MIN_RS), "siła względna 52 tyg. ≥ +50 pp nad S&P 500")
     item(r.get("beat2"), f"2 ostatnie raporty powyżej konsensusu EPS ({v(r.get('surp'), ' %')}, wcześniej {v(r.get('surp_prev'), ' %')})")
     st = r.get("glb_state")
-    item(True if st in ("WYBICIE", "SYGNAŁ") else None if st == "NAD" else False, f"Green Line: {st or '—'} (kupno 0–10 % nad linią)")
+    item(True if st in ("WYBICIE", "SYGNAŁ", "BLUE DOT") else None if st == "NAD" else False, f"Green Line: {st or '—'} (kupno: przebicie dowolnie wysoko, 0–10 % albo Blue Dot)")
     item(r.get("macd") == "nad", f"MACD tyg. {r.get('macd') or '—'} sygnałem" + (f" · stop {r['macd_stop']:.2f}" if r.get("macd_stop") else ""))
     item(False if r.get("slow") else None if r.get("accel") is None else True, "brak hamowania przychodów")
     glb, price = r.get("glb"), r.get("price")

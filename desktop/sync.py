@@ -79,13 +79,16 @@ def run(store, log=print, fetch_list=finviz.fetch, weekly=prices.weekly, monthly
     rows = [calc.build_row(b, series[b["ticker"]], prices.monthly_highs(mcache.get(b["ticker"])), scache.get(b["ticker"]), series.get(BENCH), ecache.get(b["ticker"]))
             for b in base if b["ticker"] in series]
     try:   # wolumen relatywny dzienny (sesja / średnia 50 sesji) — 3 miesiące świec dziennych płynnych spółek, bez zapisu
-        dser = daily(liquid, log=log) if liquid else {}
+        dser = daily(liquid, log=log, period="1y") if liquid else {}   # rok: Blue Dot (EMA 60 + Stochastic) i wolumen relatywny
     except Exception as e:
         log(f"⚠ dzienne (wolumen relatywny) niedostępne ({e})")
         dser = {}
     for r in rows:
         sd = dser.get(r["ticker"])
         r["rvol_d"] = calc.rel_volume(sd["v"], calc.RVOL_D) if sd else None
+        bd = calc.fresh_blue_dot(sd, r.get("glb")) if r.get("glb_state") == "NAD" else None
+        if bd:   # > 10 % nad linią i nie tydzień przebicia: wejście po Blue Dot na dziennym
+            r["glb_state"], r["bdot"] = "BLUE DOT", bd
     keep = {r["ticker"] for r in rows} | {BENCH}   # SPY = panel S&P 500 nad wykresem
     store.save_scan(rows, {t: s for t, s in series.items() if t in keep}, (now or dt.datetime.now()).isoformat(timespec="minutes"))
     ok = sum(1 for r in rows if r["ok"])

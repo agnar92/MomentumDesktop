@@ -5,7 +5,7 @@ połowę. Zapis: data/alerts.json {lines, watch, pos, log, seen}."""
 import bisect
 import math
 
-SIGNAL_STATES = ("WYBICIE", "SYGNAŁ")
+SIGNAL_STATES = ("WYBICIE", "SYGNAŁ", "BLUE DOT")
 MAX_LOG = 200
 STOP_PCT = 10.0    # stop początkowy pod ceną kupna
 HALF_DROP = 20.0   # spadek od szczytu (zamknięcia tygodnia od wejścia), przy którym sprzedajesz połowę

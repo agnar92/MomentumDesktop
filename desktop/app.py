@@ -19,17 +19,17 @@ COLUMNS = [  # (klucz, nagłówek, szerokość, format)
     ("dgm", "Δ marża brutto pp", 125, "%"), ("quarter", "Kwartał", 105, "s"), ("turnover", "Obrót mln $", 95, "m"),
     ("ps", "P/S", 60, "x"), ("rs", "RS 52 tyg. pp", 105, "%"), ("surp", "Niesp. EPS %", 95, "%"), ("beat2", "2× nad konsensus", 115, "b"), ("eps_rev", "Rewizja EPS 90 dni %", 140, "%"), ("rvol_w", "RVol tyg.", 80, "x"), ("rvol_d", "RVol dz.", 75, "x"), ("ok", "Warunki", 75, "b"), ("slow", "Hamuje", 95, "w"),
 ]
-SIGNAL = ("WYBICIE", "SYGNAŁ")
+SIGNAL = ("WYBICIE", "SYGNAŁ", "BLUE DOT")
 # filtry listy (wszystkie naraz, ORAZ): {kolumna: {"in": [wartości]} | {"min", "max"}}; liczby w jednostkach tabeli (obrót w mln $)
-FILTER_CHOICES = {"glb_state": ["WYBICIE", "SYGNAŁ", "NAD", "POD", "BRAK"], "macd": ["nad", "pod"], "ok": ["tak", "nie"], "trend": ["tak", "nie"], "beat2": ["tak", "nie"], "slow": ["HAMUJE", "HAMUJE+MB", "—"]}
+FILTER_CHOICES = {"glb_state": ["WYBICIE", "SYGNAŁ", "BLUE DOT", "NAD", "POD", "BRAK"], "macd": ["nad", "pod"], "ok": ["tak", "nie"], "trend": ["tak", "nie"], "beat2": ["tak", "nie"], "slow": ["HAMUJE", "HAMUJE+MB", "—"]}
 FILTER_SCALE = {"turnover": 1e6}
 FILTER_PRESETS = [
-    ("Sygnał kupna: warunki + 0–10 % nad GLB", {"ok": {"in": ["tak"]}, "glb_state": {"in": ["WYBICIE", "SYGNAŁ"]}}),
-    ("Liderzy: RS 52 tyg. ≥ 50 pp + nad GLB", {"rs": {"min": 50}, "glb_state": {"in": ["WYBICIE", "SYGNAŁ", "NAD"]}}),
-    ("Przebicie GLB + SMA 10 > 30 (dowolnie wysoko)", {"trend": {"in": ["tak"]}, "glb_state": {"in": ["WYBICIE", "SYGNAŁ", "NAD"]}}),
-    ("Aktywne: RVol tyg. ≥ 1,5 + nad GLB", {"rvol_w": {"min": 1.5}, "glb_state": {"in": ["WYBICIE", "SYGNAŁ", "NAD"]}}),
-    ("Nad GLB + MACD dodatni", {"glb_state": {"in": ["WYBICIE", "SYGNAŁ", "NAD"]}, "macd": {"in": ["nad"]}}),
-    ("Sygnał kupna + MACD dodatni", {"glb_state": {"in": ["WYBICIE", "SYGNAŁ"]}, "macd": {"in": ["nad"]}}),
+    ("Sygnał kupna: warunki + wybicie / 0–10 % / Blue Dot", {"ok": {"in": ["tak"]}, "glb_state": {"in": ["WYBICIE", "SYGNAŁ", "BLUE DOT"]}}),
+    ("Liderzy: RS 52 tyg. ≥ 50 pp + nad GLB", {"rs": {"min": 50}, "glb_state": {"in": ["WYBICIE", "SYGNAŁ", "BLUE DOT", "NAD"]}}),
+    ("Przebicie GLB + SMA 10 > 30 (dowolnie wysoko)", {"trend": {"in": ["tak"]}, "glb_state": {"in": ["WYBICIE", "SYGNAŁ", "BLUE DOT", "NAD"]}}),
+    ("Aktywne: RVol tyg. ≥ 1,5 + nad GLB", {"rvol_w": {"min": 1.5}, "glb_state": {"in": ["WYBICIE", "SYGNAŁ", "BLUE DOT", "NAD"]}}),
+    ("Nad GLB + MACD dodatni", {"glb_state": {"in": ["WYBICIE", "SYGNAŁ", "BLUE DOT", "NAD"]}, "macd": {"in": ["nad"]}}),
+    ("Sygnał kupna (wybicie / 0–10 % / Blue Dot) + MACD dodatni", {"glb_state": {"in": ["WYBICIE", "SYGNAŁ", "BLUE DOT"]}, "macd": {"in": ["nad"]}}),
     ("Blisko linii (−10…+10 %)", {"glb_pct": {"min": -10, "max": 10}}),
 ]
 
@@ -663,7 +663,8 @@ Test 2015–2026 (pozycje po 20 % kapitału): metoda pod GLB trzyma największe 
 Sprzedaż połowy przy −20 % od szczytu: płytsze spadki portfela (MACD: −35 → −31 %, pod GLB: −51 → −45 %) za 1–3 pp rocznie (20,6 % i 17,2 %).
 
 WEJŚCIE I WYJŚCIE
-Kupno: zamknięcie tygodnia 0–10 % nad Green Line, na otwarciu następnego tygodnia. Stop 10 % pod wejściem — zleceniem (stop „na zamknięciu tygodnia”
+Kupno: tydzień przebicia GLB (poprzedni pod linią) przy dowolnej wysokości albo zamknięcie tyg. 0–10 % nad linią, na otwarciu następnego tygodnia;
+gdy to kolejny tydzień i cena > 10 % nad linią — wejście po Blue Dot na dziennym (stan BLUE DOT; nie testowane wstecz w tym połączeniu). Stop 10 % pod wejściem — zleceniem (stop „na zamknięciu tygodnia”
 dawał podobny wynik, ale straty 15–35 %). Po przecięciu MACD tyg. w dół stop pod Low tego tygodnia. Po wybiciu stopem wchodzisz ponownie przy następnym sygnale.
 ⚠ Hamowanie (kolumna Hamuje, alert dla 📌 pozycji): tempo przychodów spadło o ≥ 10 pp — spadek ≥ 20 % w 6 mies. w 44 % przypadków (normalnie 33 %);
 ⚠⚠ z marżą brutto spadającą r/r — 50 %, średnio −1,8 % po 3 i 6 mies. Wtedy zacieśnij stop albo nie dokładaj.
@@ -705,7 +706,7 @@ def checklist(row, pos=None):
               f"{yes(r.get('beat2'))} 2 ostatnie raporty powyżej konsensusu EPS ({f(r.get('surp'), ' %')}, wcześniej {f(r.get('surp_prev'), ' %')})",
               f"{yes(cond(r.get('eps_rev'), lambda v: v > 0))} Rewizja prognozy EPS na przyszły rok, 90 dni: {f(r.get('eps_rev'), ' %')} (podgląd, bez backtestu)"]
     st = r.get("glb_state")
-    lines_.append(f"{yes(True if st in SIGNAL else None if st == 'NAD' else False)} Green Line: {st or '—'} ({f(r.get('glb_pct'), ' %')} od linii; kupno 0–10 % nad)")
+    lines_.append(f"{yes(True if st in SIGNAL else None if st == 'NAD' else False)} Green Line: {st or '—'} ({f(r.get('glb_pct'), ' %')} od linii; kupno: tydzień przebicia dowolnie wysoko, 0–10 % nad albo Blue Dot na dziennym, gdy > 10 %)")
     stop = f"{r['macd_stop']:.2f}" if r.get("macd_stop") else "—"
     lines_.append(f"{yes(r.get('macd') == 'nad')} MACD tyg. {r.get('macd') or '—'} sygnałem (stop pod {stop})")
     glb = r.get("glb")

@@ -25,6 +25,17 @@ def test_glb_state():
     assert calc.glb_state(105, 103, 100) == "SYGNAŁ"
     assert calc.glb_state(110, 103, 100) == "SYGNAŁ"
     assert calc.glb_state(111, 103, 100) == "NAD"
+    assert calc.glb_state(125, 99, 100) == "WYBICIE"                    # tydzień przebicia: dowolnie wysoko = mocne wybicie
+
+
+def test_fresh_blue_dot_only_in_last_sessions():
+    n = 160
+    c = [50 + i * 0.4 for i in range(n)]
+    c[150:154] = [c[149] - 3, c[149] - 6, c[149] - 7, c[149] - 1]       # korekta w trendzie, potem odbicie: Stochastic przecina 20 w górę
+    d = {"d": [f"2026-{1 + i // 28:02d}-{1 + i % 28:02d}" for i in range(n)], "h": [x + 1 for x in c], "l": [x - 1 for x in c], "c": c}
+    assert calc.fresh_blue_dot(d, 40, sessions=10) == d["d"][153]
+    assert calc.fresh_blue_dot(d, 40, sessions=5) is None                 # kropka starsza niż 5 sesji
+    assert calc.fresh_blue_dot(d, 1e9) is None and calc.fresh_blue_dot(None, 40) is None
     assert calc.glb_state(99, 103, 100) == "POD"
     assert calc.glb_state(99, 103, None) == "BRAK"
 
@@ -190,7 +201,7 @@ def test_sync_run_with_fake_sources(tmp_path):
     rows = sync.run(store, log=lambda s: None, fetch_list=lambda f, max_tickers, log, progress: ([{"ticker": "A"}, {"ticker": "B"}], 2),
                     weekly=lambda ts, log, cache, progress: {"A": w, "B": {**w, "v": [1e3] * 60}, "SPY": SPY}, monthly=monthly, fund=fund,
                     est=lambda ts, cache, log: cache.update({t: {"at": "2026-10-20", **EST} for t in ts}),
-                    daily=lambda ts, log: {t: {**w, "v": [1e6] * 59 + [3e6]} for t in ts},
+                    daily=lambda ts, log, **kw: {t: {**w, "v": [1e6] * 59 + [3e6]} for t in ts},
                     progress=lambda f, st: steps.append((round(f, 2), st)))
     assert [f for f, _ in steps] == [0.0, 0.15, 0.4, 0.6, 1.0] and steps[-1][1] == "Gotowe"
     a = next(r for r in rows if r["ticker"] == "A")

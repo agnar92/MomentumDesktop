@@ -186,10 +186,12 @@ def test_sync_run_with_fake_sources(tmp_path):
     steps = []
     rows = sync.run(store, log=lambda s: None, fetch_list=lambda f, max_tickers, log, progress: ([{"ticker": "A"}, {"ticker": "B"}], 2),
                     weekly=lambda ts, log, cache, progress: {"A": w, "B": {**w, "v": [1e3] * 60}, "SPY": SPY}, monthly=monthly, fund=fund,
+                    daily=lambda ts, log: {t: {**w, "v": [1e6] * 59 + [3e6]} for t in ts},
                     progress=lambda f, st: steps.append((round(f, 2), st)))
     assert [f for f, _ in steps] == [0.0, 0.15, 0.4, 0.6, 1.0] and steps[-1][1] == "Gotowe"
     a = next(r for r in rows if r["ticker"] == "A")
     assert a["ok"] and a["glb_state"] == "SYGNAŁ"
+    assert a["rvol_w"] == pytest.approx(1.0) and a["rvol_d"] == pytest.approx(3.0)     # wolumen relatywny: tydzień / 10, sesja / 50
     assert not next(r for r in rows if r["ticker"] == "B")["ok"]   # za mały obrót
     assert Store(tmp_path).rows and Store(tmp_path).weekly("A")["c"][-1] == 104.0
 
@@ -248,3 +250,8 @@ def test_trend_sma10_above_sma30():
     down = calc.build_row({"ticker": "D"}, {**W, "c": W["c"][::-1]}, [50, 100, 90, 90, 90], {"rev_rr": 30, "dopm": 5}, SPY)
     short = calc.build_row({"ticker": "S"}, {k: v[:20] for k, v in W.items()}, [], None)
     assert up["trend"] is True and down["trend"] is False and short["trend"] is None
+
+
+def test_rel_volume():
+    assert calc.rel_volume([10] * 10 + [25], 10) == pytest.approx(2.5)
+    assert calc.rel_volume([10] * 5, 10) is None and calc.rel_volume([0] * 10 + [5], 10) is None

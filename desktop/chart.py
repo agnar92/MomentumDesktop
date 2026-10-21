@@ -168,7 +168,9 @@ def draw(cv, data, row=None, w=None, h=None, n_show=None, end=None, tlines=(), s
     smas = {} if period == "D" else {k: calc.sma(cfull, k)[i0:i1] for k in SMA_COLORS}
     mac, sig, hist = (x[i0:i1] for x in calc.macd(cfull))
     crosses = [i - i0 for i in calc.macd_cross_down(calc.macd(cfull)[2]) if i0 <= i < i1]
-    vavg = calc.sma([x or 0 for x in data["v"]], 10)[i0:i1]
+    nv = calc.RVOL_D if period == "D" else calc.RVOL_W   # średnia wolumenu i wolumen relatywny: dzienny 50 sesji, tygodniowy 10 tygodni
+    vavg = calc.sma([x or 0 for x in data["v"]], nv)[i0:i1]
+    rv = calc.rel_volume(data["v"], nv)
     c, hi, lo, vol, dates = (data[k][i0:i1] for k in ("c", "h", "l", "v", "d"))
     n = len(c)
     g = geometry(w, h, period)
@@ -253,7 +255,8 @@ def draw(cv, data, row=None, w=None, h=None, n_show=None, end=None, tlines=(), s
     pts = [(xf(i), v1 - a / vmax * (v1 - v0) * 0.85) for i, a in enumerate(vavg) if a]
     if len(pts) > 1:
         cv.create_line(*[p for xy in pts for p in xy], fill="#ff9f43", width=1.5)
-    cv.create_text(x0 + 4, v0 + 6, text=f"Wolumen · śr. 10 {u}", anchor="w", fill=DIM, font=FONT)
+    cv.create_text(x0 + 4, v0 + 6, text=f"Wolumen · śr. {nv} {u}" + (f" · RVol {rv:.1f}×" if rv is not None else ""), anchor="w",
+                   fill=SIG_C if rv is not None and rv >= 1.5 else DIM, font=FONT)
     # MACD
     m0, m1 = g["macd"]
     rng = (max(abs(x) for x in mac + sig + hist) or 1) * 1.25

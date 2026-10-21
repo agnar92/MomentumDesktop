@@ -20,6 +20,7 @@ MAX_PS = 20.0           # wycena P/S < 20 (kapitalizacja / przychody TTM) — be
 MIN_RS = 50.0           # siła względna: zmiana ceny z 52 tyg. minus zmiana SPY ≥ 50 pp — bez niej 21,4 %; próg 40 pp: 31,3 %
 RS_WEEKS = 52
 STOP_PCT = 10.0         # stop początkowy pod wejściem
+RVOL_W, RVOL_D = 10, 50  # wolumen relatywny: tydzień vs średnia 10 poprzednich tygodni, sesja vs średnia 50 poprzednich sesji
 SLOW_ACCEL = -10.0      # hamowanie: tempo przychodów spadło o ≥ 10 pp względem kwartału wcześniej (cena 3 mies. −0,5 % vs +2,1 %, spadek ≥ 20 %: 44 % vs 33 %)
 
 
@@ -166,6 +167,15 @@ def rel_strength(weekly, spy, weeks=RS_WEEKS):
     return ((c[-1] / c[-1 - weeks]) - (b / a)) * 100
 
 
+def rel_volume(vols, n):
+    """Wolumen relatywny: ostatni wolumen / średnia z `n` poprzednich (bez ostatniego); None, gdy za mało danych. 2.0 = dwa razy więcej niż zwykle."""
+    if len(vols) < n + 1 or not _ok(vols[-1]):
+        return None
+    prev = [x for x in vols[-1 - n:-1] if _ok(x)]
+    avg = sum(prev) / len(prev) if len(prev) >= n * 0.8 else 0
+    return vols[-1] / avg if avg > 0 else None
+
+
 def passes(row):
     """Warunki strategii: obrót ≥ 100 mln $, przychody kw. ≥ +15 % r/r, marża oper. ≥ +3 pp r/r, P/S < 20 (brak P/S nie blokuje),
     siła względna 52 tyg. ≥ 50 pp nad SPY (brak historii blokuje — tak było w backteście)."""
@@ -197,6 +207,8 @@ def build_row(base, weekly, months, fund, spy=None):
     row.update(macd=m["state"], macd_stop=m["stop"])
     s10, s30 = sma(c, 10)[-1] if len(c) >= 10 else None, sma(c, 30)[-1] if len(c) >= 30 else None
     row["trend"] = s10 > s30 if s10 is not None and s30 is not None else None   # trend tygodniowy: SMA 10 > SMA 30 (filtr listy)
+    row["rvol_w"] = rel_volume(v, RVOL_W)
+    row["rvol_d"] = None   # dzienny: uzupełnia odświeżenie ze świec dziennych (rel_volume(v_dzienne, RVOL_D))
     row.update({k: (fund or {}).get(k) for k in ("rev_rr", "rev_rr1", "accel", "dopm", "dopm1", "opm", "dgm", "quarter", "qs", "op_d", "rev_q", "ttm_rev", "dil")})
     f = fund or {}
     mcap = row.get("market_cap") or (price * f["shares"] if _ok(price) and _ok(f.get("shares")) else None)

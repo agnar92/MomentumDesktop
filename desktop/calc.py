@@ -6,6 +6,7 @@
   - wyjście: tygodniowy MACD (12, 26, 9) — stop pod Low tygodnia, w którym MACD przeciął sygnał w dół, plus stop 10 % pod wejściem.
 Heurystyka z backtestu, nie porada inwestycyjna."""
 import bisect
+import datetime as dt
 import math
 
 CONFIRM_MONTHS = 3      # rekord musi stać co najmniej tyle zamkniętych miesięcy
@@ -20,6 +21,7 @@ MAX_PS = 20.0           # wycena P/S < 20 (kapitalizacja / przychody TTM) — be
 MIN_RS = 50.0           # siła względna: zmiana ceny z 52 tyg. minus zmiana SPY ≥ 50 pp — bez niej 21,4 %; próg 40 pp: 31,3 %
 RS_WEEKS = 52
 STOP_PCT = 10.0         # stop początkowy pod wejściem
+SURPRISE_DAYS = 120     # niespodzianka EPS: ostatni raport nie starszy niż 120 dni (jak w backteście)
 RVOL_W, RVOL_D = 10, 50  # wolumen relatywny: tydzień vs średnia 10 poprzednich tygodni, sesja vs średnia 50 poprzednich sesji
 SLOW_ACCEL = -10.0      # hamowanie: tempo przychodów spadło o ≥ 10 pp względem kwartału wcześniej (cena 3 mies. −0,5 % vs +2,1 %, spadek ≥ 20 %: 44 % vs 33 %)
 
@@ -176,12 +178,23 @@ def rel_volume(vols, n):
     return vols[-1] / avg if avg > 0 else None
 
 
+def surprises(est, as_of):
+    """Niespodzianki EPS z prognoz (estimates.fetch) znane na `as_of` (YYYY-MM-DD) -> (ostatnia %, poprzednia %, 2 z rzędu > 0: True / False / None).
+    None = brak danych albo ostatni raport starszy niż SURPRISE_DAYS."""
+    s = [x for x in (est or {}).get("surp") or [] if x[0] <= as_of]
+    if not s or (dt.date.fromisoformat(as_of) - dt.date.fromisoformat(s[-1][0])).days > SURPRISE_DAYS:
+        return None, None, None
+    last, prev = s[-1][1], (s[-2][1] if len(s) > 1 else None)
+    return last, prev, bool(last > 0 and prev is not None and prev > 0)
+
+
 def passes(row):
     """Warunki strategii: obrót ≥ 100 mln $, przychody kw. ≥ +15 % r/r, marża oper. ≥ +3 pp r/r, P/S < 20 (brak P/S nie blokuje),
-    siła względna 52 tyg. ≥ 50 pp nad SPY (brak historii blokuje — tak było w backteście)."""
+    siła względna 52 tyg. ≥ 50 pp nad SPY, 2 ostatnie raporty powyżej konsensusu EPS (brak historii / niespodzianek blokuje — tak było w backteście:
+    bez niespodzianek 36,6 % rocznie, z nimi 42,4 %, oba okresy lepiej)."""
     t, r, d, ps, rs = (row.get(k) for k in ("turnover", "rev_rr", "dopm", "ps", "rs"))
     return (_ok(t) and t >= MIN_TURNOVER and _ok(r) and r >= MIN_REV_GROWTH and _ok(d) and d >= MIN_DOPM
-            and not (_ok(ps) and ps >= MAX_PS) and _ok(rs) and rs >= MIN_RS)
+            and not (_ok(ps) and ps >= MAX_PS) and _ok(rs) and rs >= MIN_RS and row.get("beat2") is True)
 
 
 def slowdown(row):
@@ -193,8 +206,9 @@ def slowdown(row):
     return "HAMUJE+MB" if _ok(g) and g < 0 else "HAMUJE"
 
 
-def build_row(base, weekly, months, fund, spy=None):
-    """Wiersz listy: base (z Finviz), weekly {d, o, h, l, c, v}, months (High zamkniętych miesięcy), fund (z SEC albo None), spy (tygodniowe {d, c})."""
+def build_row(base, weekly, months, fund, spy=None, est=None):
+    """Wiersz listy: base (z Finviz), weekly {d, o, h, l, c, v}, months (High zamkniętych miesięcy), fund (z SEC albo None), spy (tygodniowe {d, c}),
+    est (prognozy z yfinance: niespodzianki EPS i rewizja 90 dni)."""
     c, lo, v = weekly.get("c") or [], weekly.get("l") or [], weekly.get("v") or []
     row = dict(base)
     price = c[-1] if c else None
@@ -214,6 +228,10 @@ def build_row(base, weekly, months, fund, spy=None):
     mcap = row.get("market_cap") or (price * f["shares"] if _ok(price) and _ok(f.get("shares")) else None)
     row["ps"] = mcap / f["ttm_rev"] if _ok(mcap) and _ok(f.get("ttm_rev")) and f["ttm_rev"] > 0 else None
     row["rs"] = rel_strength(weekly, spy)
+    as_of = (weekly.get("d") or [""])[-1]
+    # tydzień z danych zaczyna się w poniedziałek: raport z tego tygodnia (do piątku) też jest znany
+    row["surp"], row["surp_prev"], row["beat2"] = surprises(est, (dt.date.fromisoformat(as_of) + dt.timedelta(days=6)).isoformat()) if as_of else (None, None, None)
+    row["eps_rev"] = (est or {}).get("rev90")
     row["ok"] = passes(row)
     row["slow"] = slowdown(row)
     return row

@@ -503,6 +503,7 @@ def fund_panel_lines(r, pos=None, plan=None, exit_method="MACD"):
             (f"Δ marży brutto r/r\t{v(r.get('dgm'), ' pp')}", "val"),
             (f"Wycena P/S\t{r['ps']:.1f}" if r.get("ps") else "Wycena P/S\t—", "val"),
             (f"RS 52 tyg. vs S&P\t{v(r.get('rs'), ' pp')}", "val"),
+            (f"Niespodzianka EPS\t{v(r.get('surp'), ' %')}", "val"), (f"Rewizja EPS 90 dni\t{v(r.get('eps_rev'), ' %')}", "val"),
             (f"Obrót dzienny\t{r['turnover'] / 1e6:.0f} mln $" if r.get("turnover") else "Obrót dzienny\t—", "val"),
             (f"Do Green Line\t{v(r.get('glb_pct'), ' %')}", "val"), ("LISTA KONTROLNA", "sec")]
 
@@ -515,6 +516,7 @@ def fund_panel_lines(r, pos=None, plan=None, exit_method="MACD"):
     item(cond(r.get("dopm"), lambda x: x >= calc.MIN_DOPM), "marża oper. ≥ +3 pp r/r")
     item(cond(r.get("ps"), lambda x: x < calc.MAX_PS), "wycena P/S < 20")
     item(cond(r.get("rs"), lambda x: x >= calc.MIN_RS), "siła względna 52 tyg. ≥ +50 pp nad S&P 500")
+    item(r.get("beat2"), f"2 ostatnie raporty powyżej konsensusu EPS ({v(r.get('surp'), ' %')}, wcześniej {v(r.get('surp_prev'), ' %')})")
     st = r.get("glb_state")
     item(True if st in ("WYBICIE", "SYGNAŁ") else None if st == "NAD" else False, f"Green Line: {st or '—'} (kupno 0–10 % nad linią)")
     item(r.get("macd") == "nad", f"MACD tyg. {r.get('macd') or '—'} sygnałem" + (f" · stop {r['macd_stop']:.2f}" if r.get("macd_stop") else ""))

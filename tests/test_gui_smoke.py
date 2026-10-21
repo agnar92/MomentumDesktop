@@ -18,7 +18,8 @@ def _weekly(n=156):
 def app(tmp_path):
     w = _weekly()
     spy = {**w, "c": [400 - i * 1.5 for i in range(len(w["c"]))]}      # SPY spada -> siła względna AAA / BBB > 50 pp
-    rows = [calc.build_row({"ticker": t, "company": t + " Inc"}, w, [40, 120, 110, 110, 110], {"rev_rr": 30, "dopm": d}, spy) for t, d in (("AAA", 5), ("BBB", 1))]
+    est = {"surp": [[w["d"][-30], 3.0], [w["d"][-5], 6.0]]}           # 2 raporty powyżej konsensusu
+    rows = [calc.build_row({"ticker": t, "company": t + " Inc"}, w, [40, 120, 110, 110, 110], {"rev_rr": 30, "dopm": d}, spy, est) for t, d in (("AAA", 5), ("BBB", 1))]
     Store(tmp_path).save_scan(rows, {"AAA": w, "BBB": w}, "2026-10-20T08:00")
     try:
         from desktop import app as A

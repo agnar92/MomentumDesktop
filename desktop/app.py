@@ -17,11 +17,11 @@ COLUMNS = [  # (klucz, nagłówek, szerokość, format)
     ("glb", "Green Line", 90, "p"), ("glb_pct", "Do linii %", 85, "%"), ("glb_state", "GLB", 85, "s"), ("macd", "MACD", 60, "s"), ("trend", "SMA 10>30", 85, "b"),
     ("macd_stop", "Stop MACD", 85, "p"), ("dopm", "Δ marża oper. pp", 120, "%"), ("rev_rr", "Przychody r/r %", 115, "%"),
     ("dgm", "Δ marża brutto pp", 125, "%"), ("quarter", "Kwartał", 105, "s"), ("turnover", "Obrót mln $", 95, "m"),
-    ("ps", "P/S", 60, "x"), ("rs", "RS 52 tyg. pp", 105, "%"), ("rvol_w", "RVol tyg.", 80, "x"), ("rvol_d", "RVol dz.", 75, "x"), ("ok", "Warunki", 75, "b"), ("slow", "Hamuje", 95, "w"),
+    ("ps", "P/S", 60, "x"), ("rs", "RS 52 tyg. pp", 105, "%"), ("surp", "Niesp. EPS %", 95, "%"), ("beat2", "2× nad konsensus", 115, "b"), ("eps_rev", "Rewizja EPS 90 dni %", 140, "%"), ("rvol_w", "RVol tyg.", 80, "x"), ("rvol_d", "RVol dz.", 75, "x"), ("ok", "Warunki", 75, "b"), ("slow", "Hamuje", 95, "w"),
 ]
 SIGNAL = ("WYBICIE", "SYGNAŁ")
 # filtry listy (wszystkie naraz, ORAZ): {kolumna: {"in": [wartości]} | {"min", "max"}}; liczby w jednostkach tabeli (obrót w mln $)
-FILTER_CHOICES = {"glb_state": ["WYBICIE", "SYGNAŁ", "NAD", "POD", "BRAK"], "macd": ["nad", "pod"], "ok": ["tak", "nie"], "trend": ["tak", "nie"], "slow": ["HAMUJE", "HAMUJE+MB", "—"]}
+FILTER_CHOICES = {"glb_state": ["WYBICIE", "SYGNAŁ", "NAD", "POD", "BRAK"], "macd": ["nad", "pod"], "ok": ["tak", "nie"], "trend": ["tak", "nie"], "beat2": ["tak", "nie"], "slow": ["HAMUJE", "HAMUJE+MB", "—"]}
 FILTER_SCALE = {"turnover": 1e6}
 FILTER_PRESETS = [
     ("Sygnał kupna: warunki + 0–10 % nad GLB", {"ok": {"in": ["tak"]}, "glb_state": {"in": ["WYBICIE", "SYGNAŁ"]}}),
@@ -35,7 +35,7 @@ FILTER_PRESETS = [
 
 
 def filter_value(r, k):
-    if k in ("ok", "trend"):
+    if k in ("ok", "trend", "beat2"):
         return "tak" if r.get(k) else "nie"
     return "—" if r.get(k) is None else str(r[k])
 
@@ -637,8 +637,12 @@ GUIDE = """WARUNKI (październik 2026) — tylko to, co w strategii GLB + MACD d
    marża operacyjna ≥ +3 pp r/r	bez tego 28,9 %
    wycena P/S < 20	bez tego 31,5 % (drogie tracą; odpada też RGTI)
    siła względna 52 tyg. ≥ +50 pp nad S&P 500 (kolumna RS)	bez tego 21,4 %
-Razem: +15,6 % na transakcję, portfel wszystkich sygnałów 36,6 % rocznie (2015–20: 43,9 %, 2021–26: 29,6 %; same lata 2020–26: 46,5 %), S&P 500 13,6 %.
-Cena za to: mało sygnałów naraz (średnio 2–4) i głębszy spadek portfela (−55 %).
+   2 ostatnie raporty powyżej konsensusu EPS (kolumna „2× nad konsensus”)	bez tego 36,6 % (z nim 42,4 %)
+Niespodzianki EPS (konsensus vs wynik, yfinance, od 2014): z warunkiem 42,4 % rocznie (2015–20 48,7 / 2021–26 36,4; 2020–26 53,7 %), +19,2 % na transakcję,
+DD −51 %; spółki, które ostatnio zawiodły rynek: 3 % rocznie. Progi ≥ 5 / 10 % i przyspieszenie przychodów przez 2 kwartały — bez poprawy.
+Rewizja EPS 90 dni (prognoza na przyszły rok dziś vs 90 dni temu) — tylko podgląd: brak historii do testu, zapisujemy ją co tydzień.
+Razem (z niespodziankami EPS): +19,2 % na transakcję, portfel wszystkich sygnałów 42,4 % rocznie (2015–20: 48,7 %, 2021–26: 36,4 %; 2020–26: 53,7 %), S&P 500 13,6 %.
+Cena za to: mało sygnałów naraz (średnio 2–4) i głębszy spadek portfela (−51 %).
 Wspólny mianownik dużych ruchów po GLB: rosnące przychody i marża (fundamenty) + akcja już jest liderem rynku (siła względna).
 Sama technika (GLB, średnie, RS bez fundamentów, wybicia dzienne w stylu Qullamaggie) w 2020–26 nie pobiła S&P 500.
 Usunięte, bo przy tych warunkach nic nie zmieniały: przychody kw. ≥ 25 mln $, zysk oper. w $ ↑, „Mocne” (Δ marży ≥ 10 pp), rozwodnienie, potencjał ★.
@@ -696,7 +700,9 @@ def checklist(row, pos=None):
               f"{yes(cond(r.get('rev_rr'), lambda v: v >= calc.MIN_REV_GROWTH))} Przychody kw. ≥ +15 % r/r ({f(r.get('rev_rr'), ' %')})",
               f"{yes(cond(r.get('dopm'), lambda v: v >= calc.MIN_DOPM))} Marża oper. ≥ +3 pp r/r ({f(r.get('dopm'), ' pp')})",
               f"{yes(cond(r.get('ps'), lambda v: v < calc.MAX_PS))} Wycena P/S < 20 ({ps_txt})",
-              f"{yes(cond(r.get('rs'), lambda v: v >= calc.MIN_RS))} Siła względna 52 tyg. ≥ +50 pp nad S&P 500 ({f(r.get('rs'), ' pp')})"]
+              f"{yes(cond(r.get('rs'), lambda v: v >= calc.MIN_RS))} Siła względna 52 tyg. ≥ +50 pp nad S&P 500 ({f(r.get('rs'), ' pp')})",
+              f"{yes(r.get('beat2'))} 2 ostatnie raporty powyżej konsensusu EPS ({f(r.get('surp'), ' %')}, wcześniej {f(r.get('surp_prev'), ' %')})",
+              f"{yes(cond(r.get('eps_rev'), lambda v: v > 0))} Rewizja prognozy EPS na przyszły rok, 90 dni: {f(r.get('eps_rev'), ' %')} (podgląd, bez backtestu)"]
     st = r.get("glb_state")
     lines_.append(f"{yes(True if st in SIGNAL else None if st == 'NAD' else False)} Green Line: {st or '—'} ({f(r.get('glb_pct'), ' %')} od linii; kupno 0–10 % nad)")
     stop = f"{r['macd_stop']:.2f}" if r.get("macd_stop") else "—"

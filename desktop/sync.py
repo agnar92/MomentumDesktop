@@ -3,7 +3,7 @@ miesiące) → SEC (fundamenty, z pamięci podręcznej) → wiersze listy. Funkc
 `progress(ułamek 0–1, opis etapu)` dostaje postęp całości (pasek na dole okna)."""
 import datetime as dt
 
-from . import calc, finviz, prices, sec
+from . import calc, estimates, finviz, prices, sec
 
 BENCH = "SPY"   # S&P 500 nad wykresem (jak w IBD) i siła względna 52 tyg.
 
@@ -25,7 +25,7 @@ def stage_progress(progress, k):
     return f
 
 
-def symbol(sym, store, log=print, weekly=prices.weekly, monthly=prices.monthly, fund=sec.update):
+def symbol(sym, store, log=print, weekly=prices.weekly, monthly=prices.monthly, fund=sec.update, est=estimates.update):
     """Dane jednej dowolnej spółki (Ctrl+K): te same obliczenia co w skanie. -> (wiersz, świece) albo wyjątek."""
     w = weekly([sym], log=log).get(sym)
     if not w:
@@ -38,13 +38,20 @@ def symbol(sym, store, log=print, weekly=prices.weekly, monthly=prices.monthly, 
         log(f"SEC: {e}")
     store.save_cache("monthly", mcache)
     store.save_cache("sec", scache)
+    ecache = store.cache("estimates")
+    try:
+        est([sym], ecache, log=log)
+    except Exception as e:
+        log(f"prognozy: {e}")
+    store.save_cache("estimates", ecache)
     spy = w if sym == BENCH else (store.series.get(BENCH) or (store.extra.get(BENCH) or (None, None))[1])
-    row = calc.build_row({"ticker": sym}, w, prices.monthly_highs(mcache.get(sym)), scache.get(sym), spy)
+    row = calc.build_row({"ticker": sym}, w, prices.monthly_highs(mcache.get(sym)), scache.get(sym), spy, ecache.get(sym))
     store.extra[sym] = (row, w)
     return row, w
 
 
-def run(store, log=print, fetch_list=finviz.fetch, weekly=prices.weekly, monthly=prices.monthly, fund=sec.update, now=None, progress=None, daily=prices.daily):
+def run(store, log=print, fetch_list=finviz.fetch, weekly=prices.weekly, monthly=prices.monthly, fund=sec.update, now=None, progress=None, daily=prices.daily,
+        est=estimates.update):
     sc = store.scanner
     log(f"Finviz [{sc['name']}]: filtr {sc['filters']}")
     base, total = fetch_list(sc["filters"], max_tickers=sc["max_tickers"], log=log, progress=stage_progress(progress, 0))
@@ -64,7 +71,13 @@ def run(store, log=print, fetch_list=finviz.fetch, weekly=prices.weekly, monthly
     except Exception as e:
         log(f"⚠ SEC niedostępny ({e}) — używam zapisanych fundamentów.")
     store.save_cache("sec", scache)
-    rows = [calc.build_row(b, series[b["ticker"]], prices.monthly_highs(mcache.get(b["ticker"])), scache.get(b["ticker"]), series.get(BENCH))
+    ecache = store.cache("estimates")   # niespodzianki EPS i rewizja prognoz (yfinance), co 7 dni
+    try:
+        est(liquid, ecache, log=log)
+    except Exception as e:
+        log(f"⚠ prognozy EPS niedostępne ({e}) — używam zapisanych.")
+    store.save_cache("estimates", ecache)
+    rows = [calc.build_row(b, series[b["ticker"]], prices.monthly_highs(mcache.get(b["ticker"])), scache.get(b["ticker"]), series.get(BENCH), ecache.get(b["ticker"]))
             for b in base if b["ticker"] in series]
     try:   # wolumen relatywny dzienny (sesja / średnia 50 sesji) — 3 miesiące świec dziennych płynnych spółek, bez zapisu
         dser = daily(liquid, log=log) if liquid else {}

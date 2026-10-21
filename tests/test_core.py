@@ -8,6 +8,7 @@ from desktop.store import Store
 
 _D = [(dt.date(2025, 1, 6) + dt.timedelta(weeks=i)).isoformat() for i in range(60)]
 W = {"d": _D, "o": [1] * 60, "h": [1] * 60, "l": [1] * 60, "c": [50.0] * 19 + [100.0] * 40 + [104.0], "v": [1e7] * 60}   # +108 % w 52 tyg.
+EST = {"surp": [["2025-11-10", 4.0], ["2026-02-09", 8.0]], "rev90": 12.0}   # 2 raporty powyżej konsensusu, ostatni w ostatnich tygodniach W
 SPY = {"d": _D, "o": [1] * 60, "h": [1] * 60, "l": [1] * 60, "c": [400.0] * 60, "v": [1e7] * 60}
 
 
@@ -40,9 +41,9 @@ def test_macd_cross_and_stop_is_low_of_cross_week():
 
 def test_turnover_and_conditions():
     assert calc.turnover([10, 10, 10, 10], [5e7] * 4) == pytest.approx(1e8)
-    good = {"turnover": 120e6, "rev_rr": 20, "dopm": 4, "rs": 60}
+    good = {"turnover": 120e6, "rev_rr": 20, "dopm": 4, "rs": 60, "beat2": True}
     assert calc.passes(good) and calc.passes({**good, "ps": 15}) and calc.passes({**good, "ps": None})
-    for k, v in (("turnover", 80e6), ("rev_rr", 10), ("dopm", 2), ("dopm", None), ("rs", 40), ("rs", None), ("ps", 25)):
+    for k, v in (("turnover", 80e6), ("rev_rr", 10), ("dopm", 2), ("dopm", None), ("rs", 40), ("rs", None), ("ps", 25), ("beat2", False), ("beat2", None)):
         assert not calc.passes({**good, k: v})
 
 
@@ -52,8 +53,9 @@ def test_build_row():
     assert row["glb"] == 100 and row["glb_state"] == "WYBICIE" and row["glb_pct"] == pytest.approx(4)
     assert row["turnover"] == pytest.approx(104 * 3e6 / 5, rel=0.05)
     assert row["rs"] is None and not row["ok"]          # 40 tygodni historii i brak SPY -> brak siły względnej -> nie spełnia
-    r = calc.build_row({"ticker": "Y"}, W, [50, 100, 90, 90, 90, 95], {"rev_rr": 30, "dopm": 5}, SPY)
+    r = calc.build_row({"ticker": "Y"}, W, [50, 100, 90, 90, 90, 95], {"rev_rr": 30, "dopm": 5}, SPY, EST)
     assert r["rs"] == pytest.approx(108) and r["ok"] and r["glb_state"] == "SYGNAŁ"
+    assert r["surp"] == 8.0 and r["surp_prev"] == 4.0 and r["beat2"] and r["eps_rev"] == 12.0
 
 
 def test_rel_strength_vs_spy():
@@ -186,6 +188,7 @@ def test_sync_run_with_fake_sources(tmp_path):
     steps = []
     rows = sync.run(store, log=lambda s: None, fetch_list=lambda f, max_tickers, log, progress: ([{"ticker": "A"}, {"ticker": "B"}], 2),
                     weekly=lambda ts, log, cache, progress: {"A": w, "B": {**w, "v": [1e3] * 60}, "SPY": SPY}, monthly=monthly, fund=fund,
+                    est=lambda ts, cache, log: cache.update({t: {"at": "2026-10-20", **EST} for t in ts}),
                     daily=lambda ts, log: {t: {**w, "v": [1e6] * 59 + [3e6]} for t in ts},
                     progress=lambda f, st: steps.append((round(f, 2), st)))
     assert [f for f, _ in steps] == [0.0, 0.15, 0.4, 0.6, 1.0] and steps[-1][1] == "Gotowe"
@@ -227,7 +230,7 @@ def test_monthly_highs_ignores_dividend_adjusted_entries():
 def test_conditions_cut_rgti_and_expensive():
     """RGTI: „Δ marży” +558 pp przy przychodach 5 mln $ — odpada na P/S (≈ 200); drogie (P/S ≥ 20) odpadają; brak kapitalizacji: cena × akcje."""
     f = {"rev_rr": 30, "dopm": 12, "ttm_rev": 300e6}
-    assert calc.build_row({"ticker": "A", "market_cap": 3e9}, W, [50, 100, 90, 90, 90], f, SPY)["ok"]           # P/S 10
+    assert calc.build_row({"ticker": "A", "market_cap": 3e9}, W, [50, 100, 90, 90, 90], f, SPY, EST)["ok"]      # P/S 10
     assert not calc.build_row({"ticker": "B", "market_cap": 9e9}, W, [50, 100, 90, 90, 90], f, SPY)["ok"]      # P/S 30
     rgti = calc.build_row({"ticker": "RGTI", "market_cap": 4e9}, W, [], {"rev_rr": 185, "dopm": 558, "ttm_rev": 20e6}, SPY)
     assert rgti["ps"] == 200 and not rgti["ok"]
@@ -255,3 +258,10 @@ def test_trend_sma10_above_sma30():
 def test_rel_volume():
     assert calc.rel_volume([10] * 10 + [25], 10) == pytest.approx(2.5)
     assert calc.rel_volume([10] * 5, 10) is None and calc.rel_volume([0] * 10 + [5], 10) is None
+
+
+def test_surprises_known_at_date_and_fresh():
+    est = {"surp": [["2025-08-01", -2.0], ["2025-11-01", 3.0], ["2026-02-01", 6.0]]}
+    assert calc.surprises(est, "2026-03-01") == (6.0, 3.0, True)
+    assert calc.surprises(est, "2026-01-15") == (3.0, -2.0, False)
+    assert calc.surprises(est, "2026-07-01") == (None, None, None)

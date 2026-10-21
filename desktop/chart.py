@@ -269,7 +269,9 @@ def draw(cv, data, row=None, w=None, h=None, n_show=None, end=None, tlines=(), s
         cv.create_line(x0, y, x1, y, fill=GLB_COLOR, width=3)
         cv.create_rectangle(x1 + 1, y - 9, w - 2, y + 9, fill=GLB_COLOR, outline="")
         cv.create_text(x1 + 4, y, text=fmt(level), anchor="w", fill="#000", font=FONT)
-        ty = y - 11 if y - 11 > y0 + 24 else y + 13   # przy górnej krawędzi (legenda SMA) napis pod linią
+        # Zostaw wolny pas u góry na legendę SMA; etykietę Green Line umieszczaj niżej,
+        # jeśli linia jest blisko górnej krawędzi.
+        ty = max(y0 + 38, y - 11)
         boxed(cv, x0 + 4, ty, f"GREEN LINE {fmt(level)} · kupno do {fmt(level * 1.1)}" + (" · wyjście: zamknięcie tyg. pod linią" if (row or {}).get("exit") == "GLB" else ""),
               GLB_COLOR)
     stop = (row or {}).get("macd_stop") if (row or {}).get("exit") != "GLB" else None   # metoda GLB: wyjście = zamknięcie pod Green Line
@@ -278,11 +280,18 @@ def draw(cv, data, row=None, w=None, h=None, n_show=None, end=None, tlines=(), s
         cv.create_line(x0, y, x1, y, fill=STOP_COLOR, dash=(5, 4))
         cv.create_text(x1 + 4, stop_y, text=fmt(stop), anchor="w", fill=STOP_COLOR, font=FONT)
     pl = (row or {}).get("plan")   # 📌 pozycja: stop początkowy −10 % i „sprzedaj połowę” przy −20 % od szczytu
+    # Opisy poziomów pozycji dostają osobne wiersze, gdy ich ceny są blisko siebie.
+    position_labels = []
     for v, col, lab in (((pl["stop_init"], STOP_COLOR, f"stop −10 % {fmt(pl['stop_init'])}"),
                          (pl["half_at"], "#f0b429", f"½ przy {fmt(pl['half_at'])} (−20 % od szczytu {fmt(pl['peak'])})")) if pl else ()):
         if v and pmin < v < pmax:
-            cv.create_line(x0, yf(v), x1, yf(v), fill=col, dash=(2, 3))
-            boxed(cv, x0 + 4, yf(v) - 8, lab, col)
+            yy = yf(v)
+            cv.create_line(x0, yy, x1, yy, fill=col, dash=(2, 3))
+            label_y = yy - 8
+            if any(abs(label_y - used_y) < 16 for used_y in position_labels):
+                label_y = max(y0 + 38, min(y1 - 10, label_y + 17))
+            position_labels.append(label_y)
+            boxed(cv, x0 + 4, label_y, lab, col)
     segs = draw_lines(cv, data, tlines, sel, i0, i1, xf, yf, g, step, w)
     last = c[-1]
     if last:
@@ -458,16 +467,6 @@ def draw_rwb(cv, data, row, i0, i1, xf, yf, g, step, cfull):
         if lo:
             y = yf(lo) + 9
             cv.create_oval(xf(i - i0) - 4, y - 4, xf(i - i0) + 4, y + 4, fill=BLUE_DOT, outline="")
-    if dots:
-        j = dots[-1]
-        lo = data["l"][j]
-        cv.create_line(xf(j - i0), yf(lo), g["x1"], yf(lo), fill=BLUE_DOT, dash=(2, 3))
-        # Etykieta po lewej, gdy Blue Dot wypada blisko prawej krawędzi — inaczej cena stopu jest ucinana przez Canvas.
-        bx = xf(j - i0)
-        right_edge = bx > g["x1"] - 230
-        cv.create_text(bx - 6 if right_edge else bx + 6, yf(lo) + 22,
-                       text=f"Blue Dot {data['d'][j]} · stop pod Low {fmt(lo)}",
-                       anchor="e" if right_edge else "w", fill=BLUE_DOT, font=FONT)
     return dots
 
 
@@ -802,7 +801,15 @@ class ChartWindow(tk.Toplevel):
         if not 0 <= i < self.geom["n"]:
             return
         self.cv.create_line(e.x, g["spx"][0], e.x, g["macd"][1], fill="#3a4654", tags="tip")
-        lines = [s for s in info_lines(data, self.geom["i0"] + i) if s]
+        index = self.geom["i0"] + i
+        lines = [s for s in info_lines(data, index) if s]
+        # Blue Dot pokazujemy w dymku danych po najechaniu na świecę, bez dodatkowej linii na wykresie.
+        if self.period == "D" and self.daily_style == "line":
+            row = self.app.store.row(self.ticker) or {}
+            dots = calc.blue_dots(data["h"], data["l"], data["c"], row.get("glb"))
+            if index in dots:
+                low = data["l"][index]
+                lines.extend([f"BLUE DOT · {data['d'][index]}", f"Stop pod Low: {fmt(low)}"])
         x = e.x + 14 if e.x < g["x1"] - 200 else e.x - 190
         self.cv.create_rectangle(x, e.y + 10, x + 176, e.y + 16 + 15 * len(lines), fill="#1b2027", outline="#3a4654", tags="tip")
         for k, s in enumerate(lines):

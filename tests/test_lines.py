@@ -1,6 +1,8 @@
 """Linie trendu, alerty i filtry listy (ta sama logika co tests/js/lines.test.js w wersji webowej)."""
 import math
 
+import pytest
+
 from desktop import lines as L
 
 D = ["2026-01-05", "2026-01-12", "2026-01-19", "2026-01-26", "2026-02-02"]
@@ -57,3 +59,16 @@ def test_default_order_signal_first_then_relative_strength():
     rows = [{"ticker": "A", "ok": True, "glb_state": "SYGNAŁ", "rs": 55}, {"ticker": "B", "ok": True, "glb_state": "WYBICIE", "rs": 90},
             {"ticker": "C", "ok": True, "glb_state": "POD", "rs": 120}, {"ticker": "D", "ok": False, "rs": 300}]
     assert [r["ticker"] for r in sorted(rows, key=default_order)] == ["B", "A", "C", "D"]
+
+
+def test_position_plan_and_half_sell_alert():
+    d = ["2026-01-05", "2026-01-12", "2026-01-19", "2026-01-26", "2026-02-02"]
+    s = {"d": d, "c": [100, 120, 150, 130, 118]}
+    pl = L.position_plan({"since": d[1], "price": 120}, s, {"glb": 125})
+    assert pl["stop_init"] == pytest.approx(108) and pl["peak"] == 150 and pl["half_at"] == pytest.approx(120) and pl["half"] and pl["glb_exit"]
+    assert not L.position_plan({"since": d[1], "price": 120}, {"d": d[:3], "c": [100, 120, 150]}, {"glb": 110})["half"]
+    st = {"lines": {}, "watch": {"X": {"glb_state": "SYGNAŁ", "macd": "nad", "price": 130, "ok": True}}, "pos": {"X": {"since": d[1], "price": 120}}, "log": []}
+    row = {"ticker": "X", "glb": 125, "glb_state": "POD", "macd": "nad", "price": 118, "ok": True}
+    msgs = [a["msg"] for a in L.eval_alerts(st, lambda t: row, lambda t: s, "now", d[4])]
+    assert any("sprzedaj połowę" in m for m in msgs) and any("pod Green Line" in m for m in msgs)
+    assert L.eval_alerts(st, lambda t: row, lambda t: s, "later", d[4]) == []          # raz na szczyt / tydzień

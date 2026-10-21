@@ -178,13 +178,20 @@ class App:
         rows.sort(key=default_order)
         return rows
 
+    def pos_warn(self, r):
+        """📌 pozycja do uwagi: wyjście wg wybranej metody (MACD: zamknięcie pod stopem MACD, GLB: pod Green Line), −20 % od szczytu, hamowanie."""
+        st, price = self.store, r.get("price") or 0
+        plan = lines.position_plan(st.alerts["pos"][r["ticker"]], st.weekly(r["ticker"]), r)
+        exit_now = (r.get("glb") and price < r["glb"]) if st.settings.get("exit", "MACD") == "GLB" else (r.get("macd_stop") and price < r["macd_stop"])
+        return bool(r.get("slow") or exit_now or plan["half"])
+
     def refresh(self):
         sel = self.current()
         self.tree.delete(*self.tree.get_children())
         for r in self.rows():
             tag = "signal" if r.get("ok") and r.get("glb_state") in SIGNAL else "" if r.get("ok") else "dim"
             held = r["ticker"] in self.store.alerts["pos"]
-            if held and (r.get("slow") or (r.get("macd_stop") and (r.get("price") or 0) < r["macd_stop"])):
+            if held and self.pos_warn(r):
                 tag = "poswarn"
             vals = [cell(r.get(k), f) for k, _, _, f in COLUMNS]
             if held:
@@ -544,6 +551,16 @@ JAK WYGLĄDA DUŻY RUCH W RAPORTACH
 Start: w dołku fundamenty są słabe (mediana: przychody +5 %, EPS −6 %, marża oper. −1 pp); poprawę widać 2–3 raporty później. Od wyprzedzenia jest Green Line.
 Szczyt: kurs kończy ruch przy raporcie z najwyższym tempem wzrostu (EPS +33 %); kolejne raporty dalej dobre, ale wolniejsze (EPS +27 → +15 → +11 %).
 
+WYJŚCIE — DWIE METODY (przycisk 🚪 na wykresie) + SPRZEDAŻ POŁOWY
+   MACD (domyślna)	po przecięciu MACD tyg. w dół stop pod Low tego tygodnia (czerwona przerywana)
+   pod GLB (jak Dr Wish)	sprzedaj, gdy tydzień zamknie się pod Green Line; linia stoi na poziomie wybicia, dopóki akcja robi nowe rekordy,
+	a gdy szczyt przestoi 3 mies., staje się nową linią — trzymasz, póki trend trwa
+   zawsze	stop 10 % pod ceną kupna; spadek 20 % od szczytu (zamknięcie tyg. od wejścia) = sprzedaj połowę (📌 alert, żółta przerywana „½ przy”)
+Test 2015–2026 (pozycje po 20 % kapitału): metoda pod GLB trzyma największe ruchy (SNDK 09/25 +2409 %, MU 10/25 +472 %, NVDA 05/23 +221 %, PLTR 11/24
++169 %; z MACD +1833 / +115 / +3 / +28 %), ale 77–82 % transakcji to małe straty. Najlepiej z wejściem „przebicie GLB dowolnie wysoko” + warunki:
+19,7 % rocznie (2020–26: 37,8 %), DD −51 %. Przy wejściu 0–10 % nad linią lepszy jest MACD: 22,2 % rocznie, DD −35 % (pod GLB 15,8 %, DD −41 %).
+Sprzedaż połowy przy −20 % od szczytu: płytsze spadki portfela (MACD: −35 → −31 %, pod GLB: −51 → −45 %) za 1–3 pp rocznie (20,6 % i 17,2 %).
+
 WEJŚCIE I WYJŚCIE
 Kupno: zamknięcie tygodnia 0–10 % nad Green Line, na otwarciu następnego tygodnia. Stop 10 % pod wejściem — zleceniem (stop „na zamknięciu tygodnia”
 dawał podobny wynik, ale straty 15–35 %). Po przecięciu MACD tyg. w dół stop pod Low tego tygodnia. Po wybiciu stopem wchodzisz ponownie przy następnym sygnale.
@@ -588,6 +605,9 @@ def checklist(row, pos=None):
     lines_.append(f"{yes(True if st in SIGNAL else None if st == 'NAD' else False)} Green Line: {st or '—'} ({f(r.get('glb_pct'), ' %')} od linii; kupno 0–10 % nad)")
     stop = f"{r['macd_stop']:.2f}" if r.get("macd_stop") else "—"
     lines_.append(f"{yes(r.get('macd') == 'nad')} MACD tyg. {r.get('macd') or '—'} sygnałem (stop pod {stop})")
+    glb = r.get("glb")
+    lines_.append(f"{yes(None if glb is None or r.get('price') is None else r['price'] >= glb)} Zamknięcie nad Green Line {glb if glb is not None else '—'} "
+                  f"(wyjście metodą GLB: zamknięcie tygodnia pod linią)")
     lines_.append(f"{yes(False if r.get('slow') else None if r.get('accel') is None else True)} Brak hamowania (tempo przychodów {f(r.get('accel'), ' pp')}, "
                   f"Δ marży brutto {f(r.get('dgm'), ' pp')})")
     if pos and r.get("slow"):

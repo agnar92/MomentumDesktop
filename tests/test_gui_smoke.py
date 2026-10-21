@@ -200,3 +200,18 @@ def test_daily_chart_rwb_and_blue_dot(app, monkeypatch):
     texts = [ch.cv.itemcget(i, "text") for i in ch.cv.find_all() if ch.cv.type(i) == "text"]
     assert not any(t.startswith("Stochastic") or t.startswith("Przychody kw.") or t.startswith("MACD") for t in texts)   # dzienny: linia + RWB + Blue Dot + GLB
     assert any("Blue Dot" in t for t in texts) and ch.geom["g"]["rev"] is None
+
+
+def test_exit_method_toggle_and_position_plan(app):
+    app.open_chart("AAA")
+    ch = app.chart
+    ch.update()
+    ch.toggle_pos()
+    ch.toggle_exit()
+    assert app.store.settings["exit"] == "GLB" and ch.exit_btn.cget("text") == "🚪 Wyjście: pod GLB"
+    ch.redraw()
+    texts = [ch.cv.itemcget(i, "text") for i in ch.cv.find_all() if ch.cv.type(i) == "text"]
+    assert any("wyjście: zamknięcie tyg. pod linią" in t for t in texts) and any(t.startswith("stop −10 %") for t in texts)
+    assert "PLAN WYJŚCIA" in ch.ptext.get("1.0", "end")
+    ch.toggle_exit()
+    assert app.store.settings["exit"] == "MACD"

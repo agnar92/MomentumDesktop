@@ -225,12 +225,19 @@ def draw(cv, data, row=None, w=None, h=None, n_show=None, end=None, tlines=(), s
         cv.create_line(x0, y, x1, y, fill=GLB_COLOR, width=3)
         cv.create_rectangle(x1 + 1, y - 9, w - 2, y + 9, fill=GLB_COLOR, outline="")
         cv.create_text(x1 + 4, y, text=fmt(level), anchor="w", fill="#000", font=FONT)
-        cv.create_text(x0 + 4, y - 9, text=f"GREEN LINE {fmt(level)} · kupno do {fmt(level * 1.1)}", anchor="w", fill=GLB_COLOR, font=FONT)
-    stop = (row or {}).get("macd_stop")
+        cv.create_text(x0 + 4, y - 9, text=f"GREEN LINE {fmt(level)} · kupno do {fmt(level * 1.1)}" + (" · wyjście: zamknięcie tyg. pod linią" if (row or {}).get("exit") == "GLB" else ""),
+                       anchor="w", fill=GLB_COLOR, font=FONT)
+    stop = (row or {}).get("macd_stop") if (row or {}).get("exit") != "GLB" else None   # metoda GLB: wyjście = zamknięcie pod Green Line
     if stop and pmin < stop < pmax:
         y = yf(stop)
         cv.create_line(x0, y, x1, y, fill=STOP_COLOR, dash=(5, 4))
         cv.create_text(x1 + 4, y, text=fmt(stop), anchor="w", fill=STOP_COLOR, font=FONT)
+    pl = (row or {}).get("plan")   # 📌 pozycja: stop początkowy −10 % i „sprzedaj połowę” przy −20 % od szczytu
+    for v, col, lab in (((pl["stop_init"], STOP_COLOR, f"stop −10 % {fmt(pl['stop_init'])}"),
+                         (pl["half_at"], "#f0b429", f"½ przy {fmt(pl['half_at'])} (−20 % od szczytu {fmt(pl['peak'])})")) if pl else ()):
+        if v and pmin < v < pmax:
+            cv.create_line(x0, yf(v), x1, yf(v), fill=col, dash=(2, 3))
+            cv.create_text(x0 + 4, yf(v) - 7, text=lab, anchor="w", fill=col, font=FONT)
     segs = draw_lines(cv, data, tlines, sel, i0, i1, xf, yf, g, step, w)
     last = c[-1]
     if last:
@@ -420,8 +427,8 @@ def draw_glb_history(cv, data, i0, i1, xf, yf, g, pmin, pmax, level):
                    anchor="w", fill=GLB_COLOR, font=FONT)
 
 
-def fund_panel_lines(r, pos=None):
-    """Treść panelu fundamentów -> [(tekst, tag)]."""
+def fund_panel_lines(r, pos=None, plan=None, exit_method="MACD"):
+    """Treść panelu fundamentów -> [(tekst, tag)]; plan = calc.position_plan dla 📌 pozycji, exit_method = MACD / GLB."""
     def v(x, u, d=1):
         return "—" if x is None else f"{x:+.{d}f}{u}"
     if not r:
@@ -453,6 +460,17 @@ def fund_panel_lines(r, pos=None):
     item(True if st in ("WYBICIE", "SYGNAŁ") else None if st == "NAD" else False, f"Green Line: {st or '—'} (kupno 0–10 % nad linią)")
     item(r.get("macd") == "nad", f"MACD tyg. {r.get('macd') or '—'} sygnałem" + (f" · stop {r['macd_stop']:.2f}" if r.get("macd_stop") else ""))
     item(False if r.get("slow") else None if r.get("accel") is None else True, "brak hamowania przychodów")
+    glb, price = r.get("glb"), r.get("price")
+    item(None if glb is None or price is None else price >= glb, f"zamknięcie nad Green Line {fmt(glb)} (wyjście metodą GLB: zamknięcie tyg. pod linią)")
+    if plan:
+        ex = f"zamknięcie tyg. pod Green Line {fmt(glb)}" if exit_method == "GLB" else f"stop MACD {fmt(r.get('macd_stop'))}"
+        out += [("PLAN WYJŚCIA · metoda " + ("pod GLB" if exit_method == "GLB" else "MACD"), "sec"),
+                (f"Kupno\t{fmt(plan['entry'])}", "val"), (f"Stop −10 %\t{fmt(plan['stop_init'])}", "val"),
+                (f"Szczyt od wejścia\t{fmt(plan['peak'])}", "val"), (f"½ przy (−20 %)\t{fmt(plan['half_at'])}", "val"), (f"Reszta\t{ex}", "val")]
+        if plan["half"]:
+            out.append((f"⚠ Zamknięcie {fmt(plan['last'])} jest ≥ 20 % pod szczytem {fmt(plan['peak'])} — sprzedaj połowę.", "warn"))
+        if (plan["glb_exit"] if exit_method == "GLB" else (r.get("macd_stop") and (price or 0) < r["macd_stop"])):
+            out.append(("⚠ Sygnał wyjścia (" + ("zamknięcie pod Green Line" if exit_method == "GLB" else "zamknięcie pod stopem MACD") + ").", "warn"))
     if pos and r.get("slow"):
         out.append((f"⚠ Masz pozycję, a raport pokazuje hamowanie{' i spadek marży brutto' if r['slow'] == 'HAMUJE+MB' else ''} — spadek ≥ 20 % w 6 mies. "
                     f"w {'50' if r['slow'] == 'HAMUJE+MB' else '44'} % przypadków (normalnie 33 %). Rozważ zacieśnienie stopu.", "warn"))
@@ -484,6 +502,8 @@ class ChartWindow(tk.Toplevel):
         self.period_btn.pack(side="right", padx=2, pady=2)
         self.pos_btn = tk.Button(top, text="📌 Pozycja", command=self.toggle_pos, relief="flat")
         self.pos_btn.pack(side="right", padx=2, pady=2)
+        self.exit_btn = tk.Button(top, text="🚪 Wyjście: MACD", command=self.toggle_exit, relief="flat")
+        self.exit_btn.pack(side="right", padx=2, pady=2)
         self.del_btn = tk.Button(top, text="🗑 linia", command=self.delete_selected, relief="flat")
         self.alert_btn = tk.Button(top, text="🔔 alert linii", command=self.toggle_line_alert, relief="flat")
         self.head = tk.Label(top, text="", bg=PANEL, anchor="w", padx=8)
@@ -612,8 +632,24 @@ class ChartWindow(tk.Toplevel):
             self.cv.delete("all")
             self.cv.create_text(20, 20, text="Brak danych — zrób Sync albo Ctrl+K.", anchor="w", fill=FG)
             return
-        self.geom = draw(self.cv, data, self.app.store.row(self.ticker), n_show=self.n_show, end=self.end, tlines=self.lines(), sel=self.sel,
+        self.geom = draw(self.cv, data, self.row_for_chart(), n_show=self.n_show, end=self.end, tlines=self.lines(), sel=self.sel,
                          spx=self.app.store.weekly("SPY"), period=self.period)
+
+    def plan(self):
+        st = self.app.store
+        p = st.alerts["pos"].get(self.ticker)
+        return L.position_plan(p, st.weekly(self.ticker), st.row(self.ticker)) if p else None
+
+    def row_for_chart(self):
+        return {**(self.app.store.row(self.ticker) or {}), "exit": self.app.store.settings.get("exit", "MACD"), "plan": self.plan()}
+
+    def toggle_exit(self):
+        st = self.app.store
+        st.settings["exit"] = "MACD" if st.settings.get("exit", "MACD") == "GLB" else "GLB"
+        st.save_settings()
+        self.tools()
+        self.redraw()
+        self.app.refresh()
 
     def draw_slider(self):
         data = self.data()
@@ -813,7 +849,7 @@ class ChartWindow(tk.Toplevel):
         t = self.ptext
         t.config(state="normal")
         t.delete("1.0", "end")
-        for txt, tag in fund_panel_lines(r, self.app.store.alerts["pos"].get(self.ticker)):
+        for txt, tag in fund_panel_lines(r, self.app.store.alerts["pos"].get(self.ticker), self.plan(), self.app.store.settings.get("exit", "MACD")):
             t.insert("end", txt + "\n", tag)
         t.config(state="disabled")
 
@@ -827,7 +863,8 @@ class ChartWindow(tk.Toplevel):
         if self.ticker in st.alerts["pos"]:
             del st.alerts["pos"][self.ticker]
         else:
-            st.alerts["pos"][self.ticker] = {"since": max((s["d"][-1] for s in [self.data()] if s), default=""), "price": r.get("price")}
+            w = st.weekly(self.ticker)
+            st.alerts["pos"][self.ticker] = {"since": w["d"][-1] if w and w.get("d") else "", "price": r.get("price")}
             st.alerts["watch"].setdefault(self.ticker, L.snapshot(r))   # pozycja = też alerty strategii (MACD, stop, hamowanie)
         st.save_alerts()
         self.tools()
@@ -836,6 +873,7 @@ class ChartWindow(tk.Toplevel):
     def tools(self):
         held = self.ticker in self.app.store.alerts["pos"]
         self.pos_btn.config(text="📌 Mam pozycję" if held else "📌 Pozycja", bg="#1f3b5c" if held else self.del_btn.cget("bg"))
+        self.exit_btn.config(text="🚪 Wyjście: pod GLB" if self.app.store.settings.get("exit", "MACD") == "GLB" else "🚪 Wyjście: MACD")
         self.render_panel()
         watched = self.ticker in self.app.store.alerts["watch"]
         self.watch_btn.config(text="🔔 Obserwujesz" if watched else "🔕 Obserwuj", bg="#1f3b5c" if watched else self.del_btn.cget("bg"))

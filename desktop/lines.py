@@ -1,11 +1,14 @@
 """Linie trendu i alerty (ta sama logika co docs/js/lines.js w wersji webowej). Linia = dwa punkty {d1, p1, d2, p2} (data tygodnia + cena), prosta na
 skali logarytmicznej, przedłużona w prawo do ostatniego tygodnia. Alert linii: zamknięcie tygodnia przecięło linię. Obserwowana spółka (🔔): sygnał GLB,
-przecięcie MACD w dół, zamknięcie pod stopem MACD, spełnione warunki. Zapis: data/alerts.json {lines, watch, log, seen}."""
+przecięcie MACD w dół, zamknięcie pod stopem MACD, zamknięcie pod Green Line, spełnione warunki; pozycja (📌): spadek 20 % od szczytu = sprzedaj
+połowę. Zapis: data/alerts.json {lines, watch, pos, log, seen}."""
 import bisect
 import math
 
 SIGNAL_STATES = ("WYBICIE", "SYGNAŁ")
 MAX_LOG = 200
+STOP_PCT = 10.0    # stop początkowy pod ceną kupna
+HALF_DROP = 20.0   # spadek od szczytu (zamknięcia tygodnia od wejścia), przy którym sprzedajesz połowę
 
 
 def date_index(dates, d):
@@ -86,6 +89,8 @@ def state_alerts(prev, row):
     was = prev.get("price") is not None and prev.get("macd_stop") and prev["price"] < prev["macd_stop"]
     if stop and price is not None and price < stop and not was:
         out.append(f"zamknięcie {price} pod stopem MACD {stop}")
+    if row.get("glb_state") == "POD" and prev.get("glb_state") not in (None, "POD", "BRAK"):
+        out.append(f"zamknięcie tygodnia pod Green Line {row.get('glb')} — wyjście (metoda GLB)")
     if row.get("ok") and not prev.get("ok"):
         out.append("spełnia warunki strategii")
     if row.get("slow") and row.get("slow") != prev.get("slow"):
@@ -93,6 +98,22 @@ def state_alerts(prev, row):
         out.append(f"⚠ hamowanie: tempo przychodów {a} pp i marża brutto spada r/r — zacieśnij stop" if row["slow"] == "HAMUJE+MB"
                    else f"⚠ hamowanie: tempo przychodów {a} pp względem kwartału wcześniej")
     return out
+
+
+def position_plan(pos, data, row):
+    """Plan wyjścia pozycji: pos = {since, price}, data = tygodniowe {d, c}, row = wiersz (glb) -> {entry, stop_init (−10 %), peak (najwyższe
+    zamknięcie tygodnia od wejścia), half_at (−20 % od szczytu), half (ostatnie zamknięcie ≤ half_at), last, glb_exit}."""
+    c, d = (data or {}).get("c") or [], (data or {}).get("d") or []
+    entry = (pos or {}).get("price")
+    peak = entry
+    for x, day in zip(c, d):
+        if x is not None and day >= ((pos or {}).get("since") or "") and (peak is None or x > peak):
+            peak = x
+    last = c[-1] if c else None
+    half_at = peak * (1 - HALF_DROP / 100) if peak is not None else None
+    glb = (row or {}).get("glb")
+    return {"entry": entry, "stop_init": entry * (1 - STOP_PCT / 100) if entry is not None else None, "peak": peak, "half_at": half_at, "last": last,
+            "half": last is not None and half_at is not None and last <= half_at, "glb_exit": bool(last is not None and glb and last < glb)}
 
 
 def snapshot(r):
@@ -121,6 +142,13 @@ def eval_alerts(st, row_for, series_for, now, as_of=""):
             if x:
                 v = line_at(ln, data["d"], len(data["c"]) - 1)
                 add(f"L:{t}:{ln['id']}:{week}:{x}", t, week, f"zamknięcie {'nad linią' if x == 'up' else 'pod linią'} trendu ({v:.2f})")
+    for t, p in (st.get("pos") or {}).items():   # pozycja: spadek 20 % od szczytu -> sprzedaj połowę (raz na szczyt)
+        data = series_for(t)
+        if not data or not data.get("c"):
+            continue
+        pl = position_plan(p, data, row_for(t))
+        if pl["half"]:
+            add(f"H:{t}:{pl['peak']}", t, data["d"][-1], f"spadek {HALF_DROP:.0f} % od szczytu {pl['peak']:.2f} (zamknięcie {pl['last']:.2f}) — sprzedaj połowę")
     for t in list(st.get("watch", {})):
         row = row_for(t)
         if not row:

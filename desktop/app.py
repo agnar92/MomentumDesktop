@@ -120,6 +120,7 @@ class App:
         tk.Button(bar, text="📖 Poradnik", command=lambda: GuideDialog(self), relief="flat").pack(side="left", padx=4)
         self.alert_btn = tk.Button(bar, text="🔔 Alerty", command=lambda: AlertsDialog(self), relief="flat")
         self.alert_btn.pack(side="left", padx=4)
+        tk.Button(bar, text="📌 Pozycje", command=lambda: PositionsDialog(self), relief="flat").pack(side="left", padx=4)
         tk.Label(bar, text="Ctrl+K — dowolny symbol (np. SPY, NVDA)", bg=PANEL, fg="#8b95a3").pack(side="left", padx=12)
         frame = tk.Frame(self.root, bg=BG)
         frame.pack(fill="both", expand=True)
@@ -490,6 +491,99 @@ class FilterDialog(tk.Toplevel):
         self.app.store.save_settings()
         self.app.refresh()
         self.build()
+
+
+def pos_rows(store):
+    """Wiersze panelu pozycji: (ticker, wartości kolumn, status) — status = lines.position_status (pusty = trzymaj)."""
+    exit_m, out = store.settings.get("exit", "MACD"), []
+    for t, p in store.alerts["pos"].items():
+        r = store.row(t) or {}
+        pl = lines.position_plan(p, store.weekly(t), r)
+        last = pl["last"] if pl["last"] is not None else r.get("price")
+        ch = (last / pl["entry"] - 1) * 100 if last and pl["entry"] else None
+        ex = r.get("glb") if exit_m == "GLB" else r.get("macd_stop")
+        st = lines.position_status(pl, r, exit_m)
+        out.append((t, [t, " · ".join(st) or "trzymaj", p.get("since") or "", cell(pl["entry"], "p"), cell(last, "p"), cell(ch, "%"), cell(pl["peak"], "p"),
+                        cell(pl["half_at"], "p"), cell(pl["stop_init"], "p"), cell(ex, "p"), r.get("glb_state") or "", r.get("macd") or ""], st))
+    return out
+
+
+def watch_rows(store):
+    out = []
+    for t in store.alerts["watch"]:
+        if t in store.alerts["pos"]:
+            continue
+        r = store.row(t) or {}
+        out.append((t, [t, cell(r.get("price"), "p"), cell(r.get("glb"), "p"), cell(r.get("glb_pct"), "%"), r.get("glb_state") or "", r.get("macd") or "",
+                        cell(r.get("trend"), "b"), cell(r.get("rs"), "%"), cell(r.get("ok"), "b")]))
+    return out
+
+
+class PositionsDialog(tk.Toplevel):
+    """📌 Pozycje (plan wyjścia i co zrobić teraz) i 🔔 obserwowane spółki; dwuklik = wykres."""
+    POS = ("Ticker", "Co teraz", "Od", "Kupno", "Cena", "Zmiana %", "Szczyt", "½ przy", "Stop −10 %", "Wyjście", "GLB", "MACD")
+    WATCH = ("Ticker", "Cena", "Green Line", "Do linii %", "GLB", "MACD", "SMA 10>30", "RS 52 tyg. pp", "Warunki")
+
+    def __init__(self, app):
+        super().__init__(app.root)
+        self.app = app
+        self.title("Pozycje i obserwowane")
+        self.configure(bg=PANEL)
+        apply_dark(self)
+        m = app.store.settings.get("exit", "MACD")
+        tk.Label(self, text=f"📌 POZYCJE · metoda wyjścia: {'pod GLB (zamknięcie tygodnia pod Green Line)' if m == 'GLB' else 'MACD (stop pod Low tygodnia przecięcia w dół)'}"
+                 " · zawsze stop −10 % i ½ przy −20 % od szczytu · dwuklik = wykres", bg=PANEL, fg="#8b95a3").pack(anchor="w", padx=10, pady=(10, 4))
+        self.pos = self._tree(self.POS, 8)
+        tk.Label(self, text="🔔 OBSERWOWANE (bez pozycji)", bg=PANEL, fg="#8b95a3").pack(anchor="w", padx=10, pady=(10, 4))
+        self.watch = self._tree(self.WATCH, 8)
+        row = tk.Frame(self, bg=PANEL)
+        row.pack(fill="x", padx=10, pady=10)
+        tk.Button(row, text="Usuń pozycję", command=self.del_pos, relief="flat").pack(side="left")
+        tk.Button(row, text="Przestań obserwować", command=self.del_watch, relief="flat").pack(side="left", padx=6)
+        tk.Button(row, text="Zamknij", command=self.destroy, relief="flat").pack(side="right")
+        self.bind("<Escape>", lambda e: self.destroy())
+        self.fill()
+
+    def _tree(self, cols, h):
+        tr = ttk.Treeview(self, columns=cols, show="headings", height=h)
+        for c in cols:
+            tr.heading(c, text=c)
+            tr.column(c, width=230 if c == "Co teraz" else 90 if c in ("Od", "RS 52 tyg. pp", "Green Line") else 75, anchor="w" if c in ("Ticker", "Co teraz", "GLB", "MACD") else "e")
+        tr.tag_configure("warn", foreground="#ffb020")
+        tr.pack(fill="both", expand=True, padx=10)
+        tr.bind("<Double-1>", lambda e, t=tr: self.open(t))
+        return tr
+
+    def fill(self):
+        for tr in (self.pos, self.watch):
+            tr.delete(*tr.get_children())
+        for t, vals, st in pos_rows(self.app.store):
+            self.pos.insert("", "end", iid=t, values=vals, tags=("warn",) if st else ())
+        for t, vals in watch_rows(self.app.store):
+            self.watch.insert("", "end", iid=t, values=vals)
+
+    def open(self, tr):
+        s = tr.selection()
+        if s:
+            self.app.open_chart(s[0])
+
+    def del_pos(self):
+        for t in self.pos.selection():
+            self.app.store.alerts["pos"].pop(t, None)
+        self._save()
+
+    def del_watch(self):
+        for tr in (self.pos, self.watch):
+            for t in tr.selection():
+                self.app.store.alerts["watch"].pop(t, None)
+                if tr is self.pos:
+                    self.app.store.alerts["pos"].pop(t, None)
+        self._save()
+
+    def _save(self):
+        self.app.store.save_alerts()
+        self.app.refresh()
+        self.fill()
 
 
 class AlertsDialog(tk.Toplevel):

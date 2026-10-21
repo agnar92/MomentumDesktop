@@ -58,10 +58,13 @@ def run(store, log=print, fetch_list=finviz.fetch, weekly=prices.weekly, monthly
     if not base:
         raise RuntimeError("Finviz nie zwrócił spółek (blokada albo zły filtr) — lista bez zmian.")
     tickers = [r["ticker"] for r in base]
-    log(f"Finviz: {len(tickers)} spółek{f' z {total}' if total and total != len(tickers) else ''}")
-    series = weekly(tickers + [x for x in (BENCH,) if x not in tickers], log=log, cache=store.series, progress=stage_progress(progress, 1))
-    # miesięczne High (Green Line), fundamenty, prognozy i świece dzienne dla wszystkich spółek skanera (bez progu obrotu)
-    liquid = [t for t in tickers if t in series]   # bez progu obrotu — płynność ustawia filtr skanera Finviz
+    tracked = sorted((set(store.alerts.get("pos", {})) | set(store.alerts.get("watch", {}))) - set(tickers))
+    all_tickers = tickers + tracked
+    log(f"Finviz: {len(tickers)} spółek{f' z {total}' if total and total != len(tickers) else ''}; pozycje/obserwowane poza skanerem: {len(tracked)}")
+    # Pozycje i obserwowane odświeżamy niezależnie od tego, czy należą do aktualnego skanera.
+    series = weekly(all_tickers + [x for x in (BENCH,) if x not in all_tickers], log=log, cache=store.series, progress=stage_progress(progress, 1))
+    # Miesięczne High (Green Line), fundamenty i prognozy także dla pozycji/obserwowanych spoza skanera.
+    liquid = [t for t in all_tickers if t in series]
     mcache, scache = store.cache("monthly"), store.cache("sec")
     monthly(liquid, mcache, log=log, progress=stage_progress(progress, 2))
     store.save_cache("monthly", mcache)
@@ -78,18 +81,28 @@ def run(store, log=print, fetch_list=finviz.fetch, weekly=prices.weekly, monthly
     store.save_cache("estimates", ecache)
     rows = [calc.build_row(b, series[b["ticker"]], prices.monthly_highs(mcache.get(b["ticker"])), scache.get(b["ticker"]), series.get(BENCH), ecache.get(b["ticker"]))
             for b in base if b["ticker"] in series]
-    try:   # wolumen relatywny dzienny (sesja / średnia 50 sesji) — 3 miesiące świec dziennych płynnych spółek, bez zapisu
-        dser = daily(liquid, log=log, period="1y") if liquid else {}   # rok: Blue Dot (EMA 60 + Stochastic) i wolumen relatywny
+    # Wiersze pomocnicze nie trafiają do listy skanera, ale zasilają panel pozycji/obserwowanych.
+    tracked_rows = {}
+    for t in tracked:
+        if t in series:
+            tracked_rows[t] = calc.build_row({"ticker": t}, series[t], prices.monthly_highs(mcache.get(t)), scache.get(t), series.get(BENCH), ecache.get(t))
+    try:   # Dwieście pięćdziesiąt sesji do C/C[250], a także RVol i Blue Dot.
+        dser = daily(liquid, log=log, period="2y") if liquid else {}
     except Exception as e:
-        log(f"⚠ dzienne (wolumen relatywny) niedostępne ({e})")
+        log(f"⚠ dzienne (RVol/C/C[250]) niedostępne ({e})")
         dser = {}
-    for r in rows:
+    for r in rows + list(tracked_rows.values()):
         sd = dser.get(r["ticker"])
         r["rvol_d"] = calc.rel_volume(sd["v"], calc.RVOL_D) if sd else None
+        closes = sd.get("c", []) if sd else []
+        # C/C[max]: use the oldest available close when fewer than 250 prior sessions exist.
+        r["cc250"] = closes[-1] / closes[max(0, len(closes) - 251)] if len(closes) >= 2 and closes[max(0, len(closes) - 251)] else None
         bd = calc.fresh_blue_dot(sd, r.get("glb")) if r.get("glb_state") == "NAD" else None
         if bd:   # > 10 % nad linią i nie tydzień przebicia: wejście po Blue Dot na dziennym
             r["glb_state"], r["bdot"] = "BLUE DOT", bd
-    keep = {r["ticker"] for r in rows} | {BENCH}   # SPY = panel S&P 500 nad wykresem
+    for t, r in tracked_rows.items():
+        store.extra[t] = (r, series[t])
+    keep = {r["ticker"] for r in rows} | set(tracked_rows) | {BENCH}
     store.save_scan(rows, {t: s for t, s in series.items() if t in keep}, (now or dt.datetime.now()).isoformat(timespec="minutes"))
     ok = sum(1 for r in rows if r["ok"])
     sig = sum(1 for r in rows if r["ok"] and r["glb_state"] in ("SYGNAŁ", "WYBICIE"))

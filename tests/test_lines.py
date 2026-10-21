@@ -72,3 +72,17 @@ def test_position_plan_and_half_sell_alert():
     msgs = [a["msg"] for a in L.eval_alerts(st, lambda t: row, lambda t: s, "now", d[4])]
     assert any("sprzedaj połowę" in m for m in msgs) and any("pod Green Line" in m for m in msgs)
     assert L.eval_alerts(st, lambda t: row, lambda t: s, "later", d[4]) == []          # raz na szczyt / tydzień
+
+
+def test_trend_filter_and_preset():
+    from desktop.app import FILTER_PRESETS, filter_value, pass_filters
+    assert filter_value({"trend": True}, "trend") == "tak" and filter_value({}, "trend") == "nie"
+    f = dict(FILTER_PRESETS)["Przebicie GLB + SMA 10 > 30 (dowolnie wysoko)"]
+    assert pass_filters({"trend": True, "glb_state": "NAD"}, f) and not pass_filters({"trend": False, "glb_state": "NAD"}, f)
+
+
+def test_position_status():
+    pl = {"last": 100, "stop_init": 108, "half": True, "glb_exit": True}
+    assert L.position_status(pl, {"slow": "HAMUJE"}, "GLB") == ["STOP −10 %", "WYJŚCIE: zamknięcie pod GLB", "SPRZEDAJ ½ (−20 % od szczytu)", "⚠ hamuje"]
+    assert L.position_status({**pl, "stop_init": 90, "half": False}, {"macd_stop": 105}, "MACD") == ["WYJŚCIE: pod stopem MACD"]
+    assert L.position_status({"last": 150, "stop_init": 108}, {"macd_stop": 105}, "MACD") == []

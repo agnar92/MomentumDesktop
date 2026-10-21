@@ -116,6 +116,23 @@ def position_plan(pos, data, row):
             "half": last is not None and half_at is not None and last <= half_at, "glb_exit": bool(last is not None and glb and last < glb)}
 
 
+def position_status(plan, row, exit_method="MACD"):
+    """Co zrobić z pozycją teraz -> lista komunikatów (pusta = trzymaj): stop −10 %, ½ przy −20 % od szczytu, wyjście wg metody, hamowanie."""
+    out, r, pl = [], row or {}, plan or {}
+    last = pl.get("last")
+    if last is not None and pl.get("stop_init") is not None and last <= pl["stop_init"]:
+        out.append("STOP −10 %")
+    if exit_method == "GLB" and pl.get("glb_exit"):
+        out.append("WYJŚCIE: zamknięcie pod GLB")
+    if exit_method != "GLB" and r.get("macd_stop") and last is not None and last < r["macd_stop"]:
+        out.append("WYJŚCIE: pod stopem MACD")
+    if pl.get("half"):
+        out.append("SPRZEDAJ ½ (−20 % od szczytu)")
+    if r.get("slow"):
+        out.append("⚠ hamuje" + (" + marża brutto" if r["slow"] == "HAMUJE+MB" else ""))
+    return out
+
+
 def snapshot(r):
     return {"glb_state": r.get("glb_state"), "macd": r.get("macd"), "macd_stop": r.get("macd_stop"), "price": r.get("price"), "ok": bool(r.get("ok")), "slow": r.get("slow")}
 

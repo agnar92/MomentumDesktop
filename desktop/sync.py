@@ -44,7 +44,7 @@ def symbol(sym, store, log=print, weekly=prices.weekly, monthly=prices.monthly, 
     return row, w
 
 
-def run(store, log=print, fetch_list=finviz.fetch, weekly=prices.weekly, monthly=prices.monthly, fund=sec.update, now=None, progress=None):
+def run(store, log=print, fetch_list=finviz.fetch, weekly=prices.weekly, monthly=prices.monthly, fund=sec.update, now=None, progress=None, daily=prices.daily):
     sc = store.scanner
     log(f"Finviz [{sc['name']}]: filtr {sc['filters']}")
     base, total = fetch_list(sc["filters"], max_tickers=sc["max_tickers"], log=log, progress=stage_progress(progress, 0))
@@ -66,6 +66,14 @@ def run(store, log=print, fetch_list=finviz.fetch, weekly=prices.weekly, monthly
     store.save_cache("sec", scache)
     rows = [calc.build_row(b, series[b["ticker"]], prices.monthly_highs(mcache.get(b["ticker"])), scache.get(b["ticker"]), series.get(BENCH))
             for b in base if b["ticker"] in series]
+    try:   # wolumen relatywny dzienny (sesja / średnia 50 sesji) — 3 miesiące świec dziennych płynnych spółek, bez zapisu
+        dser = daily(liquid, log=log) if liquid else {}
+    except Exception as e:
+        log(f"⚠ dzienne (wolumen relatywny) niedostępne ({e})")
+        dser = {}
+    for r in rows:
+        sd = dser.get(r["ticker"])
+        r["rvol_d"] = calc.rel_volume(sd["v"], calc.RVOL_D) if sd else None
     keep = {r["ticker"] for r in rows} | {BENCH}   # SPY = panel S&P 500 nad wykresem
     store.save_scan(rows, {t: s for t, s in series.items() if t in keep}, (now or dt.datetime.now()).isoformat(timespec="minutes"))
     ok = sum(1 for r in rows if r["ok"])

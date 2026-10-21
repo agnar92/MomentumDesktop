@@ -189,6 +189,20 @@ def monthly_ohlc(ticker):
     return s if len(s["d"]) >= 2 else None
 
 
+def daily(tickers, log=print, period="3mo"):
+    """Świece dzienne wielu spółek naraz (wolumen relatywny dzienny przy Sync) -> {ticker: {d, o, h, l, c, v}}."""
+    out = {}
+    for i in range(0, len(tickers), BATCH):
+        part = tickers[i:i + BATCH]
+        df = _yf().download(part, period=period, interval="1d", auto_adjust=AUTO_ADJUST, group_by="ticker", progress=False, threads=True)
+        for t, f in _frames(df, part).items():
+            s = _series(f)
+            if len(s["d"]) >= 30:
+                out[t] = s
+        log(f"yfinance dzienne (wolumen relatywny): {min(i + BATCH, len(tickers))}/{len(tickers)}")
+    return out
+
+
 def daily_ohlc(ticker, period="2y"):
     """Świece dzienne {d, o, h, l, c, v} jednej spółki z ostatnich `period` (wykres dzienny w desktopie). -> seria albo None."""
     df = _yf().download([ticker], period=period, interval="1d", auto_adjust=AUTO_ADJUST, group_by="ticker", progress=False, threads=False)

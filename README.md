@@ -32,15 +32,20 @@ Heurystyka z backtestu (spółki z dzisiejszej listy, bez spółek wycofanych z 
   względna (kolumna RS): zmiana ceny z 52 tyg. ≥ 50 pp lepsza od S&P 500 (SPY). Backtest 2015–2026: +15,6 % na transakcję, portfel wszystkich sygnałów
   36,6 % rocznie (S&P 500 13,6 %), ale mało sygnałów naraz i spadek portfela do −55 %. **Hamuje ⚠**: tempo przychodów spadło o ≥ 10 pp (⚠⚠ z marżą brutto
   w dół). Liczby w 📖 Poradniku.
+- **Linia siły relatywnej (RS) jak w IBD** na wykresie tygodniowym: cena / S&P 500 na dole panelu ceny, ● gdy RS jest na szczycie 52 tyg.
+- **Wolumen relatywny** (kolumny RVol tyg. / RVol dz. i opis panelu wolumenu): wolumen ostatniego tygodnia / średnia 10 poprzednich tygodni oraz
+  ostatniej sesji / średnia 50 sesji — 2,0 = dwa razy więcej niż zwykle; gotowy filtr „Aktywne: RVol tyg. ≥ 1,5 + nad GLB”.
+- **📌 Pozycje** (pasek narzędzi): pozycje z planem wyjścia i kolumną „Co teraz” (trzymaj / stop −10 % / wyjście / sprzedaj ½ / hamuje) oraz obserwowane spółki;
+  klik = wykres, usuwanie pozycji i obserwowanych.
 - **🚪 Wyjście** (przycisk na wykresie, zapamiętany): **MACD** (stop pod Low tygodnia przecięcia w dół) albo **pod GLB** (zamknięcie tygodnia pod Green Line,
   jak u Dr Wisha — trzyma największe ruchy, np. SNDK, MU, NVDA 2023). Zawsze: stop 10 % pod kupnem i **spadek 20 % od szczytu = sprzedaj połowę**. Przy 📌 pozycji
   wykres pokazuje „stop −10 %” i „½ przy”, panel / lista kontrolna plan wyjścia, a alerty: zamknięcie pod Green Line i spadek 20 % od szczytu. Liczby w 📖 Poradniku.
 - **Okno wykresu** jest wyższe niż szersze; po prawej rozwijany panel **FUNDAMENTY** (pasek ze strzałką na całej wysokości): warunki, wartości z ostatnich
   raportów, lista kontrolna i ostrzeżenie dla pozycji (stan panelu zostaje zapamiętany).
-- **📅 Dzienny** (przycisk przełącza tygodniowy → dzienny → miesięczny; klawisze W / D / M): 2 lata świec dziennych z yfinance (raz na spółkę, w tle), RWB
+- **M / T / D** (osobne przyciski na wykresie; klawisze m / w / d) — dzienny: 2 lata świec dziennych z yfinance (raz na spółkę, w tle), RWB
   Guppy — 6 szybkich EMA (czerwone) i 6 wolnych (niebieskie), jaśniejsze tło = RWB — ● Blue Dot (Stochastic 10,1 ↑ 20 przy RWB nad Green Line) ze stopem
   pod Low kropki i Green Line; cena jako linia zamknięć, bez MACD, przychodów i Stochastic. Tylko do podglądu: w teście RWB + Blue Dot dawało +1 % na transakcję.
-- **📅 Tygodniowy / Miesięczny** (przycisk na wykresie albo klawisz M): wykres miesięczny z pełnej historii (yfinance, ceny bez korekty, pobierany raz na spółkę)
+- **M — miesięczny** (przycisk M na wykresie albo klawisz m): wykres miesięczny z pełnej historii (yfinance, ceny bez korekty, pobierany raz na spółkę)
   do sprawdzenia Green Line — schodki = linia w czasie, kółko = miesiąc obecnego rekordu („stoi N mies.”), porównanie z linią z listy (⚠ przy różnicy).
   Linie trendu rysujemy na tygodniowym.
 - **Ctrl+K**: dowolny symbol (np. SPY, ^GSPC, NVDA) — te same obliczenia i wykres; ostatnie symbole są zapamiętane.

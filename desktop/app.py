@@ -505,7 +505,7 @@ def pos_rows(store):
         ex = r.get("glb") if exit_m == "GLB" else r.get("macd_stop")
         st = lines.position_status(pl, r, exit_m)
         out.append((t, [t, " · ".join(st) or "trzymaj", p.get("since") or "", cell(pl["entry"], "p"), cell(last, "p"), cell(ch, "%"), cell(pl["peak"], "p"),
-                        cell(pl["half_at"], "p"), cell(pl["stop_init"], "p"), cell(ex, "p"), r.get("glb_state") or "", r.get("macd") or ""], st))
+                        cell(pl["half_at"], "p"), cell(pl["stop_init"], "p"), cell(ex, "p"), r.get("glb_state") or "", r.get("macd") or "", cell(r.get("cc250"), "x")], st))
     return out
 
 
@@ -516,14 +516,14 @@ def watch_rows(store):
             continue
         r = store.row(t) or {}
         out.append((t, [t, cell(r.get("price"), "p"), cell(r.get("glb"), "p"), cell(r.get("glb_pct"), "%"), r.get("glb_state") or "", r.get("macd") or "",
-                        cell(r.get("trend"), "b"), cell(r.get("rs"), "%"), cell(r.get("ok"), "b")]))
+                        cell(r.get("trend"), "b"), cell(r.get("rs"), "%"), cell(r.get("ok"), "b"), cell(r.get("cc250"), "x")]))
     return out
 
 
 class PositionsDialog(tk.Toplevel):
     """📌 Pozycje (plan wyjścia i co zrobić teraz) i 🔔 obserwowane spółki; dwuklik = wykres."""
-    POS = ("Ticker", "Co teraz", "Od", "Kupno", "Cena", "Zmiana %", "Szczyt", "½ przy", "Stop −10 %", "Wyjście", "GLB", "MACD")
-    WATCH = ("Ticker", "Cena", "Green Line", "Do linii %", "GLB", "MACD", "SMA 10>30", "RS 52 tyg. pp", "Warunki")
+    POS = ("Ticker", "Co teraz", "Od", "Kupno", "Cena", "Zmiana %", "Szczyt", "½ przy", "Stop −10 %", "Wyjście", "GLB", "MACD", "C/C[250]")
+    WATCH = ("Ticker", "Cena", "Green Line", "Do linii %", "GLB", "MACD", "SMA 10>30", "RS 52 tyg. pp", "Warunki", "C/C[250]")
 
     def __init__(self, app):
         super().__init__(app.root)
@@ -549,7 +549,7 @@ class PositionsDialog(tk.Toplevel):
         tr = ttk.Treeview(self, columns=cols, show="headings", height=h)
         for c in cols:
             tr.heading(c, text=c)
-            tr.column(c, width=230 if c == "Co teraz" else 90 if c in ("Od", "RS 52 tyg. pp", "Green Line") else 75, anchor="w" if c in ("Ticker", "Co teraz", "GLB", "MACD") else "e")
+            tr.column(c, width=230 if c == "Co teraz" else 90 if c in ("Od", "RS 52 tyg. pp", "Green Line", "C/C[250]") else 75, anchor="w" if c in ("Ticker", "Co teraz", "GLB", "MACD") else "e")
         tr.tag_configure("warn", foreground="#ffb020")
         tr.pack(fill="both", expand=True, padx=10)
         tr.bind("<Double-1>", lambda e, t=tr: self.open(t))

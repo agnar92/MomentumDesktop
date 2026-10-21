@@ -778,7 +778,7 @@ class SymbolDialog(tk.Toplevel):
         sym = self.var.get().strip().upper()
         if not sym:
             return
-        if self.app.store.weekly(sym):
+        if self.app.store.row(sym):   # policzona spółka (lista skanera albo wcześniejszy Ctrl+K) — od razu; same świece z innego skanera to za mało
             self.done(sym)
             return
         self.msg.config(text=f"Pobieram {sym}…")

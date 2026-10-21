@@ -257,3 +257,18 @@ def test_axis_labels_do_not_overlap():
     assert A_chart.axis_spots(100, 95, 300) == (84, 300)                # cena tuż nad -> wyżej, stop daleko bez zmian
     last, stop = A_chart.axis_spots(100, 200, 110)
     assert last == 200 and stop == 116
+
+
+def test_ctrl_k_fetches_symbol_that_has_only_candles(app, monkeypatch):
+    from desktop import app as A, sync
+    app.store.series["ZZZ"] = app.store.weekly("AAA")          # świece z innego skanera, ale bez policzonego wiersza
+    called = []
+    monkeypatch.setattr(sync, "symbol", lambda sym, store, log=None: called.append(sym))
+    d = A.SymbolDialog(app)
+    d.var.set("zzz")
+    d.go()
+    for _ in range(50):
+        app.root.update()
+        if called:
+            break
+    assert called == ["ZZZ"]

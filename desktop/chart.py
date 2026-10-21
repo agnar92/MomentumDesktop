@@ -19,6 +19,7 @@ SMA_COLORS = {10: "#e5484d", 30: "#f0b429"}
 TLINE = "#22d3ee"
 GLB_COLOR, STOP_COLOR, MACD_C, SIG_C, SPX_C = "#3ddc84", "#ff5c5c", "#4aa3ff", "#f0b429", "#b392f0"
 FAST_C, SLOW_C, RWB_BG, BLUE_DOT = "#e5484d", "#3b82f6", "#232a33", "#4aa3ff"
+RS_C = "#38bdf8"   # linia siły relatywnej (cena / S&P 500), jak w IBD
 FONT = ("Consolas", 9)
 RIGHT, LEFT, TOP = 64, 6, 22
 
@@ -292,6 +293,8 @@ def draw(cv, data, row=None, w=None, h=None, n_show=None, end=None, tlines=(), s
     else:
         cv.create_text(x0 + 4, s0 + 6, text="S&P 500 — brak danych SPY (zrób Sync)", anchor="w", fill=DIM, font=FONT)
     cv.create_line(x0, s1 + 3, x1, s1 + 3, fill=GRID)
+    if period == "W":
+        draw_rs_line(cv, c, sv, xf, g, (row or {}).get("rs"))
     # przychody kwartalne (słupki w okresie kwartału) z dynamiką r/r: zielony ≥ +25 %, żółty ≥ +15 % (dzienny: bez)
     if period == "D":
         return {"g": g, "step": step, "n": n, "i0": i0, "lmin": lmin, "lmax": lmax, "segs": segs}
@@ -314,6 +317,33 @@ def draw(cv, data, row=None, w=None, h=None, n_show=None, end=None, tlines=(), s
     cv.create_text(x0 + 4, q0 + 4, text=(f"Przychody kw. · r/r % (zielony ≥ 25 %, żółty ≥ 15 %) · ostatni {fmt_big(qs[-1]['rev'])} $" if qs
                                          else "Przychody kw. — brak danych SEC"), anchor="w", fill=DIM, font=FONT)
     return {"g": g, "step": step, "n": n, "i0": i0, "lmin": lmin, "lmax": lmax, "segs": segs}
+
+
+def rs_line(closes, spx_closes):
+    """Linia siły relatywnej jak w IBD: zamknięcie akcji / zamknięcie S&P 500 (SPY) w tym samym tygodniu (None, gdy brak)."""
+    return [c / s if c and s else None for c, s in zip(closes, spx_closes)]
+
+
+def draw_rs_line(cv, c, sv, xf, g, rs52=None):
+    """Linia RS na dole panelu ceny (własna skala log, jak IBD); ● na końcu, gdy RS jest na najwyższym poziomie z 52 tyg. okna."""
+    rs = rs_line(c, sv)
+    ok = [v for v in rs if v]
+    if len(ok) < 2:
+        return
+    y0, y1 = g["price"]
+    b0, b1 = y1 - (y1 - y0) * 0.22, y1 - 4
+    lo_, hi_ = math.log(min(ok)), math.log(max(ok))
+
+    def yr(v):
+        return b1 - (math.log(v) - lo_) / ((hi_ - lo_) or 1) * (b1 - b0)
+    pts = [(xf(i), yr(v)) for i, v in enumerate(rs) if v]
+    cv.create_line(*[p for xy in pts for p in xy], fill=RS_C, width=1.4)
+    lab = "RS (cena / S&P 500)" + (f" · 52 tyg. {rs52:+.0f} pp" if rs52 is not None else "")
+    last = [v for v in rs[-52:] if v]
+    if rs[-1] and rs[-1] >= max(last):
+        cv.create_oval(pts[-1][0] - 4, pts[-1][1] - 4, pts[-1][0] + 4, pts[-1][1] + 4, fill=RS_C, outline="")
+        lab += " · ● RS na szczycie 52 tyg."
+    cv.create_text(g["x0"] + 4, b0 - 6, text=lab, anchor="w", fill=RS_C, font=FONT)
 
 
 def draw_lines(cv, data, tlines, sel, i0, i1, xf, yf, g, step, w):
@@ -498,8 +528,11 @@ class ChartWindow(tk.Toplevel):
         top.pack(fill="x")
         self.watch_btn = tk.Button(top, text="🔕 Obserwuj", command=self.toggle_watch, relief="flat")
         self.watch_btn.pack(side="right", padx=4, pady=2)
-        self.period_btn = tk.Button(top, text="📅 Tygodniowy", command=self.toggle_period, relief="flat")
-        self.period_btn.pack(side="right", padx=2, pady=2)
+        self.per_btns = {}   # osobne przyciski M / T / D (klawisze m / w / d)
+        for per, lab in (("D", "D"), ("W", "T"), ("M", "M")):
+            b = tk.Button(top, text=lab, width=2, command=lambda x=per: self.toggle_period(x), relief="flat")
+            b.pack(side="right", padx=1, pady=2)
+            self.per_btns[per] = b
         self.pos_btn = tk.Button(top, text="📌 Pozycja", command=self.toggle_pos, relief="flat")
         self.pos_btn.pack(side="right", padx=2, pady=2)
         self.exit_btn = tk.Button(top, text="🚪 Wyjście: MACD", command=self.toggle_exit, relief="flat")
@@ -566,11 +599,16 @@ class ChartWindow(tk.Toplevel):
         return self.app.store.weekly(self.ticker)
 
     def toggle_period(self, to=None):
-        """Tygodniowy → dzienny → miesięczny. Dzienny (2 lata) i miesięczny (pełna historia) z yfinance (ceny bez korekty), raz na spółkę w tle."""
+        """M / T / D (bez argumentu: tygodniowy → dzienny → miesięczny). Dzienny (2 lata) i miesięczny (pełna historia) z yfinance (ceny bez korekty),
+        raz na spółkę w tle."""
         self.period = to or {"W": "D", "D": "M", "M": "W"}[self.period]
         self.n_show, self.end, self.sel = (260 if self.period == "D" else None), None, None   # dzienny: domyślnie ostatni rok
-        self.period_btn.config(text={"W": "📅 Tygodniowy", "D": "📅 Dzienny", "M": "📅 Miesięczny"}[self.period])
+        self.mark_period()
         self.load_period()
+
+    def mark_period(self):
+        for per, b in self.per_btns.items():
+            b.config(bg="#1f3b5c" if per == self.period else self.del_btn.cget("bg"), fg="#ffffff" if per == self.period else FG)
 
     def load_period(self):
         t, per = self.ticker, self.period
@@ -871,6 +909,7 @@ class ChartWindow(tk.Toplevel):
         self.app.refresh()
 
     def tools(self):
+        self.mark_period()
         held = self.ticker in self.app.store.alerts["pos"]
         self.pos_btn.config(text="📌 Mam pozycję" if held else "📌 Pozycja", bg="#1f3b5c" if held else self.del_btn.cget("bg"))
         self.exit_btn.config(text="🚪 Wyjście: pod GLB" if self.app.store.settings.get("exit", "MACD") == "GLB" else "🚪 Wyjście: MACD")

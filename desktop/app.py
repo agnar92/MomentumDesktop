@@ -567,7 +567,7 @@ dawał podobny wynik, ale straty 15–35 %). Po przecięciu MACD tyg. w dół st
 ⚠ Hamowanie (kolumna Hamuje, alert dla 📌 pozycji): tempo przychodów spadło o ≥ 10 pp — spadek ≥ 20 % w 6 mies. w 44 % przypadków (normalnie 33 %);
 ⚠⚠ z marżą brutto spadającą r/r — 50 %, średnio −1,8 % po 3 i 6 mies. Wtedy zacieśnij stop albo nie dokładaj.
 
-RWB + BLUE DOT (wykres dzienny, 📅 / klawisz D) — do podglądu, NIE jako sygnał
+RWB + BLUE DOT (wykres dzienny, przycisk D / klawisz d) — do podglądu, NIE jako sygnał
 Linia zamknięć, GMMA (6 szybkich EMA czerwonych / 6 wolnych niebieskich, jasne tło = RWB), ● Blue Dot (Stochastic 10,1 ↑ 20 przy RWB nad Green Line) i Green Line.
 Test 2015–2026: RWB + nad GLB + Blue Dot, stop pod Low kropki, wyjście MACD: tylko +1,0…+1,2 % na transakcję, trafność 14–15 %.
 

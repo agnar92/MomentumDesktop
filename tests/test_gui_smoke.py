@@ -215,3 +215,17 @@ def test_exit_method_toggle_and_position_plan(app):
     assert "PLAN WYJŚCIA" in ch.ptext.get("1.0", "end")
     ch.toggle_exit()
     assert app.store.settings["exit"] == "MACD"
+
+
+def test_period_buttons_and_ibd_rs_line(app):
+    st = app.store
+    w = st.weekly("AAA")
+    st.series["SPY"] = {**w, "c": [400 - i for i in range(len(w["c"]))]}   # SPY spada -> RS rośnie, na szczycie 52 tyg.
+    app.open_chart("AAA")
+    ch = app.chart
+    ch.update()
+    ch.redraw()
+    assert set(ch.per_btns) == {"M", "W", "D"} and ch.per_btns["W"].cget("text") == "T" and ch.per_btns["W"].cget("bg") == "#1f3b5c"
+    texts = [ch.cv.itemcget(i, "text") for i in ch.cv.find_all() if ch.cv.type(i) == "text"]
+    assert any(t.startswith("RS (cena / S&P 500)") for t in texts), [t for t in texts if "RS" in t or "S&P" in t]
+    assert A_chart.rs_line([10, 20, None], [5, 4, 2]) == [2, 5, None]

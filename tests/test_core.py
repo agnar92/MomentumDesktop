@@ -241,3 +241,10 @@ def test_sec_metrics_ttm_revenue_and_dilution():
                          "WeightedAverageNumberOfDilutedSharesOutstanding": {"units": {"shares": sh}}}}
     m = sec.metrics(facts)
     assert m["ttm_rev"] == pytest.approx(520) and m["shares"] == 110 and m["dil"] == pytest.approx(10) and m["v"] == sec.SEC_VERSION
+
+
+def test_trend_sma10_above_sma30():
+    up = calc.build_row({"ticker": "U"}, W, [50, 100, 90, 90, 90], {"rev_rr": 30, "dopm": 5}, SPY)
+    down = calc.build_row({"ticker": "D"}, {**W, "c": W["c"][::-1]}, [50, 100, 90, 90, 90], {"rev_rr": 30, "dopm": 5}, SPY)
+    short = calc.build_row({"ticker": "S"}, {k: v[:20] for k, v in W.items()}, [], None)
+    assert up["trend"] is True and down["trend"] is False and short["trend"] is None

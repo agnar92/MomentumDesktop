@@ -10,7 +10,7 @@ import datetime as dt
 from . import calc, finviz, lines, sec, sync
 from .chart import ChartWindow
 from .store import DEFAULT_SCANNERS, Store, normalize_scanners
-from .theme import BG, PANEL, apply_dark, autowrap, setup_style
+from .theme import BG, FG, PANEL, apply_dark, autowrap, setup_style
 
 COLUMNS = [  # (klucz, nagłówek, szerokość, format)
     ("ticker", "Ticker", 70, "s"), ("company", "Spółka", 200, "s"), ("sector", "Sektor", 140, "s"), ("price", "Cena", 80, "p"),

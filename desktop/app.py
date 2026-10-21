@@ -69,6 +69,8 @@ def cell(v, f):
         return "✓" if v else ""
     if f == "x":
         return f"{v:.1f}"
+    if f == "r":
+        return f"{v:.2f}"
     if f == "w":
         return "⚠⚠ + marża" if v == "HAMUJE+MB" else "⚠ hamuje" if v else ""
     return str(v)
@@ -505,7 +507,7 @@ def pos_rows(store):
         ex = r.get("glb") if exit_m == "GLB" else r.get("macd_stop")
         st = lines.position_status(pl, r, exit_m)
         out.append((t, [t, " · ".join(st) or "trzymaj", p.get("since") or "", cell(pl["entry"], "p"), cell(last, "p"), cell(ch, "%"), cell(pl["peak"], "p"),
-                        cell(pl["half_at"], "p"), cell(pl["stop_init"], "p"), cell(ex, "p"), r.get("glb_state") or "", r.get("macd") or "", cell(r.get("cc250"), "x")], st))
+                        cell(pl["half_at"], "p"), cell(pl["stop_init"], "p"), cell(ex, "p"), r.get("glb_state") or "", r.get("macd") or "", cell(r.get("cc250"), "r")], st))
     return out
 
 
@@ -516,7 +518,7 @@ def watch_rows(store):
             continue
         r = store.row(t) or {}
         out.append((t, [t, cell(r.get("price"), "p"), cell(r.get("glb"), "p"), cell(r.get("glb_pct"), "%"), r.get("glb_state") or "", r.get("macd") or "",
-                        cell(r.get("trend"), "b"), cell(r.get("rs"), "%"), cell(r.get("ok"), "b"), cell(r.get("cc250"), "x")]))
+                        cell(r.get("trend"), "b"), cell(r.get("rs"), "%"), cell(r.get("ok"), "b"), cell(r.get("cc250"), "r")]))
     return out
 
 

@@ -5,7 +5,7 @@ Prosta aplikacja okienkowa (Python + Tkinter, ciemny motyw) z **jedną strategi�
 | Etap | Reguła |
 |---|---|
 | Lista do pobrania | **Skaner Finviz** do wyboru na pasku (*Skanery / ustawienia…*: własne skanery = nazwa + filtr + limit; domyślnie Bezpieczny (backtest), Trend 50/200, Blisko rekordu (ATH), CANSLIM). Pierwszy = bezpieczny filtr wstępny `ind_stocksonly,sh_price_o10,sh_avgvol_o300,fa_salesqoq_o15` (tylko akcje, cena > 10 $, śr. wolumen > 300 tys., przychody kw. > 15 % r/r). W teście nie odciął żadnego z dużych zwycięzców |
-| Warunki | obrót dzienny **≥ 50 mln $**, przychody kw. **≥ +15 % r/r**, marża operacyjna **≥ +3 pp r/r** (fundamenty z SEC EDGAR) |
+| Warunki | obrót dzienny **≥ 100 mln $**, przychody kw. **≥ +15 % r/r**, marża operacyjna **≥ +3 pp r/r** (SEC EDGAR), **P/S < 20**, siła względna 52 tyg. **≥ +50 pp nad S&P 500** |
 | Kolejność | od największej zmiany marży operacyjnej r/r |
 | Wejście | **Green Line**: rekord wszech czasów **miesięcznego High** (jak w oryginale Dr. Wisha), który stoi **≥ 3 zamknięte miesiące** (po nowym rekordzie obowiązuje stara linia, dopóki nowy nie przestoi 3 miesięcy); kupno, gdy tydzień zamknie się **0–10 % nad linią** |
 | Wyjście | **tygodniowy MACD (12, 26, 9)**: po przecięciu sygnału w dół stop pod Low tego tygodnia; do tego stop **10 %** pod wejściem |
@@ -28,12 +28,18 @@ Heurystyka z backtestu (spółki z dzisiejszej listy, bez spółek wycofanych z 
   (przerywana) do ostatniego tygodnia, z wartością przy prawej krawędzi.
 - **🔔 Alerty** (pasek): zamknięcie tygodnia przecięło linię trendu oraz dla obserwowanych spółek (🔕 Obserwuj na wykresie): sygnał GLB, przecięcie MACD
   w dół, zamknięcie pod stopem MACD, spełnione warunki. Sprawdzane po starcie i po każdym Sync; zapis w `data/alerts.json`.
-- **Potencjał ★ (0–5) i Hamuje ⚠** (kolumny): cechy fundamentów, które w badaniu 2021–2026 (ceny bez korekty) podnosiły szansę na duży ruch — przychody ≥ 25 %,
-  dwa kwartały z rzędu, marża oper. ↑ ≥ 3 pp dwa kwartały, marża brutto ↑ ≥ 2 pp, marża oper. < 10 % — i ostrzeżenie o hamowaniu przychodów (≥ 10 pp, ⚠⚠ z marżą
-  brutto w dół). **📖 Poradnik**: zasady z badań i lista kontrolna spółki. **📌 Pozycja** na wykresie: 📌 i pomarańczowy wiersz przy hamowaniu / pod stopem, alerty.
-  Wykres jak w IBD: S&P 500 (SPY, pobierany przy Sync) nad ceną, przychody kwartalne z r/r % pod wolumenem.
-- **Okno wykresu** jest wyższe niż szersze; po prawej rozwijany panel **FUNDAMENTY** (pasek ze strzałką na całej wysokości): potencjał ★, wartości z ostatnich
+- **Warunki** (tylko te o największym wpływie w backteście): obrót ≥ 100 mln $, przychody kw. ≥ +15 % r/r, marża oper. ≥ +3 pp r/r, P/S < 20 i siła
+  względna (kolumna RS): zmiana ceny z 52 tyg. ≥ 50 pp lepsza od S&P 500 (SPY). Backtest 2015–2026: +15,6 % na transakcję, portfel wszystkich sygnałów
+  36,6 % rocznie (S&P 500 13,6 %), ale mało sygnałów naraz i spadek portfela do −55 %. **Hamuje ⚠**: tempo przychodów spadło o ≥ 10 pp (⚠⚠ z marżą brutto
+  w dół). Liczby w 📖 Poradniku.
+- **🚪 Wyjście** (przycisk na wykresie, zapamiętany): **MACD** (stop pod Low tygodnia przecięcia w dół) albo **pod GLB** (zamknięcie tygodnia pod Green Line,
+  jak u Dr Wisha — trzyma największe ruchy, np. SNDK, MU, NVDA 2023). Zawsze: stop 10 % pod kupnem i **spadek 20 % od szczytu = sprzedaj połowę**. Przy 📌 pozycji
+  wykres pokazuje „stop −10 %” i „½ przy”, panel / lista kontrolna plan wyjścia, a alerty: zamknięcie pod Green Line i spadek 20 % od szczytu. Liczby w 📖 Poradniku.
+- **Okno wykresu** jest wyższe niż szersze; po prawej rozwijany panel **FUNDAMENTY** (pasek ze strzałką na całej wysokości): warunki, wartości z ostatnich
   raportów, lista kontrolna i ostrzeżenie dla pozycji (stan panelu zostaje zapamiętany).
+- **📅 Dzienny** (przycisk przełącza tygodniowy → dzienny → miesięczny; klawisze W / D / M): 2 lata świec dziennych z yfinance (raz na spółkę, w tle), RWB
+  Guppy — 6 szybkich EMA (czerwone) i 6 wolnych (niebieskie), jaśniejsze tło = RWB — ● Blue Dot (Stochastic 10,1 ↑ 20 przy RWB nad Green Line) ze stopem
+  pod Low kropki i Green Line; cena jako linia zamknięć, bez MACD, przychodów i Stochastic. Tylko do podglądu: w teście RWB + Blue Dot dawało +1 % na transakcję.
 - **📅 Tygodniowy / Miesięczny** (przycisk na wykresie albo klawisz M): wykres miesięczny z pełnej historii (yfinance, ceny bez korekty, pobierany raz na spółkę)
   do sprawdzenia Green Line — schodki = linia w czasie, kółko = miesiąc obecnego rekordu („stoi N mies.”), porównanie z linią z listy (⚠ przy różnicy).
   Linie trendu rysujemy na tygodniowym.
@@ -41,7 +47,7 @@ Heurystyka z backtestu (spółki z dzisiejszej listy, bez spółek wycofanych z 
 
 ## Dane (darmowe źródła, jak najmniej zapytań)
 
-- **⟳ Sync (F5)**: Finviz (lista) → yfinance **tygodniowe 3 lata** (wykres, średnie, MACD, obrót) → dla spółek z obrotem ≥ 50 mln $:
+- **⟳ Sync (F5)**: Finviz (lista) → yfinance **tygodniowe 3 lata** (wykres, średnie, MACD, obrót) → dla spółek z obrotem ≥ 100 mln $:
   yfinance **miesięczne High z całej historii** (Green Line) i **SEC** (fundamenty; odświeżane co 7 dni). Bez danych dziennych.
 - **Tylko nowe dane**: spółka już pobrana dostaje z yfinance tylko ostatnie tygodnie (doklejane do zapisanych), a historia miesięczna tylko nowe zamknięte
   miesiące. Całość pobieramy dla nowej spółki, po przerwie dłuższej niż ~5 miesięcy albo gdy ceny wstecz się zmieniły (split). Ceny są **nieskorygowane o dywidendy** (tylko o splity), jak na TradingView — inaczej dawne szczyty spółek z dużymi wypłatami (np. CLMT) wychodziły za nisko.

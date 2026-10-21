@@ -11,13 +11,14 @@ tk = pytest.importorskip("tkinter")
 def _weekly(n=156):
     c = [50 + i * 0.5 + (3 if i % 7 == 0 else 0) for i in range(n)]
     return {"d": [f"{2023 + i // 52}-{(i % 52) // 4.4 + 1:02.0f}-01" for i in range(n)], "o": c, "h": [x * 1.03 for x in c], "l": [x * 0.97 for x in c],
-            "c": c, "v": [2e6 + (i % 5) * 1e5 for i in range(n)]}
+            "c": c, "v": [5e6 + (i % 5) * 1e5 for i in range(n)]}
 
 
 @pytest.fixture
 def app(tmp_path):
     w = _weekly()
-    rows = [calc.build_row({"ticker": t, "company": t + " Inc"}, w, [40, 120, 110, 110, 110], {"rev_rr": 30, "dopm": d}) for t, d in (("AAA", 5), ("BBB", 1))]
+    spy = {**w, "c": [400 - i * 1.5 for i in range(len(w["c"]))]}      # SPY spada -> siła względna AAA / BBB > 50 pp
+    rows = [calc.build_row({"ticker": t, "company": t + " Inc"}, w, [40, 120, 110, 110, 110], {"rev_rr": 30, "dopm": d}, spy) for t, d in (("AAA", 5), ("BBB", 1))]
     Store(tmp_path).save_scan(rows, {"AAA": w, "BBB": w}, "2026-10-20T08:00")
     try:
         from desktop import app as A
@@ -139,7 +140,7 @@ def test_guide_position_and_ibd_panels(app):
     g = ch.geom["g"]
     assert g["spx"][1] < g["price"][0] and g["vol"][1] < g["rev"][0] < g["rev"][1] < g["macd"][0]
     ch.toggle_pos()
-    assert "AAA" in st.alerts["pos"] and "AAA" in st.alerts["watch"] and "⚠" in ch.ptext.get("1.0", "end") and "Potencjał" in ch.ptext.get("1.0", "end")
+    assert "AAA" in st.alerts["pos"] and "AAA" in st.alerts["watch"] and "⚠" in ch.ptext.get("1.0", "end") and "spełnia warunki" in ch.ptext.get("1.0", "end")
     assert app.tree.item("AAA")["values"][0].startswith("📌") and "poswarn" in app.tree.item("AAA")["tags"]
     lines_ = A.checklist(row, st.alerts["pos"]["AAA"])
     assert any(ln.startswith("⚠ Masz pozycję") for ln in lines_)
@@ -147,7 +148,7 @@ def test_guide_position_and_ibd_panels(app):
     shown = ch.show_panel
     ch.toggle_panel()
     assert ch.show_panel != shown and app.store.settings["fund_panel"] == ch.show_panel and ch.fund_btn.cget("text").startswith("◀" if shown else "▶")
-    assert A.cell(3, "n") == "★★★☆☆" and A.cell("HAMUJE", "w") == "⚠ hamuje"
+    assert A.cell(12.34, "x") == "12.3" and A.cell("HAMUJE", "w") == "⚠ hamuje"
 
 
 def test_monthly_chart_shows_green_line_history(app, monkeypatch):
@@ -161,7 +162,7 @@ def test_monthly_chart_shows_green_line_history(app, monkeypatch):
     app.open_chart("AAA")
     ch = app.chart
     ch.update()
-    ch.toggle_period()
+    ch.toggle_period("M")
     for _ in range(50):
         app.root.update()
         if ch.geom and ch.geom["n"] == len(h):
@@ -170,5 +171,47 @@ def test_monthly_chart_shows_green_line_history(app, monkeypatch):
     assert ch.period == "M" and ch.geom["n"] == len(h)
     texts = [ch.cv.itemcget(i, "text") for i in ch.cv.find_all() if ch.cv.type(i) == "text"]
     assert any(t.startswith("rekord ") for t in texts) and any(t.startswith("Green Line z wykresu") for t in texts)
-    ch.toggle_period()
+    ch.toggle_period("W")
     assert ch.period == "W" and ch.geom["n"] == 156
+
+
+def test_daily_chart_rwb_and_blue_dot(app, monkeypatch):
+    import time
+    from desktop import calc as C, prices
+    n = 160
+    c = [50 + i * 0.4 for i in range(n)]
+    c[150:154] = [c[149] - 3, c[149] - 6, c[149] - 7, c[149] - 1]       # korekta w trendzie, potem odbicie: Stochastic przecina 20 w górę
+    d = [f"2026-{1 + i // 28:02d}-{1 + i % 28:02d}" for i in range(n)]
+    m = {"d": d, "o": c, "h": [x + 1 for x in c], "l": [x - 1 for x in c], "c": c, "v": [1e6] * n}
+    assert C.rwb(c)[148] and not C.rwb([100 - i for i in range(80)])[-1]   # spadek: szybkie pod wolnymi
+    dots = C.blue_dots(m["h"], m["l"], c, 40)
+    assert dots and dots[-1] >= 150 and not C.blue_dots(m["h"], m["l"], c, 1e9)   # pod Green Line nie ma kropek
+    monkeypatch.setattr(prices, "daily_ohlc", lambda t: dict(m))
+    app.open_chart("AAA")
+    ch = app.chart
+    ch.update()
+    ch.toggle_period("D")
+    for _ in range(50):
+        app.root.update()
+        if ch.geom and ch.geom["n"] == min(n, 260):
+            break
+        time.sleep(0.02)
+    assert ch.period == "D" and ch.geom["n"] == min(n, 260)
+    texts = [ch.cv.itemcget(i, "text") for i in ch.cv.find_all() if ch.cv.type(i) == "text"]
+    assert not any(t.startswith("Stochastic") or t.startswith("Przychody kw.") or t.startswith("MACD") for t in texts)   # dzienny: linia + RWB + Blue Dot + GLB
+    assert any("Blue Dot" in t for t in texts) and ch.geom["g"]["rev"] is None
+
+
+def test_exit_method_toggle_and_position_plan(app):
+    app.open_chart("AAA")
+    ch = app.chart
+    ch.update()
+    ch.toggle_pos()
+    ch.toggle_exit()
+    assert app.store.settings["exit"] == "GLB" and ch.exit_btn.cget("text") == "🚪 Wyjście: pod GLB"
+    ch.redraw()
+    texts = [ch.cv.itemcget(i, "text") for i in ch.cv.find_all() if ch.cv.type(i) == "text"]
+    assert any("wyjście: zamknięcie tyg. pod linią" in t for t in texts) and any(t.startswith("stop −10 %") for t in texts)
+    assert "PLAN WYJŚCIA" in ch.ptext.get("1.0", "end")
+    ch.toggle_exit()
+    assert app.store.settings["exit"] == "MACD"

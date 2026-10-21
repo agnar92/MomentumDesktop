@@ -6,6 +6,10 @@ import pytest
 from desktop import calc, finviz, prices, sec, sync
 from desktop.store import Store
 
+_D = [(dt.date(2025, 1, 6) + dt.timedelta(weeks=i)).isoformat() for i in range(60)]
+W = {"d": _D, "o": [1] * 60, "h": [1] * 60, "l": [1] * 60, "c": [50.0] * 19 + [100.0] * 40 + [104.0], "v": [1e7] * 60}   # +108 % w 52 tyg.
+SPY = {"d": _D, "o": [1] * 60, "h": [1] * 60, "l": [1] * 60, "c": [400.0] * 60, "v": [1e7] * 60}
+
 
 def test_green_line_needs_three_closed_months_and_keeps_old_line():
     assert calc.green_line([10, 12, 11, 11]) == (None, None)            # rekord 12 stoi dopiero 2 miesiące
@@ -36,9 +40,9 @@ def test_macd_cross_and_stop_is_low_of_cross_week():
 
 def test_turnover_and_conditions():
     assert calc.turnover([10, 10, 10, 10], [5e7] * 4) == pytest.approx(1e8)
-    good = {"turnover": 60e6, "rev_rr": 20, "dopm": 4}
-    assert calc.passes(good)
-    for k, v in (("turnover", 40e6), ("rev_rr", 10), ("dopm", 2), ("dopm", None)):
+    good = {"turnover": 120e6, "rev_rr": 20, "dopm": 4, "rs": 60}
+    assert calc.passes(good) and calc.passes({**good, "ps": 15}) and calc.passes({**good, "ps": None})
+    for k, v in (("turnover", 80e6), ("rev_rr", 10), ("dopm", 2), ("dopm", None), ("rs", 40), ("rs", None), ("ps", 25)):
         assert not calc.passes({**good, k: v})
 
 
@@ -46,7 +50,16 @@ def test_build_row():
     w = {"d": ["2026-01-05"] * 40, "o": [1] * 40, "h": [1] * 40, "l": [1] * 40, "c": [100.0] * 38 + [99.0, 104.0], "v": [3e6] * 40}
     row = calc.build_row({"ticker": "X"}, w, [50, 100, 90, 90, 90, 95], {"rev_rr": 30, "dopm": 5})
     assert row["glb"] == 100 and row["glb_state"] == "WYBICIE" and row["glb_pct"] == pytest.approx(4)
-    assert row["ok"] and row["turnover"] == pytest.approx(104 * 3e6 / 5, rel=0.05)
+    assert row["turnover"] == pytest.approx(104 * 3e6 / 5, rel=0.05)
+    assert row["rs"] is None and not row["ok"]          # 40 tygodni historii i brak SPY -> brak siły względnej -> nie spełnia
+    r = calc.build_row({"ticker": "Y"}, W, [50, 100, 90, 90, 90, 95], {"rev_rr": 30, "dopm": 5}, SPY)
+    assert r["rs"] == pytest.approx(108) and r["ok"] and r["glb_state"] == "SYGNAŁ"
+
+
+def test_rel_strength_vs_spy():
+    spy = {"d": W["d"], "c": [400.0] * 30 + [480.0] * 30}               # SPY +20 % w 52 tyg.
+    assert calc.rel_strength(W, spy) == pytest.approx(108 - 20)
+    assert calc.rel_strength(W, None) is None and calc.rel_strength({**W, "c": W["c"][-40:], "d": W["d"][-40:]}, spy) is None
 
 
 NEW_LAYOUT = """<div>#1 / 2 Total</div>
@@ -85,11 +98,9 @@ def test_sec_metrics_quarter_vs_year_ago_q4_from_annual():
     assert "rev_rr1" not in m and [q["rev"] for q in m["qs"]] == [100, 110, 120, 140, 150] and m["qs"][-1]["rev_rr"] == pytest.approx(50)
 
 
-def test_potential_and_slowdown():
-    row = {"rev_rr": 30, "rev_rr1": 26, "dopm": 4, "dopm1": 3, "dgm": 1, "opm": 8, "accel": 4}
-    assert [v for *_, v in calc.potential(row)] == [True, True, True, False, True] and calc.slowdown(row) is None
+def test_slowdown():
+    assert calc.slowdown({"accel": 4, "dgm": 1}) is None
     assert calc.slowdown({"accel": -12, "dgm": 0.5}) == "HAMUJE" and calc.slowdown({"accel": -12, "dgm": -1}) == "HAMUJE+MB"
-    assert [v for *_, v in calc.potential({})] == [None] * 5
 
 
 def test_sec_update_uses_cache(monkeypatch):
@@ -163,7 +174,7 @@ def test_weekly_fetches_only_recent_weeks_for_cached(monkeypatch):
 
 def test_sync_run_with_fake_sources(tmp_path):
     store = Store(tmp_path)
-    w = {"d": ["2026-01-05"] * 40, "o": [1] * 40, "h": [1] * 40, "l": [1] * 40, "c": [100.0] * 39 + [104.0], "v": [5e6] * 40}
+    w = W
 
     def monthly(ts, cache, log, progress=None):
         for t in ts:
@@ -174,7 +185,7 @@ def test_sync_run_with_fake_sources(tmp_path):
             cache[t] = {"at": "2026-10-20", "rev_rr": 25, "dopm": 6}
     steps = []
     rows = sync.run(store, log=lambda s: None, fetch_list=lambda f, max_tickers, log, progress: ([{"ticker": "A"}, {"ticker": "B"}], 2),
-                    weekly=lambda ts, log, cache, progress: {"A": w, "B": {**w, "v": [1e3] * 40}}, monthly=monthly, fund=fund,
+                    weekly=lambda ts, log, cache, progress: {"A": w, "B": {**w, "v": [1e3] * 60}, "SPY": SPY}, monthly=monthly, fund=fund,
                     progress=lambda f, st: steps.append((round(f, 2), st)))
     assert [f for f, _ in steps] == [0.0, 0.15, 0.4, 0.6, 1.0] and steps[-1][1] == "Gotowe"
     a = next(r for r in rows if r["ticker"] == "A")
@@ -209,3 +220,24 @@ def test_old_settings_filter_becomes_first_scanner(tmp_path):
 def test_monthly_highs_ignores_dividend_adjusted_entries():
     assert prices.monthly_highs({"h": [["2026-09", 5.0]], "upto": "2026-09"}) == []
     assert prices.monthly_highs({"h": [["2026-09", 5.0]], "upto": "2026-09", "raw": 1}) == [5.0]
+
+
+def test_conditions_cut_rgti_and_expensive():
+    """RGTI: „Δ marży” +558 pp przy przychodach 5 mln $ — odpada na P/S (≈ 200); drogie (P/S ≥ 20) odpadają; brak kapitalizacji: cena × akcje."""
+    f = {"rev_rr": 30, "dopm": 12, "ttm_rev": 300e6}
+    assert calc.build_row({"ticker": "A", "market_cap": 3e9}, W, [50, 100, 90, 90, 90], f, SPY)["ok"]           # P/S 10
+    assert not calc.build_row({"ticker": "B", "market_cap": 9e9}, W, [50, 100, 90, 90, 90], f, SPY)["ok"]      # P/S 30
+    rgti = calc.build_row({"ticker": "RGTI", "market_cap": 4e9}, W, [], {"rev_rr": 185, "dopm": 558, "ttm_rev": 20e6}, SPY)
+    assert rgti["ps"] == 200 and not rgti["ok"]
+    assert calc.build_row({"ticker": "D"}, W, [], {**f, "shares": 60e6}, SPY)["ps"] == pytest.approx(104 * 60e6 / 300e6)
+
+
+def test_sec_metrics_ttm_revenue_and_dilution():
+    rev = [_q("2025-01-01", "2025-03-31", 100), _q("2025-04-01", "2025-06-30", 110), _q("2025-07-01", "2025-09-30", 120),
+           _q("2025-10-01", "2025-12-31", 140), _q("2026-01-01", "2026-03-31", 150)]
+    op = [dict(x, val=x["val"] / 10) for x in rev]
+    sh = [_q("2025-01-01", "2025-03-31", 100), _q("2026-01-01", "2026-03-31", 110), _q("2025-01-01", "2025-12-31", 105)]   # roczna średnia nie daje Q4
+    facts = {"us-gaap": {"Revenues": {"units": {"USD": rev}}, "OperatingIncomeLoss": {"units": {"USD": op}},
+                         "WeightedAverageNumberOfDilutedSharesOutstanding": {"units": {"shares": sh}}}}
+    m = sec.metrics(facts)
+    assert m["ttm_rev"] == pytest.approx(520) and m["shares"] == 110 and m["dil"] == pytest.approx(10) and m["v"] == sec.SEC_VERSION

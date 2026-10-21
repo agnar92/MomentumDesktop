@@ -250,13 +250,19 @@ def draw(cv, data, row=None, w=None, h=None, n_show=None, end=None, tlines=(), s
     pts = [(xf(i), yf(v)) for i, v in enumerate(c) if v] if period == "D" and daily_style == "line" else []
     if len(pts) > 1:
         cv.create_line(*[p for xy in pts for p in xy], fill=FG, width=1.6)
-    for i in range(n if period != "D" else 0):
+    for i in range(n if period != "D" or daily_style == "bars" else 0):
         if hi[i] is None or lo[i] is None or c[i] is None:
             continue
         col = UP if i == 0 or c[i - 1] is None or c[i] >= c[i - 1] else DOWN
         x = xf(i)
         cv.create_line(x, yf(hi[i]), x, yf(lo[i]), fill=col, width=max(1, step * 0.25))
-        cv.create_line(x - step * 0.35, yf(c[i]), x + step * 0.35, yf(c[i]), fill=col)
+        if period == "D" and daily_style == "bars":
+            op = data["o"][i0 + i] if data.get("o") and i0 + i < len(data["o"]) else None
+            if op:
+                cv.create_line(x - step * 0.3, yf(op), x, yf(op), fill=col)
+            cv.create_line(x, yf(c[i]), x + step * 0.3, yf(c[i]), fill=col)
+        else:
+            cv.create_line(x - step * 0.35, yf(c[i]), x + step * 0.35, yf(c[i]), fill=col)
     if level and pmin < level < pmax:
         y = yf(level)
         cv.create_line(x0, y, x1, y, fill="#0a2e18", width=6)

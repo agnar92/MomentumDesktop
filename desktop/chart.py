@@ -15,7 +15,8 @@ from .theme import BG, FG, PANEL, apply_dark
 
 GRID, DIM = "#1a1f26", "#6b7684"
 UP, DOWN = "#d5d9e0", "#e5484d"
-SMA_COLORS = {10: "#e5484d", 30: "#f0b429"}
+SMA_COLORS = {4: "#22d3ee", 10: "#e5484d", 30: "#f0b429"}
+DAILY_MA_COLORS = {"EMA 8": "#e5484d", "EMA 10": "#f0b429", "EMA 20": "#3b82f6", "SMA 50": "#22d3ee"}
 TLINE = "#22d3ee"
 GLB_COLOR, STOP_COLOR, MACD_C, SIG_C, SPX_C = "#3ddc84", "#ff5c5c", "#4aa3ff", "#f0b429", "#b392f0"
 FAST_C, SLOW_C, RWB_BG, BLUE_DOT = "#e5484d", "#3b82f6", "#232a33", "#4aa3ff"
@@ -174,7 +175,7 @@ def draw_slider(cv, closes, n_show, end, unit="tyg."):
     cv.create_text(x1 - 6 if right else x1 + 6, 4, text=f"{i1 - i0} {unit}", fill=FG, font=FONT, anchor="ne" if right else "nw")
 
 
-def draw(cv, data, row=None, w=None, h=None, n_show=None, end=None, tlines=(), sel=None, spx=None, period="W"):
+def draw(cv, data, row=None, w=None, h=None, n_show=None, end=None, tlines=(), sel=None, spx=None, period="W", daily_style="line"):
     """Rysuje wykres okna (n_show tygodni kończące się na `end`, domyślnie cała historia) na canvas `cv`; data = {d, o, h, l, c, v};
     tlines = linie trendu, sel = id zaznaczonej. -> geometria (do dymka i linii; `i0` = indeks pierwszego tygodnia okna w pełnej serii, segs = linie w px)."""
     cv.delete("all")
@@ -185,7 +186,11 @@ def draw(cv, data, row=None, w=None, h=None, n_show=None, end=None, tlines=(), s
         return None
     i0, i1 = window(total, n_show, end)
     cfull = [v if v is not None else 0 for v in data["c"]]
-    smas = {} if period == "D" else {k: calc.sma(cfull, k)[i0:i1] for k in SMA_COLORS}
+    smas = {} if period == "D" else {k: calc.sma(cfull, k)[i0:i1] for k in ((4, 10, 30) if period == "W" else (10, 30))}
+    daily_mas = {}
+    if period == "D" and daily_style == "bars":
+        daily_mas = {name: (calc.ema(cfull, n) if name.startswith("EMA") else calc.sma(cfull, n))[i0:i1]
+                     for name, n in (("EMA 8", 8), ("EMA 10", 10), ("EMA 20", 20), ("SMA 50", 50))}
     mac, sig, hist = (x[i0:i1] for x in calc.macd(cfull))
     crosses = [i - i0 for i in calc.macd_cross_down(calc.macd(cfull)[2]) if i0 <= i < i1]
     nv = calc.RVOL_D if period == "D" else calc.RVOL_W   # średnia wolumenu i wolumen relatywny: dzienny 50 sesji, tygodniowy 10 tygodni
@@ -220,7 +225,7 @@ def draw(cv, data, row=None, w=None, h=None, n_show=None, end=None, tlines=(), s
         if all(abs(y - v) >= 13 for v in taken):   # podziałka ustępuje napisom Green Line / ceny / stopu
             cv.create_text(x1 + 4, y, text=fmt(t), anchor="w", fill=DIM, font=FONT)
     u = {"M": "mies.", "D": "sesji"}.get(period, "tyg.")
-    if period == "D":
+    if period == "D" and daily_style == "line":
         draw_rwb(cv, data, row, i0, i1, xf, yf, g, step, cfull)
     yrs = max(1, math.ceil(60 / max(1e-9, step * 12)))     # wykres miesięczny: co ile lat podpis, żeby się nie nakładały
     every = max(1, math.ceil(62 / max(1e-9, step * 13)))   # tygodniowy: co który kwartał podpis (wąski wykres)
@@ -238,16 +243,26 @@ def draw(cv, data, row=None, w=None, h=None, n_show=None, end=None, tlines=(), s
         pts = [(xf(i), yf(v)) for i, v in enumerate(s) if v]
         if len(pts) > 1:
             cv.create_line(*[p for xy in pts for p in xy], fill=SMA_COLORS[k], width=1.5)
-    pts = [(xf(i), yf(v)) for i, v in enumerate(c) if v] if period == "D" else []
-    if len(pts) > 1:   # dzienny: linia zamknięć zamiast słupków
+    for name, s in daily_mas.items():
+        pts = [(xf(i), yf(v)) for i, v in enumerate(s) if v]
+        if len(pts) > 1:
+            cv.create_line(*[p for xy in pts for p in xy], fill=DAILY_MA_COLORS[name], width=1.5)
+    pts = [(xf(i), yf(v)) for i, v in enumerate(c) if v] if period == "D" and daily_style == "line" else []
+    if len(pts) > 1:
         cv.create_line(*[p for xy in pts for p in xy], fill=FG, width=1.6)
-    for i in range(n if period != "D" else 0):
+    for i in range(n if period != "D" or daily_style == "bars" else 0):
         if hi[i] is None or lo[i] is None or c[i] is None:
             continue
         col = UP if i == 0 or c[i - 1] is None or c[i] >= c[i - 1] else DOWN
         x = xf(i)
         cv.create_line(x, yf(hi[i]), x, yf(lo[i]), fill=col, width=max(1, step * 0.25))
-        cv.create_line(x - step * 0.35, yf(c[i]), x + step * 0.35, yf(c[i]), fill=col)
+        if period == "D" and daily_style == "bars":
+            op = data["o"][i0 + i] if data.get("o") and i0 + i < len(data["o"]) else None
+            if op:
+                cv.create_line(x - step * 0.3, yf(op), x, yf(op), fill=col)
+            cv.create_line(x, yf(c[i]), x + step * 0.3, yf(c[i]), fill=col)
+        else:
+            cv.create_line(x - step * 0.35, yf(c[i]), x + step * 0.35, yf(c[i]), fill=col)
     if level and pmin < level < pmax:
         y = yf(level)
         cv.create_line(x0, y, x1, y, fill="#0a2e18", width=6)
@@ -302,7 +317,7 @@ def draw(cv, data, row=None, w=None, h=None, n_show=None, end=None, tlines=(), s
             cv.create_text(xf(i), m1 - 6, text="▼", fill=STOP_COLOR, font=FONT)
         cv.create_text(x0 + 4, m0 + 6, text=f"MACD (12, 26, 9) {u}" + (" · ▼ = stop pod Low tygodnia przecięcia" if period == "W" else ""),
                        anchor="w", fill=DIM, font=FONT)
-    legend = "GMMA: szybkie EMA (czerwone) / wolne (niebieskie) · jasne tło = RWB · ● Blue Dot" if period == "D" else "  ".join(f"SMA {k} {u}" for k in SMA_COLORS)
+    legend = ("  ".join(DAILY_MA_COLORS) if daily_style == "bars" else "GMMA: szybkie EMA (czerwone) / wolne (niebieskie) · jasne tło = RWB · ● Blue Dot") if period == "D" else "  ".join(f"SMA {k} {u}" for k in ((4, 10, 30) if period == "W" else (10, 30)))
     if period == "M":
         draw_glb_history(cv, data, i0, i1, xf, yf, g, pmin, pmax, level)
     boxed(cv, x0 + 4, y1 - 10 if period == "D" else y0 + 10, legend, FG)
@@ -447,7 +462,12 @@ def draw_rwb(cv, data, row, i0, i1, xf, yf, g, step, cfull):
         j = dots[-1]
         lo = data["l"][j]
         cv.create_line(xf(j - i0), yf(lo), g["x1"], yf(lo), fill=BLUE_DOT, dash=(2, 3))
-        cv.create_text(xf(j - i0) + 6, yf(lo) + 22, text=f"Blue Dot {data['d'][j]} · stop pod Low {fmt(lo)}", anchor="w", fill=BLUE_DOT, font=FONT)
+        # Etykieta po lewej, gdy Blue Dot wypada blisko prawej krawędzi — inaczej cena stopu jest ucinana przez Canvas.
+        bx = xf(j - i0)
+        right_edge = bx > g["x1"] - 230
+        cv.create_text(bx - 6 if right_edge else bx + 6, yf(lo) + 22,
+                       text=f"Blue Dot {data['d'][j]} · stop pod Low {fmt(lo)}",
+                       anchor="e" if right_edge else "w", fill=BLUE_DOT, font=FONT)
     return dots
 
 
@@ -556,6 +576,9 @@ class ChartWindow(tk.Toplevel):
         self.period, self.other = "W", {"M": {}, "D": {}}   # W = tygodniowy, D = dzienny (2 lata), M = miesięczny (pełna historia) — w pamięci
         top = tk.Frame(self, bg=PANEL)
         top.pack(fill="x")
+        self.daily_style = "line"
+        self.daily_style_btn = tk.Button(top, text="D: linia", command=self.toggle_daily_style, relief="flat")
+        self.daily_style_btn.pack(side="right", padx=2, pady=2)
         self.watch_btn = tk.Button(top, text="🔕 Obserwuj", command=self.toggle_watch, relief="flat")
         self.watch_btn.pack(side="right", padx=4, pady=2)
         self.per_btns = {}   # osobne przyciski M / T / D (klawisze m / w / d)
@@ -627,6 +650,10 @@ class ChartWindow(tk.Toplevel):
         if self.period in ("M", "D"):
             return self.other[self.period].get(self.ticker)
         return self.app.store.weekly(self.ticker)
+
+    def toggle_daily_style(self):
+        self.daily_style = "bars" if self.daily_style == "line" else "line"
+        self.redraw()
 
     def toggle_period(self, to=None):
         """M / T / D (bez argumentu: tygodniowy → dzienny → miesięczny). Dzienny (2 lata) i miesięczny (pełna historia) z yfinance (ceny bez korekty),
@@ -700,8 +727,10 @@ class ChartWindow(tk.Toplevel):
             self.cv.delete("all")
             self.cv.create_text(20, 20, text="Brak danych — zrób Sync albo Ctrl+K.", anchor="w", fill=FG)
             return
+        self.daily_style_btn.config(state="normal" if self.period == "D" else "disabled",
+                                    text="D: słupki" if self.daily_style == "line" else "D: linia")
         self.geom = draw(self.cv, data, self.row_for_chart(), n_show=self.n_show, end=self.end, tlines=self.lines(), sel=self.sel,
-                         spx=self.app.store.weekly("SPY"), period=self.period)
+                         spx=self.app.store.weekly("SPY"), period=self.period, daily_style=self.daily_style)
 
     def plan(self):
         st = self.app.store

@@ -269,7 +269,9 @@ def draw(cv, data, row=None, w=None, h=None, n_show=None, end=None, tlines=(), s
         cv.create_line(x0, y, x1, y, fill=GLB_COLOR, width=3)
         cv.create_rectangle(x1 + 1, y - 9, w - 2, y + 9, fill=GLB_COLOR, outline="")
         cv.create_text(x1 + 4, y, text=fmt(level), anchor="w", fill="#000", font=FONT)
-        ty = y - 11 if y - 11 > y0 + 24 else y + 13   # przy górnej krawędzi (legenda SMA) napis pod linią
+        # Zostaw wolny pas u góry na legendę SMA; etykietę Green Line umieszczaj niżej,
+        # jeśli linia jest blisko górnej krawędzi.
+        ty = max(y0 + 38, y - 11)
         boxed(cv, x0 + 4, ty, f"GREEN LINE {fmt(level)} · kupno do {fmt(level * 1.1)}" + (" · wyjście: zamknięcie tyg. pod linią" if (row or {}).get("exit") == "GLB" else ""),
               GLB_COLOR)
     stop = (row or {}).get("macd_stop") if (row or {}).get("exit") != "GLB" else None   # metoda GLB: wyjście = zamknięcie pod Green Line
@@ -278,11 +280,18 @@ def draw(cv, data, row=None, w=None, h=None, n_show=None, end=None, tlines=(), s
         cv.create_line(x0, y, x1, y, fill=STOP_COLOR, dash=(5, 4))
         cv.create_text(x1 + 4, stop_y, text=fmt(stop), anchor="w", fill=STOP_COLOR, font=FONT)
     pl = (row or {}).get("plan")   # 📌 pozycja: stop początkowy −10 % i „sprzedaj połowę” przy −20 % od szczytu
+    # Opisy poziomów pozycji dostają osobne wiersze, gdy ich ceny są blisko siebie.
+    position_labels = []
     for v, col, lab in (((pl["stop_init"], STOP_COLOR, f"stop −10 % {fmt(pl['stop_init'])}"),
                          (pl["half_at"], "#f0b429", f"½ przy {fmt(pl['half_at'])} (−20 % od szczytu {fmt(pl['peak'])})")) if pl else ()):
         if v and pmin < v < pmax:
-            cv.create_line(x0, yf(v), x1, yf(v), fill=col, dash=(2, 3))
-            boxed(cv, x0 + 4, yf(v) - 8, lab, col)
+            yy = yf(v)
+            cv.create_line(x0, yy, x1, yy, fill=col, dash=(2, 3))
+            label_y = yy - 8
+            if any(abs(label_y - used_y) < 16 for used_y in position_labels):
+                label_y = max(y0 + 38, min(y1 - 10, label_y + 17))
+            position_labels.append(label_y)
+            boxed(cv, x0 + 4, label_y, lab, col)
     segs = draw_lines(cv, data, tlines, sel, i0, i1, xf, yf, g, step, w)
     last = c[-1]
     if last:

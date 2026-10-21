@@ -44,6 +44,26 @@ def fmt(v):
     return "—" if v is None else f"{v:,.2f}" if abs(v) < 1000 else f"{v:,.0f}"
 
 
+def boxed(cv, x, y, text, fill, anchor="w", font=FONT):
+    """Napis na tle wykresu (prostokąt w kolorze tła pod spodem), żeby nie zlewał się ze świecami i liniami."""
+    t = cv.create_text(x, y, text=text, anchor=anchor, fill=fill, font=font)
+    b = cv.bbox(t)
+    if b:
+        r = cv.create_rectangle(b[0] - 2, b[1] - 1, b[2] + 2, b[3] + 1, fill=BG, outline="")
+        cv.tag_lower(r, t)
+    return t
+
+
+def axis_spots(level_y, last_y, stop_y, gap=16):
+    """Pozycje napisów na prawej osi: Green Line zostaje, ostatnia cena i stop odsuwają się, gdy nachodzą -> (last_y, stop_y)."""
+    def away(y, ref):
+        if y is None or ref is None or abs(y - ref) >= gap:
+            return y
+        return ref + gap if y >= ref else ref - gap
+    last_y = away(last_y, level_y)
+    return last_y, away(away(stop_y, level_y), last_y)
+
+
 def fmt_vol(v):
     return "—" if v is None else f"{v / 1e9:.1f}B" if v >= 1e9 else f"{v / 1e6:.1f}M" if v >= 1e6 else f"{v / 1e3:.0f}K"
 
@@ -189,10 +209,16 @@ def draw(cv, data, row=None, w=None, h=None, n_show=None, end=None, tlines=(), s
     def yf(p):
         return y1 - (math.log(p) - lmin) / (lmax - lmin) * (y1 - y0)
 
+    level0, last0 = (row or {}).get("glb"), c[-1] if c else None
+    stop0 = (row or {}).get("macd_stop") if (row or {}).get("exit") != "GLB" else None
+    ly = yf(level0) if level0 and pmin < level0 < pmax else None
+    last_y, stop_y = axis_spots(ly, yf(last0) if last0 else None, yf(stop0) if stop0 and pmin < stop0 < pmax else None)
+    taken = [v for v in (ly, last_y, stop_y) if v is not None]
     for t in ticks(pmin, pmax):
         y = yf(t)
         cv.create_line(x0, y, x1, y, fill=GRID)
-        cv.create_text(x1 + 4, y, text=fmt(t), anchor="w", fill=DIM, font=FONT)
+        if all(abs(y - v) >= 13 for v in taken):   # podziałka ustępuje napisom Green Line / ceny / stopu
+            cv.create_text(x1 + 4, y, text=fmt(t), anchor="w", fill=DIM, font=FONT)
     u = {"M": "mies.", "D": "sesji"}.get(period, "tyg.")
     if period == "D":
         draw_rwb(cv, data, row, i0, i1, xf, yf, g, step, cfull)
@@ -228,23 +254,24 @@ def draw(cv, data, row=None, w=None, h=None, n_show=None, end=None, tlines=(), s
         cv.create_line(x0, y, x1, y, fill=GLB_COLOR, width=3)
         cv.create_rectangle(x1 + 1, y - 9, w - 2, y + 9, fill=GLB_COLOR, outline="")
         cv.create_text(x1 + 4, y, text=fmt(level), anchor="w", fill="#000", font=FONT)
-        cv.create_text(x0 + 4, y - 9, text=f"GREEN LINE {fmt(level)} · kupno do {fmt(level * 1.1)}" + (" · wyjście: zamknięcie tyg. pod linią" if (row or {}).get("exit") == "GLB" else ""),
-                       anchor="w", fill=GLB_COLOR, font=FONT)
+        ty = y - 11 if y - 11 > y0 + 24 else y + 13   # przy górnej krawędzi (legenda SMA) napis pod linią
+        boxed(cv, x0 + 4, ty, f"GREEN LINE {fmt(level)} · kupno do {fmt(level * 1.1)}" + (" · wyjście: zamknięcie tyg. pod linią" if (row or {}).get("exit") == "GLB" else ""),
+              GLB_COLOR)
     stop = (row or {}).get("macd_stop") if (row or {}).get("exit") != "GLB" else None   # metoda GLB: wyjście = zamknięcie pod Green Line
     if stop and pmin < stop < pmax:
         y = yf(stop)
         cv.create_line(x0, y, x1, y, fill=STOP_COLOR, dash=(5, 4))
-        cv.create_text(x1 + 4, y, text=fmt(stop), anchor="w", fill=STOP_COLOR, font=FONT)
+        cv.create_text(x1 + 4, stop_y, text=fmt(stop), anchor="w", fill=STOP_COLOR, font=FONT)
     pl = (row or {}).get("plan")   # 📌 pozycja: stop początkowy −10 % i „sprzedaj połowę” przy −20 % od szczytu
     for v, col, lab in (((pl["stop_init"], STOP_COLOR, f"stop −10 % {fmt(pl['stop_init'])}"),
                          (pl["half_at"], "#f0b429", f"½ przy {fmt(pl['half_at'])} (−20 % od szczytu {fmt(pl['peak'])})")) if pl else ()):
         if v and pmin < v < pmax:
             cv.create_line(x0, yf(v), x1, yf(v), fill=col, dash=(2, 3))
-            cv.create_text(x0 + 4, yf(v) - 7, text=lab, anchor="w", fill=col, font=FONT)
+            boxed(cv, x0 + 4, yf(v) - 8, lab, col)
     segs = draw_lines(cv, data, tlines, sel, i0, i1, xf, yf, g, step, w)
     last = c[-1]
     if last:
-        cv.create_text(x1 + 4, yf(last), text=fmt(last), anchor="w", fill="#ffffff", font=("Consolas", 9, "bold"))
+        cv.create_text(x1 + 4, last_y, text=fmt(last), anchor="w", fill="#ffffff", font=("Consolas", 9, "bold"))
     # wolumen + średnia 10 tyg.
     v0, v1 = g["vol"]
     vv = [x or 0 for x in vol]
@@ -273,12 +300,12 @@ def draw(cv, data, row=None, w=None, h=None, n_show=None, end=None, tlines=(), s
             cv.create_line(*[p for i, v in enumerate(s) for p in (xf(i), ym(v))], fill=col, width=1.3)
         for i in crosses:
             cv.create_text(xf(i), m1 - 6, text="▼", fill=STOP_COLOR, font=FONT)
-        cv.create_text(x0 + 4, m0 + 6, text=f"MACD (12, 26, 9) {u}" + (" · ▼ przecięcie w dół = stop pod Low tego tygodnia" if period == "W" else ""),
+        cv.create_text(x0 + 4, m0 + 6, text=f"MACD (12, 26, 9) {u}" + (" · ▼ = stop pod Low tygodnia przecięcia" if period == "W" else ""),
                        anchor="w", fill=DIM, font=FONT)
     legend = "GMMA: szybkie EMA (czerwone) / wolne (niebieskie) · jasne tło = RWB · ● Blue Dot" if period == "D" else "  ".join(f"SMA {k} {u}" for k in SMA_COLORS)
     if period == "M":
         draw_glb_history(cv, data, i0, i1, xf, yf, g, pmin, pmax, level)
-    cv.create_text(x0 + 4, y1 - 10 if period == "D" else y0 + 10, text=legend, anchor="w", fill=FG, font=FONT)
+    boxed(cv, x0 + 4, y1 - 10 if period == "D" else y0 + 10, legend, FG)
     # S&P 500 nad wykresem: kierunek rynku (skala log w oknie)
     s0, s1 = g["spx"]
     sv = []
@@ -312,7 +339,7 @@ def draw(cv, data, row=None, w=None, h=None, n_show=None, end=None, tlines=(), s
     rmax = max([q["rev"] for *_, q in shown] or [1])
     for a, b, q in shown:
         xa, xb = xf(a) - step * 0.45, xf(min(b, n - 1)) + step * 0.45
-        ht = q["rev"] / rmax * (q1 - q0 - 14)
+        ht = q["rev"] / rmax * (q1 - q0 - 26)
         col = rev_color(q.get("rev_rr"))
         cv.create_rectangle(xa + 1, q1 - ht, max(xa + 2, xb - 1), q1, fill=col, outline="", stipple="gray75")
         if xb - xa > 22 and q.get("rev_rr") is not None:
@@ -346,7 +373,7 @@ def draw_rs_line(cv, c, sv, xf, g, rs52=None):
     if rs[-1] and rs[-1] >= max(last):
         cv.create_oval(pts[-1][0] - 4, pts[-1][1] - 4, pts[-1][0] + 4, pts[-1][1] + 4, fill=RS_C, outline="")
         lab += " · ● RS na szczycie 52 tyg."
-    cv.create_text(g["x0"] + 4, b0 - 6, text=lab, anchor="w", fill=RS_C, font=FONT)
+    boxed(cv, g["x0"] + 4, b0 - 8, lab, RS_C)
 
 
 def draw_lines(cv, data, tlines, sel, i0, i1, xf, yf, g, step, w):

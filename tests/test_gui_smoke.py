@@ -248,3 +248,10 @@ def test_positions_and_watch_panel(app):
     d.del_watch()
     assert "BBB" not in st.alerts["watch"] and d.watch.get_children() == ()
     d.destroy()
+
+
+def test_axis_labels_do_not_overlap():
+    assert A_chart.axis_spots(100, 105, None) == (116, None)            # cena tuż pod Green Line -> niżej
+    assert A_chart.axis_spots(100, 95, 300) == (84, 300)                # cena tuż nad -> wyżej, stop daleko bez zmian
+    last, stop = A_chart.axis_spots(100, 200, 110)
+    assert last == 200 and stop == 116

@@ -319,67 +319,6 @@ class App:
 
 
 
-class ColumnsDialog(tk.Toplevel):
-    """Wybór widocznych kolumn dla listy skanera, pozycji i obserwowanych; wybór zapisuje się w settings.json."""
-
-    GROUPS = (
-        ("Lista skanera", "main_columns", [(c[0], c[1]) for c in COLUMNS]),
-        ("Pozycje", "pos_columns", [(c, c) for c in PositionsDialog.POS]),
-        ("Obserwowane", "watch_columns", [(c, c) for c in PositionsDialog.WATCH]),
-    )
-
-    def __init__(self, app):
-        super().__init__(app.root)
-        self.app = app
-        self.title("Widoczne kolumny")
-        self.configure(bg=PANEL)
-        apply_dark(self)
-        self.vars = {}
-        outer = tk.Frame(self, bg=PANEL)
-        outer.pack(fill="both", expand=True, padx=12, pady=12)
-        tk.Label(outer, text="Zaznacz kolumny, które chcesz widzieć. Zmiany zapisują się na przyszłe uruchomienia.",
-                 bg=PANEL, fg="#8b95a3", wraplength=520, justify="left").pack(anchor="w", pady=(0, 8))
-        for title, setting_key, choices in self.GROUPS:
-            group = tk.LabelFrame(outer, text=title, bg=PANEL, fg="#c9d1d9", padx=8, pady=6)
-            group.pack(fill="x", expand=False, pady=4)
-            current = app.store.settings.get(setting_key)
-            selected = set(current) if current else {key for key, _ in choices}
-            for i, (key, label) in enumerate(choices):
-                var = tk.BooleanVar(value=key in selected)
-                self.vars[(setting_key, key)] = var
-                cb = tk.Checkbutton(group, text=label, variable=var, bg=PANEL, anchor="w")
-                cb.grid(row=i // 4, column=i % 4, sticky="w", padx=3, pady=1)
-            for col in range(4):
-                group.grid_columnconfigure(col, weight=1)
-        buttons = tk.Frame(outer, bg=PANEL)
-        buttons.pack(fill="x", pady=(10, 0))
-        tk.Button(buttons, text="Wszystkie", command=self.select_all, relief="flat").pack(side="left")
-        tk.Button(buttons, text="Zapisz", command=self.save, relief="flat").pack(side="right")
-        tk.Button(buttons, text="Anuluj", command=self.destroy, relief="flat").pack(side="right", padx=6)
-        self.bind("<Escape>", lambda e: self.destroy())
-
-    def select_all(self):
-        for var in self.vars.values():
-            var.set(True)
-
-    def save(self):
-        for title, setting_key, choices in self.GROUPS:
-            visible = [key for key, _ in choices if self.vars[(setting_key, key)].get()]
-            if not visible:
-                messagebox.showinfo("Kolumny", f"Wybierz przynajmniej jedną kolumnę: {title}.", parent=self)
-                return
-            self.app.store.settings[setting_key] = visible
-            if setting_key == "main_columns":
-                self.app.tree["displaycolumns"] = visible
-            else:
-                dialog = getattr(self.app, "_positions_dialog", None)
-                if dialog is not None and dialog.winfo_exists():
-                    tree = dialog.pos if setting_key == "pos_columns" else dialog.watch
-                    tree["displaycolumns"] = visible
-        self.app.store.save_settings()
-        self.destroy()
-
-
 class SettingsDialog(tk.Toplevel):
     """Skanery Finviz (nazwa + filtr + limit spółek; każdy liczy tę samą strategię, ma własną listę po Sync) i User-Agent dla SEC."""
 
@@ -675,6 +614,67 @@ class PositionsDialog(tk.Toplevel):
         self.app.store.save_alerts()
         self.app.refresh()
         self.fill()
+
+
+class ColumnsDialog(tk.Toplevel):
+    """Wybór widocznych kolumn dla listy skanera, pozycji i obserwowanych; wybór zapisuje się w settings.json."""
+
+    GROUPS = (
+        ("Lista skanera", "main_columns", [(c[0], c[1]) for c in COLUMNS]),
+        ("Pozycje", "pos_columns", [(c, c) for c in PositionsDialog.POS]),
+        ("Obserwowane", "watch_columns", [(c, c) for c in PositionsDialog.WATCH]),
+    )
+
+    def __init__(self, app):
+        super().__init__(app.root)
+        self.app = app
+        self.title("Widoczne kolumny")
+        self.configure(bg=PANEL)
+        apply_dark(self)
+        self.vars = {}
+        outer = tk.Frame(self, bg=PANEL)
+        outer.pack(fill="both", expand=True, padx=12, pady=12)
+        tk.Label(outer, text="Zaznacz kolumny, które chcesz widzieć. Zmiany zapisują się na przyszłe uruchomienia.",
+                 bg=PANEL, fg="#8b95a3", wraplength=520, justify="left").pack(anchor="w", pady=(0, 8))
+        for title, setting_key, choices in self.GROUPS:
+            group = tk.LabelFrame(outer, text=title, bg=PANEL, fg="#c9d1d9", padx=8, pady=6)
+            group.pack(fill="x", expand=False, pady=4)
+            current = app.store.settings.get(setting_key)
+            selected = set(current) if current else {key for key, _ in choices}
+            for i, (key, label) in enumerate(choices):
+                var = tk.BooleanVar(value=key in selected)
+                self.vars[(setting_key, key)] = var
+                cb = tk.Checkbutton(group, text=label, variable=var, bg=PANEL, anchor="w")
+                cb.grid(row=i // 4, column=i % 4, sticky="w", padx=3, pady=1)
+            for col in range(4):
+                group.grid_columnconfigure(col, weight=1)
+        buttons = tk.Frame(outer, bg=PANEL)
+        buttons.pack(fill="x", pady=(10, 0))
+        tk.Button(buttons, text="Wszystkie", command=self.select_all, relief="flat").pack(side="left")
+        tk.Button(buttons, text="Zapisz", command=self.save, relief="flat").pack(side="right")
+        tk.Button(buttons, text="Anuluj", command=self.destroy, relief="flat").pack(side="right", padx=6)
+        self.bind("<Escape>", lambda e: self.destroy())
+
+    def select_all(self):
+        for var in self.vars.values():
+            var.set(True)
+
+    def save(self):
+        for title, setting_key, choices in self.GROUPS:
+            visible = [key for key, _ in choices if self.vars[(setting_key, key)].get()]
+            if not visible:
+                messagebox.showinfo("Kolumny", f"Wybierz przynajmniej jedną kolumnę: {title}.", parent=self)
+                return
+            self.app.store.settings[setting_key] = visible
+            if setting_key == "main_columns":
+                self.app.tree["displaycolumns"] = visible
+            else:
+                dialog = getattr(self.app, "_positions_dialog", None)
+                if dialog is not None and dialog.winfo_exists():
+                    tree = dialog.pos if setting_key == "pos_columns" else dialog.watch
+                    tree["displaycolumns"] = visible
+        self.app.store.save_settings()
+        self.destroy()
 
 
 class AlertsDialog(tk.Toplevel):

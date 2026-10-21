@@ -1,6 +1,6 @@
 """Obliczenia (czyste funkcje, bez sieci i GUI): Green Line z miesięcznych High (jak w oryginale Dr. Wisha), stan GLB na zamknięciu tygodnia, MACD tygodniowy,
 średnie, obrót i warunki strategii z backtestu (płynny rynek USA 2015–2026):
-  - obrót dzienny ≥ 100 mln $, przychody kw. ≥ +15 % r/r, marża operacyjna ≥ +3 pp r/r (z SEC), P/S < 20,
+  - przychody kw. ≥ +15 % r/r, marża operacyjna ≥ +3 pp r/r (z SEC), P/S < 20,
   - siła względna: akcja przez 52 tyg. ≥ 50 pp lepiej od S&P 500 (SPY),
   - wejście: zamknięcie tygodnia 0–10 % nad Green Line (rekord wszech czasów miesięcznego High, który stoi ≥ 3 zamknięte miesiące),
   - wyjście: tygodniowy MACD (12, 26, 9) — stop pod Low tygodnia, w którym MACD przeciął sygnał w dół, plus stop 10 % pod wejściem.
@@ -14,7 +14,7 @@ ENTRY_MAX_PCT = 10.0    # wejście do 10 % nad linią
 # Warunki = tylko te, które w strategii (GLB 0–10 %, stop 10 % + MACD tyg., wszystkie sygnały 2015–2026, ceny bez korekty) mają największy wpływ.
 # Razem: +15,6 % na transakcję, portfel wszystkich 36,6 % rocznie (2015–20 43,9 / 2021–26 29,6; 2020–26 46,5 %), DD −55 %, mało sygnałów naraz.
 # Usunięte, bo przy tych warunkach nic nie zmieniały: przychody kw. ≥ 25 mln $, zysk oper. w $ ↑, „Mocne” (Δ marży ≥ 10 pp), rozwodnienie, Potencjał.
-MIN_TURNOVER = 100e6    # obrót dzienny ($) — odcina dziwne / małe spółki (sam blueprint: +5,6 % vs +4,0 % na transakcję przy 50 mln $)
+# Obrót nie jest warunkiem (użytkownik: „usuń limit obrotu w ogóle, sam będę filtrował w Finviz po wolumenie”); backtest liczono na obrocie ≥ 100 mln $.
 MIN_REV_GROWTH = 15.0   # przychody kw. r/r (%) — bez niego 34,9 % rocznie
 MIN_DOPM = 3.0          # zmiana marży operacyjnej r/r (pp) — bez niej 28,9 %
 MAX_PS = 20.0           # wycena P/S < 20 (kapitalizacja / przychody TTM) — bez niej 31,5 % (drogie spółki tracą); odcina też RGTI (P/S 200)
@@ -189,11 +189,11 @@ def surprises(est, as_of):
 
 
 def passes(row):
-    """Warunki strategii: obrót ≥ 100 mln $, przychody kw. ≥ +15 % r/r, marża oper. ≥ +3 pp r/r, P/S < 20 (brak P/S nie blokuje),
+    """Warunki strategii: przychody kw. ≥ +15 % r/r, marża oper. ≥ +3 pp r/r, P/S < 20 (brak P/S nie blokuje),
     siła względna 52 tyg. ≥ 50 pp nad SPY, 2 ostatnie raporty powyżej konsensusu EPS (brak historii / niespodzianek blokuje — tak było w backteście:
     bez niespodzianek 36,6 % rocznie, z nimi 42,4 %, oba okresy lepiej)."""
-    t, r, d, ps, rs = (row.get(k) for k in ("turnover", "rev_rr", "dopm", "ps", "rs"))
-    return (_ok(t) and t >= MIN_TURNOVER and _ok(r) and r >= MIN_REV_GROWTH and _ok(d) and d >= MIN_DOPM
+    r, d, ps, rs = (row.get(k) for k in ("rev_rr", "dopm", "ps", "rs"))
+    return (_ok(r) and r >= MIN_REV_GROWTH and _ok(d) and d >= MIN_DOPM
             and not (_ok(ps) and ps >= MAX_PS) and _ok(rs) and rs >= MIN_RS and row.get("beat2") is True)
 
 

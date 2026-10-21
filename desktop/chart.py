@@ -511,7 +511,6 @@ def fund_panel_lines(r, pos=None, plan=None, exit_method="MACD"):
         out.append((("✓ " if ok is True else "✗ " if ok is False else "— ") + txt, "ok" if ok is True else "no" if ok is False else "na"))
     def cond(x, test):
         return None if x is None else test(x)
-    item(cond(r.get("turnover"), lambda x: x >= calc.MIN_TURNOVER), "obrót ≥ 100 mln $ dziennie")
     item(cond(r.get("rev_rr"), lambda x: x >= calc.MIN_REV_GROWTH), "przychody kw. ≥ +15 % r/r")
     item(cond(r.get("dopm"), lambda x: x >= calc.MIN_DOPM), "marża oper. ≥ +3 pp r/r")
     item(cond(r.get("ps"), lambda x: x < calc.MAX_PS), "wycena P/S < 20")

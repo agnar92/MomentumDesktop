@@ -94,15 +94,24 @@ def blue_dots(highs, lows, closes, level, lvl=20):
             and _ok(level) and _ok(closes[i]) and closes[i] >= level]
 
 
+def fresh_blue_dot(daily, level, sessions=5):
+    """Blue Dot na dziennym w ostatnich `sessions` sesjach (wejście, gdy cena jest > 10 % nad Green Line i to nie tydzień przebicia) -> data albo None."""
+    if not daily or not daily.get("c") or not _ok(level):
+        return None
+    dots = blue_dots(daily["h"], daily["l"], daily["c"], level)
+    return daily["d"][dots[-1]] if dots and dots[-1] >= len(daily["c"]) - sessions else None
+
+
 def glb_state(price, prev, level, max_pct=ENTRY_MAX_PCT):
-    """Stan na zamknięciu tygodnia: SYGNAŁ (0–max_pct % nad linią; „WYBICIE”, gdy poprzedni tydzień był pod nią), NAD (dalej), POD, BRAK."""
+    """Stan na zamknięciu tygodnia: WYBICIE (tydzień przebicia — poprzedni pod linią — przy dowolnej wysokości), SYGNAŁ (0–max_pct % nad linią),
+    NAD (dalej; wejście dopiero po Blue Dot na dziennym — stan „BLUE DOT”, `fresh_blue_dot`), POD, BRAK."""
     if not (_ok(price) and _ok(level) and level > 0):
         return "BRAK"
     if price < level:
         return "POD"
-    if price > level * (1 + max_pct / 100):
-        return "NAD"
-    return "WYBICIE" if _ok(prev) and prev < level else "SYGNAŁ"
+    if _ok(prev) and prev < level:   # tydzień przebicia: mocne wybicie przy dowolnej wysokości nad linią
+        return "WYBICIE"
+    return "NAD" if price > level * (1 + max_pct / 100) else "SYGNAŁ"
 
 
 def sma(values, n):

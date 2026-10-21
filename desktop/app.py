@@ -17,7 +17,7 @@ COLUMNS = [  # (klucz, nagłówek, szerokość, format)
     ("glb", "Green Line", 90, "p"), ("glb_pct", "Do linii %", 85, "%"), ("glb_state", "GLB", 85, "s"), ("macd", "MACD", 60, "s"), ("trend", "SMA 10>30", 85, "b"),
     ("macd_stop", "Stop MACD", 85, "p"), ("dopm", "Δ marża oper. pp", 120, "%"), ("rev_rr", "Przychody r/r %", 115, "%"),
     ("dgm", "Δ marża brutto pp", 125, "%"), ("quarter", "Kwartał", 105, "s"), ("turnover", "Obrót mln $", 95, "m"),
-    ("ps", "P/S", 60, "x"), ("rs", "RS 52 tyg. pp", 105, "%"), ("surp", "Niesp. EPS %", 95, "%"), ("beat2", "2× nad konsensus", 115, "b"), ("eps_rev", "Rewizja EPS 90 dni %", 140, "%"), ("rvol_w", "RVol tyg.", 80, "x"), ("rvol_d", "RVol dz.", 75, "x"), ("ok", "Warunki", 75, "b"), ("slow", "Hamuje", 95, "w"),
+    ("ps", "P/S", 60, "x"), ("rs", "RS 52 tyg. pp", 105, "%"), ("surp", "Niesp. EPS %", 95, "%"), ("beat2", "2× nad konsensus", 115, "b"), ("eps_rev", "Rewizja EPS 90 dni %", 140, "%"), ("rvol_w", "RVol tyg.", 80, "x"), ("rvol_d", "RVol dz.", 75, "x"), ("cc250", "C/C250", 85, "r"), ("ok", "Warunki", 75, "b"), ("slow", "Hamuje", 95, "w"),
 ]
 SIGNAL = ("WYBICIE", "SYGNAŁ", "BLUE DOT")
 # filtry listy (wszystkie naraz, ORAZ): {kolumna: {"in": [wartości]} | {"min", "max"}}; liczby w jednostkach tabeli (obrót w mln $)
@@ -514,7 +514,7 @@ def pos_rows(store):
         ex = r.get("glb") if exit_m == "GLB" else r.get("macd_stop")
         st = lines.position_status(pl, r, exit_m)
         out.append((t, [t, " · ".join(st) or "trzymaj", p.get("since") or "", cell(pl["entry"], "p"), cell(last, "p"), cell(ch, "%"), cell(pl["peak"], "p"),
-                        cell(pl["half_at"], "p"), cell(pl["stop_init"], "p"), cell(ex, "p"), r.get("glb_state") or "", r.get("macd") or "", cell(r.get("cc250"), "r")], st))
+                        cell(pl["half_at"], "p"), cell(pl["stop_init"], "p"), cell(ex, "p"), r.get("glb_state") or "", r.get("macd") or ""], st))
     return out
 
 
@@ -525,14 +525,14 @@ def watch_rows(store):
             continue
         r = store.row(t) or {}
         out.append((t, [t, cell(r.get("price"), "p"), cell(r.get("glb"), "p"), cell(r.get("glb_pct"), "%"), r.get("glb_state") or "", r.get("macd") or "",
-                        cell(r.get("trend"), "b"), cell(r.get("rs"), "%"), cell(r.get("ok"), "b"), cell(r.get("cc250"), "r")]))
+                        cell(r.get("trend"), "b"), cell(r.get("rs"), "%"), cell(r.get("ok"), "b")]))
     return out
 
 
 class PositionsDialog(tk.Toplevel):
     """📌 Pozycje (plan wyjścia i co zrobić teraz) i 🔔 obserwowane spółki; dwuklik = wykres."""
-    POS = ("Ticker", "Co teraz", "Od", "Kupno", "Cena", "Zmiana %", "Szczyt", "½ przy", "Stop −10 %", "Wyjście", "GLB", "MACD", "C/C[max]")
-    WATCH = ("Ticker", "Cena", "Green Line", "Do linii %", "GLB", "MACD", "SMA 10>30", "RS 52 tyg. pp", "Warunki", "C/C[max]")
+    POS = ("Ticker", "Co teraz", "Od", "Kupno", "Cena", "Zmiana %", "Szczyt", "½ przy", "Stop −10 %", "Wyjście", "GLB", "MACD")
+    WATCH = ("Ticker", "Cena", "Green Line", "Do linii %", "GLB", "MACD", "SMA 10>30", "RS 52 tyg. pp", "Warunki")
 
     def __init__(self, app):
         super().__init__(app.root)

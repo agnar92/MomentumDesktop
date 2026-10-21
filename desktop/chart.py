@@ -467,16 +467,6 @@ def draw_rwb(cv, data, row, i0, i1, xf, yf, g, step, cfull):
         if lo:
             y = yf(lo) + 9
             cv.create_oval(xf(i - i0) - 4, y - 4, xf(i - i0) + 4, y + 4, fill=BLUE_DOT, outline="")
-    if dots:
-        j = dots[-1]
-        lo = data["l"][j]
-        cv.create_line(xf(j - i0), yf(lo), g["x1"], yf(lo), fill=BLUE_DOT, dash=(2, 3))
-        # Etykieta po lewej, gdy Blue Dot wypada blisko prawej krawędzi — inaczej cena stopu jest ucinana przez Canvas.
-        bx = xf(j - i0)
-        right_edge = bx > g["x1"] - 230
-        cv.create_text(bx - 6 if right_edge else bx + 6, yf(lo) + 22,
-                       text=f"Blue Dot {data['d'][j]} · stop pod Low {fmt(lo)}",
-                       anchor="e" if right_edge else "w", fill=BLUE_DOT, font=FONT)
     return dots
 
 
@@ -811,7 +801,15 @@ class ChartWindow(tk.Toplevel):
         if not 0 <= i < self.geom["n"]:
             return
         self.cv.create_line(e.x, g["spx"][0], e.x, g["macd"][1], fill="#3a4654", tags="tip")
-        lines = [s for s in info_lines(data, self.geom["i0"] + i) if s]
+        index = self.geom["i0"] + i
+        lines = [s for s in info_lines(data, index) if s]
+        # Blue Dot pokazujemy w dymku danych po najechaniu na świecę, bez dodatkowej linii na wykresie.
+        if self.period == "D" and self.daily_style == "line":
+            row = self.app.store.row(self.ticker) or {}
+            dots = calc.blue_dots(data["h"], data["l"], data["c"], row.get("glb"))
+            if index in dots:
+                low = data["l"][index]
+                lines.extend([f"BLUE DOT · {data['d'][index]}", f"Stop pod Low: {fmt(low)}"])
         x = e.x + 14 if e.x < g["x1"] - 200 else e.x - 190
         self.cv.create_rectangle(x, e.y + 10, x + 176, e.y + 16 + 15 * len(lines), fill="#1b2027", outline="#3a4654", tags="tip")
         for k, s in enumerate(lines):

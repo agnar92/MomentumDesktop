@@ -43,6 +43,21 @@ def test_eval_alerts_dedup():
     assert L.eval_alerts(st, lambda t: row, lambda t: series, "2026-02-07T09:00", D[4]) == []
 
 
+
+def test_daily_line_alert_uses_daily_close_and_deduplicates():
+    dates = ["2026-10-19", "2026-10-20", "2026-10-21"]
+    daily = {"d": dates, "c": [98, 99, 101]}
+    ln = {"id": "daily-1", "period": "D", "d1": dates[0], "p1": 100, "d2": dates[1], "p2": 100, "alert": True}
+    st = {"lines": {"AAA": [ln]}, "watch": {}, "pos": {}, "log": []}
+
+    fresh = L.eval_alerts(st, lambda t: None, lambda t: None, "2026-10-22T09:00",
+                          daily_for=lambda t: daily)
+    assert len(fresh) == 1
+    assert fresh[0]["key"] == "L:AAA:D:daily-1:2026-10-21:up"
+    assert "zamknięcie dzienne nad linią trendu" in fresh[0]["msg"]
+    assert L.eval_alerts(st, lambda t: None, lambda t: None, "2026-10-22T10:00",
+                         daily_for=lambda t: daily) == []
+
 def test_list_filters():
     from desktop.app import FILTER_PRESETS, active_filters, pass_filters
     rows = [{"ticker": "A", "ok": True, "glb_state": "NAD", "macd": "nad", "glb_pct": 15, "turnover": 80e6},

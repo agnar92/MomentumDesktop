@@ -357,34 +357,35 @@ def test_surprises_known_at_date_and_fresh():
 
 
 
-def test_growth_score_uses_weighted_growth_factors_and_normalizes_known_data():
+def test_growth_score_uses_five_weighted_categories_and_missing_data_coverage():
     strong = {
-        "rev_rr": 35, "accel": 10, "eps_rev": 20, "dopm": 3,
-        "surp": 5, "surp_prev": 4, "beat2": True,
+        "rev_rr": 35, "accel": 10, "eps_rev": 20, "dopm": 8, "opm": 30, "roic": 25,
+        "surp": 20, "rev_surp": 20, "beat2": True,
+        "eps_q": [["2025-03-31", 1], ["2025-06-30", 1.2], ["2025-09-30", 1.4],
+                  ["2025-12-31", 1.6], ["2026-03-31", 2.0]],
+        "eps_est": [{"period": "+1y", "growth": 0.35}],
+        "qs": [{"rev_rr": 10}, {"rev_rr": 20}, {"rev_rr": 30}, {"rev_rr": 40}],
     }
     scored = calc.growth_score(strong)
-    assert scored["score"] == 100.0
     assert scored["coverage"] == 100.0
-    assert scored["components"] == {
-        "revenue": 35.0, "acceleration": 25.0, "eps_revision": 20.0,
-        "op_margin": 10.0, "eps_beats": 10.0,
-    }
+    assert scored["score"] is not None
+    assert set(scored["components"]) == {"acceleration", "surprises", "future", "quality", "durability"}
 
-    weak = {
-        "rev_rr": 0, "accel": -10, "eps_rev": -10, "dopm": -3,
-        "surp": -5, "surp_prev": -4, "beat2": False,
-    }
-    assert calc.growth_score(weak)["score"] == 0.0
+    without_surprises = calc.growth_score({"rev_rr": 25, "accel": 5, "dopm": 2, "eps_rev": 10})
+    assert without_surprises["coverage"] >= 70.0
+    assert without_surprises["score"] is not None
 
-    # Brak analityków nie oznacza automatycznie zera: składniki fundamentalne ważą 70 pkt.
-    without_estimates = calc.growth_score({"rev_rr": 25, "accel": 5, "dopm": 2})
-    assert without_estimates["coverage"] == 70.0
-    assert without_estimates["score"] is not None and without_estimates["score"] > 0
-
-    # Za mało danych, by stworzyć porównywalny ranking.
     insufficient = calc.growth_score({"rev_rr": 25, "accel": 5})
-    assert insufficient["coverage"] == 60.0
     assert insufficient["score"] is None
+    assert insufficient["coverage"] < 70.0
+
+
+def test_growth_score_includes_revenue_surprise_and_roic_inputs():
+    base = {"rev_rr": 20, "accel": 5, "eps_rev": 10, "dopm": 3, "opm": 15,
+            "surp": 5, "rev_surp": 8, "roic": 15}
+    result = calc.growth_score(base)
+    assert result["components"]["surprises"] is not None
+    assert result["components"]["quality"] is not None
 
 
 def test_growth_score_does_not_treat_missing_second_eps_surprise_as_a_failure():

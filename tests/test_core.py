@@ -462,4 +462,5 @@ def test_growth_score_uses_finviz_roi_and_growth_fields():
     })
     assert result["score"] is not None
     assert result["coverage"] >= 70
-    assert result["components"].get("roi") is not None
+    assert result["components"].get("quality") is not None
+    assert result["component_coverage"]["quality"] == 20

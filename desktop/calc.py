@@ -291,11 +291,18 @@ def growth_score(row, min_coverage=GROWTH_SCORE_MIN_COVERAGE):
             eps_growth = (latest / prior - 1) * 100
     acceleration_values = [x for x in (row.get("accel"), row.get("rev_rr"), eps_growth) if _ok(x)]
     acceleration = sum(acceleration_values) / len(acceleration_values) if acceleration_values else None
-    # EPS surprise is available; revenue surprise and business catalysts are not currently sourced.
-    surprise = row.get("surp")
-    surprise_points = _growth_component_points(surprise, ((-20, 0), (0, 8), (5, 14), (10, 18), (20, 20)))
-    if surprise_points is not None and row.get("beat2") is True:
-        surprise_points = min(20.0, surprise_points + 2.0)
+    # Score EPS and revenue surprises equally; absent consensus data stays missing, never zero.
+    surprise_values = []
+    surprise = _growth_component_points(row.get("surp"), ((-20, 0), (0, 8), (5, 14), (10, 18), (20, 20)))
+    revenue_surprise = _growth_component_points(row.get("rev_surp"), ((-20, 0), (0, 8), (5, 14), (10, 18), (20, 20)))
+    if surprise is not None:
+        surprise_values.append(surprise)
+        if row.get("beat2") is True:
+            surprise = min(20.0, surprise + 2.0)
+            surprise_values[-1] = surprise
+    if revenue_surprise is not None:
+        surprise_values.append(revenue_surprise)
+    surprise_points = sum(surprise_values) / len(surprise_values) if surprise_values else None
     future_values = []
     p = _growth_component_points(eps_next_growth, ((0, 0), (5, 6), (10, 12), (20, 17), (35, 20)))
     if p is not None:
@@ -308,6 +315,8 @@ def growth_score(row, min_coverage=GROWTH_SCORE_MIN_COVERAGE):
     if p is not None:
         quality_values.append(p)
     p = _growth_component_points(row.get("dopm"), ((-5, 0), (0, 8), (3, 14), (8, 20)))
+    if p is not None: quality_values.append(p)
+    p = _growth_component_points(row.get("roic"), ((0, 0), (5, 5), (10, 12), (15, 16), (25, 20)))
     if p is not None: quality_values.append(p)
     quality = sum(quality_values) / len(quality_values) if quality_values else None
     # Use multi-quarter revenue history as a proxy for durability; catalysts need manual review.
@@ -326,7 +335,7 @@ def growth_score(row, min_coverage=GROWTH_SCORE_MIN_COVERAGE):
     score = earned / coverage * 100.0 if coverage >= float(min_coverage) and coverage else None
     return {"score": round(score, 1) if score is not None else None,
             "coverage": round(coverage, 1), "points": round(earned, 2), "components": points,
-            "notes": ["Revenue Surprise unavailable", "ROI/ROIC unavailable", "catalysts require manual review"]}
+            "notes": ["Revenue surprise and ROIC are source-dependent estimates; catalysts require manual review"]}
 
 
 
@@ -347,7 +356,7 @@ def build_row(base, weekly, months, fund, spy=None, est=None, conditions=None):
     row["trend"] = s10 > s30 if s10 is not None and s30 is not None else None   # trend tygodniowy: SMA 10 > SMA 30 (filtr listy)
     row["rvol_w"] = rel_volume(v, RVOL_W)
     row["rvol_d"] = None   # dzienny: uzupełnia odświeżenie ze świec dziennych (rel_volume(v_dzienne, RVOL_D))
-    row.update({k: (fund or {}).get(k) for k in ("rev_rr", "rev_rr1", "accel", "dopm", "dopm1", "opm", "dgm", "quarter", "qs", "op_d", "rev_q", "ttm_rev", "dil")})
+    row.update({k: (fund or {}).get(k) for k in ("rev_rr", "rev_rr1", "accel", "dopm", "dopm1", "opm", "dgm", "quarter", "qs", "op_d", "rev_q", "ttm_rev", "dil", "roic")})
     f = fund or {}
     mcap = row.get("market_cap") or (price * f["shares"] if _ok(price) and _ok(f.get("shares")) else None)
     row["ps"] = mcap / f["ttm_rev"] if _ok(mcap) and _ok(f.get("ttm_rev")) and f["ttm_rev"] > 0 else None
@@ -356,6 +365,7 @@ def build_row(base, weekly, months, fund, spy=None, est=None, conditions=None):
     # tydzień z danych zaczyna się w poniedziałek: raport z tego tygodnia (do piątku) też jest znany
     row["surp"], row["surp_prev"], row["beat2"] = surprises(est, (dt.date.fromisoformat(as_of) + dt.timedelta(days=6)).isoformat()) if as_of else (None, None, None)
     row["eps_rev"] = (est or {}).get("rev90")
+    row["rev_surp"] = _latest_surprise((est or {}).get("revenue_surp"), (dt.date.fromisoformat(as_of) + dt.timedelta(days=6)).isoformat()) if as_of else None
     row["eps_q"] = (est or {}).get("eps_q") or []
     row["eps_est"] = (est or {}).get("eps_est") or []
     row["upside"] = (est or {}).get("upside")

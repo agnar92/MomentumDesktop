@@ -357,34 +357,24 @@ def test_surprises_known_at_date_and_fresh():
 
 
 
-def test_growth_score_uses_weighted_growth_factors_and_normalizes_known_data():
-    strong = {
-        "rev_rr": 35, "accel": 10, "eps_rev": 20, "dopm": 3,
-        "surp": 5, "surp_prev": 4, "beat2": True,
+def test_growth_score_v2_uses_five_fundamental_categories_and_missing_coverage():
+    row = {
+        "rev_rr": 35, "accel": 10, "eps_growth_q": 50, "surp": 20,
+        "revenue_surprise": 20, "eps_growth_next_year": 50, "eps_rev": 20,
+        "opm": 25, "dopm": 6, "roic": 20,
+        "qs": [{"rev_rr": 10}, {"rev_rr": 20}, {"rev_rr": 30}],
+        "eps_growth_history": [5, 10, 15], "growth_catalyst_score": 2,
     }
-    scored = calc.growth_score(strong)
-    assert scored["score"] == 100.0
-    assert scored["coverage"] == 100.0
-    assert scored["components"] == {
-        "revenue": 35.0, "acceleration": 25.0, "eps_revision": 20.0,
-        "op_margin": 10.0, "eps_beats": 10.0,
-    }
-
-    weak = {
-        "rev_rr": 0, "accel": -10, "eps_rev": -10, "dopm": -3,
-        "surp": -5, "surp_prev": -4, "beat2": False,
-    }
-    assert calc.growth_score(weak)["score"] == 0.0
-
-    # Brak analityków nie oznacza automatycznie zera: składniki fundamentalne ważą 70 pkt.
-    without_estimates = calc.growth_score({"rev_rr": 25, "accel": 5, "dopm": 2})
-    assert without_estimates["coverage"] == 70.0
-    assert without_estimates["score"] is not None and without_estimates["score"] > 0
-
-    # Za mało danych, by stworzyć porównywalny ranking.
-    insufficient = calc.growth_score({"rev_rr": 25, "accel": 5})
-    assert insufficient["coverage"] == 60.0
-    assert insufficient["score"] is None
+    result = calc.growth_score(row)
+    assert result["score"] == 100.0
+    assert result["coverage"] == 100.0
+    assert result["groups"]["acceleration"] == pytest.approx(30)
+    assert result["groups"]["surprises"] == pytest.approx(20)
+    assert result["groups"]["future"] == pytest.approx(20)
+    assert result["groups"]["quality"] == pytest.approx(20)
+    assert result["groups"]["durability"] == pytest.approx(10)
+    partial = calc.growth_score({"rev_rr": 25, "accel": 5, "eps_growth_q": 20, "surp": 5})
+    assert partial["coverage"] < 70 and partial["score"] is None
 
 
 def test_growth_score_does_not_treat_missing_second_eps_surprise_as_a_failure():

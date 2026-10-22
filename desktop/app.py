@@ -103,6 +103,7 @@ class App:
         apply_dark(self.root)
         self.store = Store(base)
         self.q, self.chart, self.sort = queue.Queue(), None, None
+        self.growth_dialog = None
         self._daily_alert_refreshing = False
         self._symbol_syncs = set()
         bar = tk.Frame(self.root, bg=PANEL)
@@ -115,6 +116,7 @@ class App:
         self.scanner_box.pack(side="left", padx=2)
         self.scanner_box.bind("<<ComboboxSelected>>", lambda e: self.select_scanner(self.scanner.get()))
         tk.Button(bar, text="Skanery / ustawienia…", command=self.open_settings, relief="flat").pack(side="left", padx=4)
+        tk.Button(bar, text="Growth Score", command=self.open_growth_score, relief="flat").pack(side="left", padx=4)
         self.only_ok = tk.BooleanVar(value=False)
         tk.Checkbutton(bar, text="tylko spełniające warunki", variable=self.only_ok, command=self.refresh, bg=PANEL).pack(side="left", padx=8)
         tk.Button(bar, text="Warunki…", command=lambda: StrategyConditionsDialog(self), relief="flat").pack(side="left", padx=2)
@@ -261,6 +263,8 @@ class App:
                                 f"   (warunki konieczne: {condition_text};"
                                 f" sygnał: zamknięcie tyg. 0–{calc.ENTRY_MAX_PCT:g} % nad Green Line; wyjście: MACD tyg. + stop {calc.STOP_PCT:g} %)")
 
+        self.refresh_growth_dialog()
+
     def sort_by(self, key):
         self.sort = (key, not self.sort[1]) if self.sort and self.sort[0] == key else (key, key not in ("ticker", "company", "sector"))
         self.refresh()
@@ -346,6 +350,28 @@ class App:
 
     def open_symbol(self):
         SymbolDialog(self)
+
+    def open_growth_score(self):
+        if self.growth_dialog is not None:
+            try:
+                if self.growth_dialog.winfo_exists():
+                    self.growth_dialog.fill()
+                    self.growth_dialog.lift()
+                    return
+            except tk.TclError:
+                pass
+        self.growth_dialog = GrowthScoreDialog(self)
+
+    def refresh_growth_dialog(self):
+        dialog = self.growth_dialog
+        if dialog is not None:
+            try:
+                if dialog.winfo_exists():
+                    dialog.fill()
+                else:
+                    self.growth_dialog = None
+            except tk.TclError:
+                self.growth_dialog = None
 
     def _poll(self):
         try:
@@ -1135,6 +1161,103 @@ def checklist(row, pos=None, conditions=None):
         lines_ += ["", f"⚠ Masz pozycję, a ostatni raport pokazuje hamowanie{' i spadek marży brutto' if r['slow'] == 'HAMUJE+MB' else ''} — spadek ≥ 20 % w 6 mies. "
                        f"w {'50' if r['slow'] == 'HAMUJE+MB' else '44'} % przypadków (normalnie 33 %). Rozważ zacieśnienie stopu."]
     return lines_
+
+
+class GrowthScoreDialog(tk.Toplevel):
+    """Prosty ranking Growth Score dla spółek z aktualnego skanera; klik w ticker otwiera wykres."""
+
+    def __init__(self, app):
+        super().__init__(app.root)
+        self.app = app
+        self.descending = True
+        self.title("Growth Score — ranking wzrostu")
+        self.geometry("390x650")
+        self.minsize(330, 350)
+        self.configure(bg=PANEL)
+        apply_dark(self)
+        self.transient(app.root)
+        tk.Label(self, text="Growth Score · bieżący skaner", bg=PANEL, fg=FG,
+                 font=("Segoe UI", 12, "bold")).pack(anchor="w", padx=12, pady=(12, 4))
+        self.count_label = tk.Label(self, text="", bg=PANEL, fg="#8b95a3", anchor="w")
+        self.count_label.pack(fill="x", padx=12, pady=(0, 8))
+
+        wrap = tk.Frame(self, bg=BG)
+        wrap.pack(fill="both", expand=True, padx=10)
+        self.tree = ttk.Treeview(wrap, columns=("ticker", "score"), show="headings", height=24, selectmode="browse")
+        self.tree.heading("ticker", text="Ticker")
+        self.tree.heading("score", text="Score ↓", command=self.toggle_sort)
+        self.tree.column("ticker", width=190, minwidth=130, anchor="w", stretch=True)
+        self.tree.column("score", width=100, minwidth=80, anchor="e", stretch=False)
+        vsb = ttk.Scrollbar(wrap, orient="vertical", command=self.tree.yview)
+        self.tree.configure(yscrollcommand=vsb.set)
+        self.tree.grid(row=0, column=0, sticky="nsew")
+        vsb.grid(row=0, column=1, sticky="ns")
+        wrap.grid_rowconfigure(0, weight=1)
+        wrap.grid_columnconfigure(0, weight=1)
+        self.tree.tag_configure("high", foreground="#3ddc84")
+        self.tree.bind("<ButtonRelease-1>", self.on_cell_click)
+        self.tree.bind("<Double-1>", self.open_selected)
+        self.tree.bind("<Return>", self.open_selected)
+
+        tk.Label(
+            self,
+            text=("Wagi: przychody r/r 35, przyspieszenie 25, rewizja EPS 90d 20, "
+                  "zmiana marży oper. 10, dwa pozytywne zaskoczenia EPS 10. "
+                  "Brakujące dane pomijamy i normalizujemy wynik do dostępnych wag; "
+                  "pokazujemy score przy pokryciu co najmniej 70/100."),
+            bg=PANEL, fg="#8b95a3", justify="left", wraplength=365, anchor="w"
+        ).pack(fill="x", padx=12, pady=(8, 4))
+        buttons = tk.Frame(self, bg=PANEL)
+        buttons.pack(fill="x", padx=10, pady=(4, 10))
+        tk.Button(buttons, text="Odśwież", command=self.fill, relief="flat").pack(side="left")
+        tk.Button(buttons, text="Zamknij", command=self.close, relief="flat").pack(side="right")
+        self.protocol("WM_DELETE_WINDOW", self.close)
+        app.growth_dialog = self
+        self.fill()
+
+    def fill(self):
+        self.tree.delete(*self.tree.get_children())
+        rows = []
+        for row in self.app.store.rows:
+            ticker = row.get("ticker")
+            if not ticker:
+                continue
+            result = calc.growth_score(row)
+            rows.append((ticker, result["score"], result["coverage"]))
+        def key(item):
+            ticker, score, _ = item
+            if score is None:
+                return (1, 0.0, ticker)
+            return (0, -score if self.descending else score, ticker)
+        rows.sort(key=key)
+        for ticker, score, coverage in rows:
+            shown = f"{score:.1f}" if score is not None else "—"
+            tags = ("high",) if score is not None and score >= 75 else ()
+            self.tree.insert("", "end", iid=ticker, values=(ticker, shown), tags=tags)
+        scored = sum(1 for _, score, _ in rows if score is not None)
+        self.count_label.config(text=f"{scored} z {len(rows)} spółek ma wystarczające dane · sortowanie po score")
+
+    def toggle_sort(self):
+        self.descending = not self.descending
+        self.tree.heading("score", text=f"Score {'↓' if self.descending else '↑'}", command=self.toggle_sort)
+        self.fill()
+
+    def on_cell_click(self, event):
+        if self.tree.identify_region(event.x, event.y) != "cell" or self.tree.identify_column(event.x) != "#1":
+            return
+        ticker = self.tree.identify_row(event.y)
+        if ticker:
+            self.app.open_chart(ticker)
+
+    def open_selected(self, event=None):
+        selected = self.tree.selection()
+        if selected:
+            self.app.open_chart(selected[0])
+
+    def close(self):
+        if getattr(self.app, "growth_dialog", None) is self:
+            self.app.growth_dialog = None
+        self.destroy()
 
 
 class GuideDialog(tk.Toplevel):

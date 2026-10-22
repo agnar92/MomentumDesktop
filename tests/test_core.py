@@ -393,3 +393,18 @@ def test_growth_score_does_not_treat_missing_second_eps_surprise_as_a_failure():
     result = calc.growth_score(row)
     assert result["coverage"] == 90.0
     assert result["components"]["eps_beats"] is None
+
+
+def test_revenue_surprise_requires_actual_and_consensus():
+    from desktop import estimates
+    assert estimates._revenue_surprise({"Reported Revenue": 120, "Revenue Estimate": 100}) == 20.0
+    assert estimates._revenue_surprise({"Reported Revenue": 80, "Revenue Estimate": 100}) == -20.0
+    assert estimates._revenue_surprise({"Reported Revenue": 120}) is None
+
+
+def test_analyst_estimate_growth_accepts_percent_strings():
+    import pandas as pd
+    from desktop import estimates
+    frame = pd.DataFrame([{"numberOfAnalysts": 12, "avg": 4.0, "low": 3.0, "high": 5.0,
+                           "yearAgoEps": 2.0, "growth": "+19.0%"}], index=["+1y"])
+    assert estimates._estimate_rows(frame)[0]["growth"] == 19.0

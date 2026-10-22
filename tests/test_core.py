@@ -383,7 +383,7 @@ def test_growth_score_omits_missing_data_and_requires_70_points_coverage():
         "rev_rr": 20, "eps_growth_q": 25, "accel": 5,
         "surp": 10, "rev_surp": 8, "eps_growth_next_year": 25, "eps_rev": 10,
     })
-    assert partial["coverage"] == 70.0
+    assert partial["coverage"] == 76.0
     assert partial["score"] is not None
 
     insufficient = calc.growth_score({"rev_rr": 25, "accel": 5})

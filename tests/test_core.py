@@ -3,7 +3,7 @@ import datetime as dt
 
 import pytest
 
-from desktop import calc, finviz, prices, sec, sync
+from desktop import calc, estimates, finviz, prices, sec, sync
 from desktop.store import Store
 
 _D = [(dt.date(2025, 1, 6) + dt.timedelta(weeks=i)).isoformat() for i in range(60)]
@@ -115,6 +115,36 @@ def test_build_row():
     r = calc.build_row({"ticker": "Y"}, W, [50, 100, 90, 90, 90, 95], {"rev_rr": 30, "dopm": 5}, SPY, EST)
     assert r["rs"] == pytest.approx(108) and r["ok"] and r["glb_state"] == "SYGNAŁ"
     assert r["surp"] == 8.0 and r["surp_prev"] == 4.0 and r["beat2"] and r["eps_rev"] == 12.0
+    assert calc.build_row({"ticker": "UP"}, W, [50, 100, 90, 90, 90], {"rev_rr": 30, "dopm": 5},
+                          SPY, {**EST, "upside": 34.6})["upside"] == 34.6
+
+
+
+def test_analyst_upside_uses_mean_target_and_current_price():
+    assert estimates.analyst_upside({"current": 100, "mean": 125, "median": 120}) == pytest.approx(25)
+    assert estimates.analyst_upside({"current": 100, "mean": 80}) == pytest.approx(-20)
+    assert estimates.analyst_upside({"current": 0, "mean": 120}) is None
+    assert estimates.analyst_upside({"current": 100, "mean": None}) is None
+    assert estimates.analyst_upside({"current": "nan", "mean": 120}) is None
+
+
+def test_estimates_refresh_legacy_cache_without_upside():
+    today = dt.date(2026, 10, 22)
+    cache = {"A": {"at": today.isoformat(), "surp": [], "rev90": None}}
+    fetched = {"surp": [], "rev90": None, "upside": 27.5}
+    got = estimates.update(["A"], cache, today=today, pause=0, fetch_one=lambda ticker: fetched)
+    assert got == ["A"] and cache["A"]["upside"] == 27.5
+
+
+def test_upside_is_visible_and_supports_numeric_filter():
+    from desktop.app import COLUMNS, cell, pass_filters
+
+    col = next(c for c in COLUMNS if c[0] == "upside")
+    assert col[1] == "Upside 12M %" and col[3] == "%"
+    assert cell(32.45, col[3]) == "+32.5"
+    assert pass_filters({"upside": 35}, {"upside": {"min": 30, "max": 50}})
+    assert not pass_filters({"upside": 55}, {"upside": {"min": 30, "max": 50}})
+    assert not pass_filters({"upside": None}, {"upside": {"min": 30}})
 
 
 def test_rel_strength_vs_spy():

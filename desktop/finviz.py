@@ -121,11 +121,49 @@ _FIELD_ALIASES = {
 _TEXT_FIELDS = {"ticker", "company", "sector", "industry", "country", "exchange", "index", "earnings_date"}
 
 
+_HEADER_ALIASES = {
+    "market cap": "market_cap", "avg volume": "avg_volume", "relative volume": "rel_volume",
+    "current ratio": "current_ratio", "quick ratio": "quick_ratio", "debt/eq": "debt_equity",
+    "lt debt/eq": "long_term_debt_equity", "gross margin": "gross_margin",
+    "oper margin": "opm", "operating margin": "opm", "profit margin": "profit_margin",
+    "eps qoq": "eps_qoq", "eps q/q": "eps_qoq", "eps growth qtr over qtr": "eps_qoq",
+    "sales qoq": "sales_qoq", "sales q/q": "sales_qoq", "sales growth qtr over qtr": "sales_qoq",
+    "eps growth this year": "eps_this_year", "eps growth next year": "eps_next_year",
+    "eps growth past 5 years": "eps_past_5y", "eps growth next 5 years": "eps_next_5y",
+    "sales growth past 5 years": "sales_past_5y", "return on investment": "roi",
+    "return on invested capital": "roi", "roi": "roi", "roic": "roi",
+    "return on assets": "roa", "roa": "roa", "return on equity": "roe", "roe": "roe",
+    "target price": "target_price", "eps surprise": "eps_surprise_finviz",
+    "sales surprise": "revenue_surprise_finviz", "revenue surprise": "revenue_surprise_finviz",
+    "perf week": "perf_week", "perf month": "perf_month", "perf quarter": "perf_quarter",
+    "perf half": "perf_half_year", "perf half year": "perf_half_year", "perf year": "perf_year",
+    "perf ytd": "perf_ytd", "perf 3 year": "perf_3y", "perf 3-year": "perf_3y",
+    "perf 5 year": "perf_5y", "perf 5-year": "perf_5y", "perf 10 year": "perf_10y",
+    "sma20": "sma20", "sma50": "sma50", "sma200": "sma200", "52w high": "high_52w",
+    "52w low": "low_52w", "forward p/e": "forward_pe", "p/e": "pe", "peg": "peg",
+    "p/s": "ps", "p/b": "pb", "p/c": "pc", "p/cash": "pcash", "p/fcf": "pfcf",
+    "ev/ebitda": "ev_ebitda", "ev/sales": "ev_sales", "dividend": "dividend",
+    "payout ratio": "payout", "shares outstanding": "shares_outstanding", "float": "float",
+    "insider own": "insider_ownership", "insider trans": "insider_change",
+    "inst own": "institutional_ownership", "inst trans": "institutional_change",
+    "short float": "short_float", "short ratio": "short_ratio",
+    "analyst recom": "analyst_recommendation", "earnings": "earnings_date",
+    "country": "country", "exchange": "exchange", "index": "index",
+}
+
+
 def _field_name(name):
-    if name in _FIELD_ALIASES:
-        return _FIELD_ALIASES[name]
-    # Keep unfamiliar Finviz columns too; snake_case is stable for storage and UI use.
-    return re.sub(r"(?<!^)(?=[A-Z])", "_", str(name)).lower().replace("-", "_").replace(" ", "_")
+    raw = str(name).strip()
+    if raw in _FIELD_ALIASES:
+        return _FIELD_ALIASES[raw]
+    lowered = raw.casefold().replace("_", " ").replace("-", " ")
+    if lowered in _HEADER_ALIASES:
+        return _HEADER_ALIASES[lowered]
+    if lowered in _FIELD_ALIASES:
+        return _FIELD_ALIASES[lowered]
+    # Avoid splitting acronyms (ROI, RSI, SMA) into r_o_i; preserve unknown fields consistently.
+    compact = re.sub(r"[^a-z0-9]+", "_", lowered).strip("_")
+    return compact or "unknown"
 
 
 def _field_value(name, value):
@@ -202,7 +240,8 @@ def fetch_all(filters, max_tickers=MAX_TICKERS, pause=0.25, log=print, get=None,
     """Fetch and merge all Finviz screener tabs by ticker; Overview decides membership, other tabs enrich the same universe."""
     get = get or requests.Session().get
     merged, total = {}, None
-    for view in views:
+    fields_by_view = {}
+    for view_index, view in enumerate(views):
         view_rows, view_total, seen, offset = [], None, set(), 1
         log(f"Finviz: pobieram zakładkę v={view}")
         while len(seen) < max_tickers:
@@ -216,6 +255,7 @@ def fetch_all(filters, max_tickers=MAX_TICKERS, pause=0.25, log=print, get=None,
                 break
             for row in fresh:
                 seen.add(row["ticker"])
+                fields_by_view.setdefault(view, set()).update(k for k, value in row.items() if k != "ticker" and value is not None)
                 if view == 111:
                     merged.setdefault(row["ticker"], {}).update(row)
                 elif row["ticker"] in merged:
@@ -224,7 +264,8 @@ def fetch_all(filters, max_tickers=MAX_TICKERS, pause=0.25, log=print, get=None,
                     # If the provider sorts/views differ slightly, preserve the row but Overview remains authoritative below.
                     view_rows.append(row)
             if progress:
-                progress(len(seen), min(view_total or len(seen), max_tickers))
+                # Monotonic progress across all requested views.
+                progress(view_index * max_tickers + len(seen), max_tickers * len(views))
             offset += PAGE
             if view_total is not None and offset > view_total:
                 break
@@ -233,9 +274,15 @@ def fetch_all(filters, max_tickers=MAX_TICKERS, pause=0.25, log=print, get=None,
             total = view_total
         elif view_rows:
             log(f"Finviz v={view}: {len(view_rows)} dodatkowych tickerów nieobecnych w Overview — pomijam")
+        if view_total is None:
+            log(f"⚠ Finviz v={view}: nie udało się odczytać łącznej liczby wyników")
+        log(f"Finviz v={view}: {len(seen)} tickerów, pola: {', '.join(sorted(fields_by_view.get(view, set()))) or 'BRAK'}")
         if view == 111 and not merged:
             raise RuntimeError("Finviz Overview nie zwrócił spółek; nie pobieram pozostałych zakładek.")
     out = list(merged.values())[:max_tickers]
+    for row in out:
+        row["finviz_views"] = [view for view in views if fields_by_view.get(view)]
+        row["finviz_fields"] = sorted(k for k, value in row.items() if k not in {"ticker", "finviz_views", "finviz_fields"} and value is not None)
     if out:
-        log(f"Finviz: pobrano {len(out)} spółek i połączono zakładki {','.join(map(str, views))}")
+        log(f"Finviz: pobrano {len(out)} spółek; połączono zakładki {','.join(map(str, views))}; pola łącznie: {len(set().union(*fields_by_view.values())) if fields_by_view else 0}")
     return out, total

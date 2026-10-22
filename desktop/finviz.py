@@ -108,7 +108,7 @@ _FIELD_ALIASES = {
     "perfHalfY": "perf_half_year", "perfYear": "perf_year", "perfYtd": "perf_ytd",
     "perf3Year": "perf_3y", "perf5Year": "perf_5y", "sma20": "sma20", "sma50": "sma50",
     "sma200": "sma200", "rsi": "rsi", "beta": "beta", "atr": "atr", "change": "change",
-    "price": "price", "volume": "volume", "avgVolume": "avg_volume", "shortFloat": "short_float",
+    "price": "price", "volume": "volume", "shortFloat": "short_float",
     "shortRatio": "short_ratio", "instOwn": "institutional_ownership", "instTrans": "institutional_change",
     "insiderOwn": "insider_ownership", "insiderTrans": "insider_change", "high52": "high_52w",
     "low52": "low_52w", "forwardPE": "forward_pe", "peg": "peg", "ps": "ps", "pb": "pb",

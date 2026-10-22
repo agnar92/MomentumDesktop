@@ -328,10 +328,14 @@ def growth_score(row, min_coverage=GROWTH_SCORE_MIN_COVERAGE):
     p = _growth_component_points(row.get("roic"), ((0, 0), (5, 5), (10, 12), (15, 16), (25, 20)))
     if p is not None: quality_values.append(p)
     quality = sum(quality_values) / len(quality_values) if quality_values else None
-    # Use multi-quarter revenue history as a proxy for durability; catalysts need manual review.
+    # Prefer an explicit human-reviewed catalyst rating; otherwise show a clearly labelled historical proxy.
+    catalyst_score = row.get("catalyst_score")
     qs = row.get("qs") or []
     growths = [x.get("rev_rr") for x in qs if _ok(x.get("rev_rr"))]
-    durability = _growth_component_points(sum(growths[-4:]) / len(growths[-4:]), ((0, 0), (5, 3), (10, 6), (20, 8), (35, 10))) if growths else None
+    historical_durability = _growth_component_points(
+        sum(growths[-4:]) / len(growths[-4:]), ((0, 0), (5, 3), (10, 6), (20, 8), (35, 10))
+    ) if growths else None
+    durability = min(10.0, max(0.0, float(catalyst_score))) if _ok(catalyst_score) else historical_durability
     points = {
         "acceleration": _growth_component_points(acceleration, ((-10, 0), (0, 10), (10, 20), (20, 26), (35, 30))),
         "surprises": surprise_points,

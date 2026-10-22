@@ -53,6 +53,49 @@ def analyst_upside(targets):
     return round((mean / current - 1) * 100, 2)
 
 
+def _eps_history(frame):
+    """Compact quarterly EPS history [[period-end, EPS]], tolerant of yfinance schema changes."""
+    if frame is None or getattr(frame, "empty", True):
+        return []
+    for label in ("Diluted EPS", "Basic EPS", "Normalized Diluted EPS"):
+        try:
+            if label not in frame.index:
+                continue
+            vals = []
+            for stamp, value in frame.loc[label].items():
+                n = _number(value)
+                if n is not None:
+                    day = stamp.strftime("%Y-%m-%d") if hasattr(stamp, "strftime") else str(stamp)[:10]
+                    vals.append([day, round(n, 4)])
+            return sorted(vals)[-12:]
+        except Exception:
+            continue
+    return []
+
+
+def _estimate_rows(frame):
+    """Serialize earnings_estimate periods, including next-year EPS growth."""
+    if frame is None or getattr(frame, "empty", True):
+        return []
+    out = []
+    for period, row in frame.iterrows():
+        item = {"period": str(period)}
+        for key in ("numberOfAnalysts", "avg", "low", "high", "yearAgoEps", "growth"):
+            value = row.get(key)
+            if key == "numberOfAnalysts":
+                try:
+                    item[key] = int(value) if _number(value) is not None else None
+                except (TypeError, ValueError, OverflowError):
+                    item[key] = None
+            else:
+                n = _number(value)
+                if key == "growth" and n is not None and "%" not in str(value):
+                    n *= 100
+                item[key] = round(n, 4) if n is not None else None
+        out.append(item)
+    return out
+
+
 def fetch(t):
     """-> niespodzianki EPS/przychodów, rewizja EPS i upside do średniego celu analityków."""
     tk = _yf().Ticker(t)
@@ -90,8 +133,18 @@ def fetch(t):
                 rev90 = round((cur / old - 1) * 100, 2)
     except Exception:
         pass
+    eps_q, eps_est = [], []
+    try:
+        eps_q = _eps_history(tk.quarterly_income_stmt)
+    except Exception:
+        pass
+    try:
+        eps_est = _estimate_rows(tk.earnings_estimate)
+    except Exception:
+        pass
     return {"surp": surp[-24:], "revenue_surp": revenue_surp[-24:], "rev90": rev90,
-            "upside": upside, "earnings_dates": sorted(set(earnings_dates))[-24:]}
+            "upside": upside, "earnings_dates": sorted(set(earnings_dates))[-24:],
+            "eps_q": eps_q, "eps_est": eps_est}
 
 
 def update(tickers, cache, log=print, today=None, pause=0.1, progress=None, fetch_one=None):

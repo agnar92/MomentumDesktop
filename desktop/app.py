@@ -1270,7 +1270,7 @@ class GrowthScoreDialog(tk.Toplevel):
             return (0, -score if self.descending else score, ticker)
         rows.sort(key=key)
         for ticker, score, coverage in rows:
-            shown = f"{score:.1f}".replace(".", ",") if score is not None else "—"
+            shown = f"{score:.1f}" if score is not None else "—"
             tags = ("high",) if score is not None and score >= 75 else ()
             self.tree.insert("", "end", iid=ticker, values=(ticker, shown), tags=tags)
         scored = sum(1 for _, score, _ in rows if score is not None)

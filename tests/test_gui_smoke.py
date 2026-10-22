@@ -495,7 +495,8 @@ def test_ctrl_k_fetches_symbol_that_has_only_candles(app, monkeypatch):
 def test_growth_score_dialog_can_expand_component_breakdown(app):
     from desktop import app as A
 
-    app.store.row("AAA").update(rev_rr=30, accel=8, eps_rev=15, dopm=5, surp=4, surp_prev=3, beat2=True)
+    app.store.row("AAA").update(rev_rr=35, accel=10, eps_growth_q=50, eps_rev=20, dopm=6, opm=25, surp=20, revenue_surprise=20, eps_growth_next_year=50, roic=20,
+                                qs=[{"rev_rr": 10}, {"rev_rr": 20}, {"rev_rr": 30}], eps_growth_history=[5, 10, 15], growth_catalyst_score=2, surp_prev=3, beat2=True)
     dialog = A.GrowthScoreDialog(app)
     dialog.update()
     assert dialog.show_components is False
@@ -506,10 +507,10 @@ def test_growth_score_dialog_can_expand_component_breakdown(app):
     assert "AAA · Growth Score:" in details
     assert "Pokrycie danych: 100/100" in details
     assert "Przychody r/r: +30,0% →" in details
-    assert "Dwa pozytywne zaskoczenia EPS: TAK" in details
+    assert "Revenue Surprise: +20,0% →" in details
 
     # Brakujące dane są jawnie pokazane jako pominięte i nie dostają punktów automatycznie.
-    app.store.row("BBB").update(rev_rr=None, accel=None, eps_rev=None, dopm=None, surp=None, surp_prev=None, beat2=None)
+    app.store.row("BBB").update(rev_rr=None, accel=None, eps_growth_q=None, eps_rev=None, dopm=None, opm=None, surp=None, revenue_surprise=None, eps_growth_next_year=None, roic=None, qs=[], eps_growth_history=[], growth_catalyst_score=None, surp_prev=None, beat2=None)
     dialog.tree.selection_set("BBB")
     dialog.update_components()
     details = dialog.detail_text.get("1.0", "end")
@@ -523,7 +524,7 @@ def test_growth_score_dialog_lists_ranked_tickers_and_opens_chart_on_ticker_clic
     from desktop import app as A
 
     app.store.row("AAA").update(rev_rr=30, accel=8, eps_rev=15, dopm=5, surp=4, surp_prev=3, beat2=True)
-    app.store.row("BBB").update(rev_rr=10, accel=0, eps_rev=0, dopm=0, surp=-2, surp_prev=1, beat2=False)
+    app.store.row("BBB").update(rev_rr=10, accel=0, eps_growth_q=0, eps_rev=0, dopm=0, opm=3, surp=-2, revenue_surprise=-2, eps_growth_next_year=0, roic=0, qs=[{"rev_rr": 1}, {"rev_rr": 2}], eps_growth_history=[-1, 0], growth_catalyst_score=0, surp_prev=1, beat2=False)
     dialog = A.GrowthScoreDialog(app)
     dialog.update()
     assert dialog.tree.get_children() == ("AAA", "BBB")
@@ -538,7 +539,7 @@ def test_growth_score_dialog_lists_ranked_tickers_and_opens_chart_on_ticker_clic
     assert opened == ["AAA"]
 
     # Zmiana danych i odświeżenie odświeża istniejące okno.
-    app.store.row("BBB").update(rev_rr=40, accel=10, eps_rev=20, dopm=4, surp=3, surp_prev=2, beat2=True)
+    app.store.row("BBB").update(rev_rr=35, accel=10, eps_growth_q=50, eps_rev=20, dopm=6, opm=25, surp=20, revenue_surprise=20, eps_growth_next_year=50, roic=20, qs=[{"rev_rr": 10}, {"rev_rr": 20}, {"rev_rr": 30}], eps_growth_history=[5, 10, 15], growth_catalyst_score=2, surp_prev=2, beat2=True)
     app.refresh()
     assert dialog.tree.get_children()[0] == "BBB"
     dialog.close()

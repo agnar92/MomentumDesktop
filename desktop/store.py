@@ -16,6 +16,7 @@ DEFAULT_SCANNERS = [
     {"name": "Blisko rekordu (ATH)", "filters": "cap_smallover,sh_avgvol_o100,ta_alltime_b0to10h", "max_tickers": 1500},
     {"name": "CANSLIM", "filters": "cap_smallover,fa_epsqoq_high,fa_epsyoyttm_high,fa_salesqoq_high,ind_stocksonly,sh_avgvol_o300,sh_price_o1,ta_sma200_pa",
      "max_tickers": 1500},
+    {"name": "Grow", "filters": "fa_opermargin_pos,fa_roa_o15,fa_roi_o15,sh_avgvol_o300,sh_price_o10,fa_epsrev_bp,fa_epsqoq_o10,fa_salesqoq_o10,fa_epsyoy1_o10,fa_grossmargin_pos,fa_epsyoyttm_o10,fa_salesyoyttm_o10", "max_tickers": 1500},
 ]
 DEFAULT_SETTINGS = {"sec_ua": sec.UA, "symbols": []}
 

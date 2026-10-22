@@ -59,7 +59,7 @@ def symbol(sym, store, log=print, weekly=prices.weekly, monthly=prices.monthly, 
     return row, w
 
 
-def run(store, log=print, fetch_list=finviz.fetch, weekly=prices.weekly, monthly=prices.monthly, fund=sec.update, now=None, progress=None, daily=prices.daily,
+def run(store, log=print, fetch_list=finviz.fetch_all, weekly=prices.weekly, monthly=prices.monthly, fund=sec.update, now=None, progress=None, daily=prices.daily,
         est=estimates.update):
     sc = store.scanner
     log(f"Finviz [{sc['name']}]: filtr {sc['filters']}")

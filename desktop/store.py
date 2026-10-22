@@ -7,7 +7,7 @@ import re
 import sys
 from pathlib import Path
 
-from . import finviz, sec
+from . import calc, finviz, sec
 
 # skanery do wyboru: każdy = nazwa + filtr Finviz (+ limit spółek); wszystkie liczą tę samą strategię
 DEFAULT_SCANNERS = [
@@ -79,6 +79,7 @@ class Store:
     def __init__(self, base=None):
         self.dir = data_dir(base)
         self.settings = normalize_scanners({**DEFAULT_SETTINGS, **read(self.dir / "settings.json", {})})
+        self.settings["strategy_conditions"] = calc.normalize_conditions(self.settings.get("strategy_conditions"))
         (self.dir / "scans").mkdir(exist_ok=True)
         self.series = read(self.dir / "weekly.json", None)
         if self.series is None:   # dane sprzed skanerów: świece ze starego scan.json
@@ -101,6 +102,8 @@ class Store:
         if not scan and self.settings["scanner"] == self.settings["scanners"][0]["name"]:
             scan = read(self.dir / "scan.json", {})   # stara lista (jeden skaner) jako pierwszy skaner
         self.rows, self.at = scan.get("rows", []), scan.get("at")
+        for row in self.rows:
+            row["ok"] = calc.passes(row, self.settings.get("strategy_conditions"))
 
     def select(self, name):
         """Przełącza wybrany skaner (lista spółek z jego ostatniego Sync)."""

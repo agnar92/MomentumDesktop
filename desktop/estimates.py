@@ -27,7 +27,7 @@ def _number(value):
 def _revenue_surprise(row):
     """Procentowa niespodzianka przychodów, jeśli źródło dostarczy actual i consensus."""
     explicit = None
-    for key in ("Revenue Surprise(%)", "Revenue Surprise (%)", "Revenue Surprise"):
+    for key in ("Revenue Surprise(%)", "Revenue Surprise (%)"):
         explicit = _number(row.get(key))
         if explicit is not None:
             return round(explicit, 2)
@@ -54,8 +54,8 @@ def fetch(t):
                 report_date = ts.strftime("%Y-%m-%d")
                 # Datę raportu zapisujemy także wtedy, gdy Yahoo nie podało konsensusu lub niespodzianki EPS.
                 rev_surp = _revenue_surprise(r)
-                if ((isinstance(rep, (int, float)) and math.isfinite(rep)) or
-                        _number(r.get("Reported Revenue")) is not None or _number(r.get("Revenue Actual")) is not None) and report_date <= today:
+                if (_number(rep) is not None or _number(r.get("Reported Revenue")) is not None or
+                        _number(r.get("Revenue Actual")) is not None or _number(r.get("Actual Revenue")) is not None) and report_date <= today:
                     earnings_dates.append(report_date)
                 if all(_number(x) is not None for x in (est, rep, s)) and abs(float(est)) >= 0.01:
                     surp.append([report_date, round(float(s), 2)])

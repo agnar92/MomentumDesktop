@@ -498,7 +498,7 @@ def test_growth_score_dialog_lists_ranked_tickers_and_opens_chart_on_ticker_clic
     app.store.row("AAA").update(rev_rr=30, accel=8, eps_rev=15, dopm=5, surp=4, surp_prev=3, beat2=True)
     app.store.row("BBB").update(rev_rr=10, accel=0, eps_rev=0, dopm=0, surp=-2, surp_prev=1, beat2=False)
     dialog = A.GrowthScoreDialog(app)
-    app.root.update_idletasks()
+    dialog.update()
     assert dialog.tree.get_children() == ("AAA", "BBB")
     assert float(dialog.tree.set("AAA", "score")) > float(dialog.tree.set("BBB", "score"))
 

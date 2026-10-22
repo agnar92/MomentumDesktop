@@ -377,8 +377,10 @@ def test_growth_score_v2_uses_five_fundamental_categories_and_missing_coverage()
     assert partial["coverage"] < 70 and partial["score"] is None
 
 
-def test_growth_score_does_not_treat_missing_second_eps_surprise_as_a_failure():
-    row = {"rev_rr": 20, "accel": 4, "dopm": 2, "eps_rev": 10, "beat2": False, "surp": 5}
+def test_growth_score_leaves_revenue_surprise_and_catalyst_unscored_when_missing():
+    row = {"rev_rr": 20, "accel": 4, "eps_growth_q": 15, "dopm": 2, "opm": 10, "eps_rev": 10, "surp": 5}
     result = calc.growth_score(row)
-    assert result["coverage"] == 90.0
-    assert result["components"]["eps_beats"] is None
+    assert result["components"]["revenue_surprise"] is None
+    assert result["components"]["catalyst"] is None
+    assert result["coverage"] < 70.0
+    assert result["score"] is None

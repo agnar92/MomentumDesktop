@@ -152,9 +152,9 @@ def update(tickers, cache, log=print, today=None, pause=0.1, progress=None, fetc
     """Uzupełnia `cache` dla spółek bez świeżych danych (co FRESH_DAYS dni); rewizję dopisuje do historii. -> lista pobranych."""
     today = today or dt.date.today()
     fetch_one = fetch_one or fetch
-    # Odśwież również stare wpisy, w których nie zapisywaliśmy jeszcze pola upside.
+    # Odśwież również stare wpisy bez nowych pól Growth Score (EPS history/estimate i Revenue Surprise).
     todo = [t for t in tickers if not (
-        cache.get(t) and "upside" in cache[t]
+        cache.get(t) and "upside" in cache[t] and "eps_q" in cache[t] and "eps_est" in cache[t] and "revenue_surp" in cache[t]
         and (today - dt.date.fromisoformat(cache[t]["at"])).days < FRESH_DAYS
     )]
     done = []

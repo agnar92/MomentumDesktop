@@ -506,7 +506,7 @@ def test_growth_score_dialog_can_expand_component_breakdown(app):
     details = dialog.detail_text.get("1.0", "end")
     assert "AAA · Growth Score:" in details
     assert "Pokrycie danych: 100/100" in details
-    assert "Przychody r/r: +30,0% →" in details
+    assert "Przychody r/r: +35,0% →" in details
     assert "Revenue Surprise: +20,0% →" in details
 
     # Brakujące dane są jawnie pokazane jako pominięte i nie dostają punktów automatycznie.

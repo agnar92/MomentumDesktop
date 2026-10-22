@@ -408,3 +408,9 @@ def test_analyst_estimate_growth_accepts_percent_strings():
     frame = pd.DataFrame([{"numberOfAnalysts": 12, "avg": 4.0, "low": 3.0, "high": 5.0,
                            "yearAgoEps": 2.0, "growth": "+19.0%"}], index=["+1y"])
     assert estimates._estimate_rows(frame)[0]["growth"] == 19.0
+
+
+def test_manual_catalyst_score_overrides_historical_durability_proxy():
+    result = calc.growth_score({"qs": [{"rev_rr": -10}, {"rev_rr": -20}], "catalyst_score": 8})
+    assert result["components"]["durability"] == 8.0
+    assert result["coverage"] == 10.0

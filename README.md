@@ -19,6 +19,7 @@ Heurystyka z backtestu (spółki z dzisiejszej listy, bez spółek wycofanych z 
   przychody r/r, kwartał danych, obrót. Zielone wiersze = warunki spełnione i sygnał GLB. Domyślnie widać wszystkie spółki; filtr „tylko spełniające warunki” jest wyłączony i można go włączyć na pasku.
   Klik w nagłówek sortuje; Enter / dwuklik = wykres; zaznaczenie na liście przełącza otwarty wykres.
 - **Growth Score** (osobny przycisk): TOP 10 według pięciu kategorii: przyspieszenie wzrostu 30 pkt, zaskoczenia EPS i przychodów 20, przyszły wzrost 20, jakość biznesu 20, trwałość wzrostu 10. Wynik jest niezależny od wykresu ceny i GLB. Brakujące dane obniżają pokrycie, nie dostają automatycznie zera; katalizatory biznesowe nie są zgadywane.
+- **Grow (Finviz)**: zapisany filtr fundamentalny oparty dokładnie na podanym linku — marża operacyjna, ROA/ROI >15%, cena >10 USD, średni wolumen >300 tys., EPS/przychody rosnące oraz dodatni filtr EPS surprise.
 - **Warunki…** (obok checkboxa „tylko spełniające warunki”): wybór, które kryteria są obowiązkowe, i edycja progów dla przychodów kw. r/r, zmiany marży operacyjnej,
   P/S oraz RS 52 tyg. vs S&P 500; można też wyłączyć wymóg dwóch kolejnych niespodzianek EPS. Zmiany są zapisywane, działają od razu i obowiązują przy następnym Sync.
   Brak danych P/S nie odrzuca spółki, zgodnie z dotychczasową regułą.

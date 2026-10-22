@@ -275,6 +275,15 @@ def _growth_component_points(value, knots):
     return float(knots[-1][1])
 
 
+
+def _latest_surprise(history, known_through):
+    """Latest dated percentage in a [[date, value], ...] history known by the given date."""
+    values = [item for item in (history or [])
+              if isinstance(item, (list, tuple)) and len(item) >= 2
+              and isinstance(item[0], str) and item[0] <= known_through and _ok(item[1])]
+    return values[-1][1] if values else None
+
+
 def growth_score(row, min_coverage=GROWTH_SCORE_MIN_COVERAGE):
     """Fundamental ranking independent of price/GLB. Missing inputs reduce coverage, not score."""
     row = row or {}

@@ -406,11 +406,21 @@ def build_row(base, weekly, months, fund, spy=None, est=None, conditions=None):
     row["rs"] = rel_strength(weekly, spy)
     as_of = (weekly.get("d") or [""])[-1]
     # tydzień z danych zaczyna się w poniedziałek: raport z tego tygodnia (do piątku) też jest znany
-    row["surp"], row["surp_prev"], row["beat2"] = surprises(est, (dt.date.fromisoformat(as_of) + dt.timedelta(days=6)).isoformat()) if as_of else (None, None, None)
-    if not _ok(row.get("surp")):
-        row["surp"] = row.get("eps_surprise_finviz")
+    yahoo_surp, yahoo_surp_prev, yahoo_beat2 = surprises(
+        est, (dt.date.fromisoformat(as_of) + dt.timedelta(days=6)).isoformat()
+    ) if as_of else (None, None, None)
+    finviz_surp = row.get("eps_surprise_finviz")
+    if _ok(finviz_surp):
+        row["surp"] = finviz_surp
+        row["surp_prev"] = yahoo_surp_prev
+        row["beat2"] = bool(finviz_surp > 0 and yahoo_surp_prev > 0) if _ok(yahoo_surp_prev) else None
+    else:
+        row["surp"], row["surp_prev"], row["beat2"] = yahoo_surp, yahoo_surp_prev, yahoo_beat2
     row["eps_rev"] = (est or {}).get("rev90")
-    row["rev_surp"] = _latest_surprise((est or {}).get("revenue_surp"), (dt.date.fromisoformat(as_of) + dt.timedelta(days=6)).isoformat()) if as_of else None
+    known_through = (dt.date.fromisoformat(as_of) + dt.timedelta(days=6)).isoformat() if as_of else ""
+    yahoo_rev_surp = _latest_surprise((est or {}).get("revenue_surp"), known_through) if known_through else None
+    finviz_rev_surp = row.get("revenue_surprise_finviz")
+    row["rev_surp"] = finviz_rev_surp if _ok(finviz_rev_surp) else yahoo_rev_surp
     row["eps_q"] = (est or {}).get("eps_q") or []
     row["eps_est"] = (est or {}).get("eps_est") or []
     row["upside"] = (est or {}).get("upside")

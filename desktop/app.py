@@ -3,7 +3,7 @@ import queue
 import threading
 import time
 import tkinter as tk
-from tkinter import messagebox, ttk
+from tkinter import messagebox, simpledialog, ttk
 
 import datetime as dt
 import math
@@ -1232,6 +1232,7 @@ class GrowthScoreDialog(tk.Toplevel):
             buttons, text="▸ Składowe score", command=self.toggle_components, relief="flat"
         )
         self.components_btn.pack(side="left", padx=(0, 4))
+        tk.Button(buttons, text="Katalizator…", command=self.edit_catalyst, relief="flat").pack(side="left", padx=(0, 4))
         tk.Button(buttons, text="Odśwież", command=self.fill, relief="flat").pack(side="left")
         tk.Button(buttons, text="Zamknij", command=self.close, relief="flat").pack(side="right")
         self.protocol("WM_DELETE_WINDOW", self.close)
@@ -1260,7 +1261,8 @@ class GrowthScoreDialog(tk.Toplevel):
             ticker = row.get("ticker")
             if not ticker:
                 continue
-            result = calc.growth_score(row)
+            assessment = (self.app.store.settings.get("growth_catalysts") or {}).get(ticker) or {}
+            result = calc.growth_score({**row, "catalyst_score": assessment.get("score")})
             rows.append((ticker, result["score"], result["coverage"]))
         def key(item):
             ticker, score, _ = item
@@ -1307,7 +1309,8 @@ class GrowthScoreDialog(tk.Toplevel):
         if row is None:
             content = "Zaznacz spółkę w rankingu, aby zobaczyć szczegóły."
         else:
-            result = calc.growth_score(row)
+            assessment = (self.app.store.settings.get("growth_catalysts") or {}).get(ticker) or {}
+            result = calc.growth_score({**row, "catalyst_score": assessment.get("score")})
             score = "brak (za małe pokrycie)" if result["score"] is None else f"{result['score']:.1f}/100".replace(".", ",")
             content = (
                 f"{ticker} · Growth Score: {score}\n"
@@ -1319,7 +1322,7 @@ class GrowthScoreDialog(tk.Toplevel):
                 ("surprises", "Zaskoczenia EPS + przychodów", row.get("surp"), "%", 20),
                 ("future", "Przyszły wzrost / rewizje EPS", row.get("eps_rev"), "%", 20),
                 ("quality", "Jakość biznesu (marża + ROIC)", row.get("roic"), "%", 20),
-                ("durability", "Trwałość wzrostu (proxy historii)", None, "", 10),
+                ("durability", "Trwałość wzrostu (katalizator / proxy)", assessment.get("score"), "/10", 10),
             )
             content += "\\n"
             for key, label, value, suffix, weight in specs:
@@ -1329,6 +1332,7 @@ class GrowthScoreDialog(tk.Toplevel):
                 f"{self._fmt_value(row.get('surp'), '%')} / {self._fmt_value(row.get('surp_prev'), '%')}\\n"
                 f"Revenue surprise (ostatni raport): {self._fmt_value(row.get('rev_surp'), '%')}\\n"
                 f"ROIC (szacunek SEC): {self._fmt_value(row.get('roic'), '%')}\\n"
+                f"Katalizator / uzasadnienie: {assessment.get('note') or 'brak ręcznej oceny; użyto proxy historii przychodów'}\\n"
                 f"Suma punktów: {result['points']:.1f}/{result['coverage']:.0f} dostępnych wag".replace(".", ",")
             )
         self.detail_text.configure(state="normal")
@@ -1337,6 +1341,32 @@ class GrowthScoreDialog(tk.Toplevel):
         if row is not None:
             self.detail_text.tag_add("h", "1.0", "1.end")
         self.detail_text.configure(state="disabled")
+
+    def edit_catalyst(self):
+        selected = self.tree.selection()
+        ticker = selected[0] if selected else None
+        if not ticker:
+            messagebox.showinfo("Growth Score", "Najpierw zaznacz spółkę w rankingu.")
+            return
+        saved = (self.app.store.settings.get("growth_catalysts") or {}).get(ticker) or {}
+        score = simpledialog.askinteger(
+            "Ocena katalizatora",
+            f"{ticker}: oceń wiarygodność dalszego wzrostu w skali 0–10.\nUwzględnij popyt, nowe produkty, kontrakty lub ekspansję.",
+            parent=self, minvalue=0, maxvalue=10, initialvalue=saved.get("score")
+        )
+        if score is None:
+            return
+        note = simpledialog.askstring(
+            "Uzasadnienie katalizatora", "Wpisz konkretny powód dalszego wzrostu (produkt, kontrakt, popyt):",
+            parent=self, initialvalue=saved.get("note", "")
+        )
+        if note is None:
+            return
+        all_scores = self.app.store.settings.setdefault("growth_catalysts", {})
+        all_scores[ticker] = {"score": score, "note": note.strip()}
+        self.app.store.save_settings()
+        self.fill()
+        self.update_components()
 
     def on_cell_click(self, event):
         if self.tree.identify_region(event.x, event.y) != "cell":

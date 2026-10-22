@@ -24,6 +24,47 @@ def _number(value):
     return number if math.isfinite(number) else None
 
 
+
+def _eps_history(frame):
+    """Quarterly actual EPS as [[period-end, EPS]], safe for empty or changing yfinance frames."""
+    if frame is None or getattr(frame, "empty", True):
+        return []
+    for label in ("Diluted EPS", "Basic EPS", "Normalized Diluted EPS"):
+        try:
+            if label not in frame.index:
+                continue
+            vals = []
+            for stamp, value in frame.loc[label].items():
+                n = _number(value)
+                if n is not None:
+                    day = stamp.strftime("%Y-%m-%d") if hasattr(stamp, "strftime") else str(stamp)[:10]
+                    vals.append([day, round(n, 4)])
+            return sorted(vals)[-12:]
+        except Exception:
+            continue
+    return []
+
+
+def _estimate_rows(frame):
+    """JSON-safe analyst estimates for +1y growth and consensus."""
+    if frame is None or getattr(frame, "empty", True):
+        return []
+    out = []
+    for period, row in frame.iterrows():
+        item = {"period": str(period)}
+        for key in ("numberOfAnalysts", "avg", "low", "high", "yearAgoEps", "growth"):
+            value = row.get(key)
+            n = _number(value)
+            if key == "numberOfAnalysts":
+                item[key] = int(n) if n is not None else None
+            else:
+                if key == "growth" and n is not None and "%" not in str(value):
+                    n *= 100
+                item[key] = round(n, 4) if n is not None else None
+        out.append(item)
+    return out
+
+
 def _revenue_surprise(row):
     """Procentowa niespodzianka przychodów, jeśli źródło dostarczy actual i consensus."""
     explicit = None
@@ -90,8 +131,17 @@ def fetch(t):
                 rev90 = round((cur / old - 1) * 100, 2)
     except Exception:
         pass
+    try:
+        eps_q = _eps_history(tk.quarterly_income_stmt)
+    except Exception:
+        eps_q = []
+    try:
+        eps_est = _estimate_rows(tk.earnings_estimate)
+    except Exception:
+        eps_est = []
     return {"surp": surp[-24:], "revenue_surp": revenue_surp[-24:], "rev90": rev90,
-            "upside": upside, "earnings_dates": sorted(set(earnings_dates))[-24:]}
+            "eps_q": eps_q, "eps_est": eps_est, "upside": upside,
+            "earnings_dates": sorted(set(earnings_dates))[-24:]}
 
 
 def update(tickers, cache, log=print, today=None, pause=0.1, progress=None, fetch_one=None):
@@ -100,7 +150,8 @@ def update(tickers, cache, log=print, today=None, pause=0.1, progress=None, fetc
     fetch_one = fetch_one or fetch
     # Odśwież również stare wpisy, w których nie zapisywaliśmy jeszcze pola upside.
     todo = [t for t in tickers if not (
-        cache.get(t) and "upside" in cache[t]
+        cache.get(t) and "upside" in cache[t] and "revenue_surp" in cache[t]
+        and "eps_q" in cache[t] and "eps_est" in cache[t]
         and (today - dt.date.fromisoformat(cache[t]["at"])).days < FRESH_DAYS
     )]
     done = []

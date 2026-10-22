@@ -523,7 +523,7 @@ def test_growth_score_dialog_can_expand_component_breakdown(app):
 def test_growth_score_dialog_lists_ranked_tickers_and_opens_chart_on_ticker_click(app, monkeypatch):
     from desktop import app as A
 
-    app.store.row("AAA").update(rev_rr=35, accel=10, eps_growth_q=50, eps_rev=20, dopm=6, opm=25, surp=20, revenue_surprise=20, eps_growth_next_year=50, roic=20, qs=[{"rev_rr": 10}, {"rev_rr": 20}, {"rev_rr": 30}], eps_growth_history=[5, 10, 15], growth_catalyst_score=2, surp_prev=3, beat2=True)
+    app.store.row("AAA").update(rev_rr=25, accel=5, eps_growth_q=25, eps_rev=10, dopm=3, opm=15, surp=8, revenue_surprise=5, eps_growth_next_year=25, roic=10, qs=[{"rev_rr": 10}, {"rev_rr": 15}, {"rev_rr": 20}], eps_growth_history=[5, 10, 15], growth_catalyst_score=1, surp_prev=3, beat2=True)
     app.store.row("BBB").update(rev_rr=10, accel=0, eps_growth_q=0, eps_rev=0, dopm=0, opm=3, surp=-2, revenue_surprise=-2, eps_growth_next_year=0, roic=0, qs=[{"rev_rr": 1}, {"rev_rr": 2}], eps_growth_history=[-1, 0], growth_catalyst_score=0, surp_prev=1, beat2=False)
     dialog = A.GrowthScoreDialog(app)
     dialog.update()

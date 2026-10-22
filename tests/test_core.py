@@ -414,3 +414,52 @@ def test_manual_catalyst_score_overrides_historical_durability_proxy():
     result = calc.growth_score({"qs": [{"rev_rr": -10}, {"rev_rr": -20}], "catalyst_score": 8})
     assert result["components"]["durability"] == 8.0
     assert result["coverage"] == 10.0
+
+
+def test_finviz_all_views_merge_fundamental_fields():
+    calls = []
+
+    class Response:
+        def __init__(self, view):
+            self.text = (
+                '<div>#1 / 1 Total</div><div class="fv-table_row" data-row-key="AAA">'
+                '<div data-column-id="company">Alpha</div>'
+                '<div data-column-id="marketCap">2.5B</div>'
+                '<div data-column-id="operMargin">18.2%</div>'
+                '<div data-column-id="roi">22.4%</div>'
+                '<div data-column-id="salesQoq">31.0%</div>'
+                '<div data-column-id="epsQoq">42.0%</div>'
+                '<div data-column-id="ps">8.5</div>'
+                '</div>'
+            )
+
+        def raise_for_status(self):
+            pass
+
+    def get(url, params, **kwargs):
+        calls.append(int(params["v"]))
+        return Response(params["v"])
+
+    rows, total = finviz.fetch_all(
+        "test", max_tickers=10, pause=0, log=lambda _: None, get=get
+    )
+    assert total == 1
+    assert calls == list(finviz.ALL_VIEWS)
+    assert len(rows) == 1 and rows[0]["ticker"] == "AAA"
+    assert rows[0]["opm"] == pytest.approx(18.2)
+    assert rows[0]["roi"] == pytest.approx(22.4)
+    assert rows[0]["sales_qoq"] == pytest.approx(31.0)
+    assert rows[0]["eps_qoq"] == pytest.approx(42.0)
+    assert rows[0]["ps"] == pytest.approx(8.5)
+
+
+def test_growth_score_uses_finviz_roi_and_growth_fields():
+    result = calc.growth_score({
+        "sales_qoq": 30, "eps_qoq": 40, "roi": 20,
+        "opm": 18, "dopm": 4, "eps_next_year": 25,
+        "surp": 8, "rev_surp": 6,
+        "qs": [{"rev_rr": 10}, {"rev_rr": 20}],
+    })
+    assert result["score"] is not None
+    assert result["coverage"] >= 70
+    assert result["components"].get("roi") is not None

@@ -152,8 +152,9 @@ def update(tickers, cache, log=print, today=None, pause=0.1, progress=None, fetc
     today = today or dt.date.today()
     fetch_one = fetch_one or fetch
     # Odśwież również stare wpisy, w których nie zapisywaliśmy jeszcze pola upside.
+    # Odśwież stare wpisy, w których nie zapisaliśmy jeszcze historii EPS i prognozy wzrostu +1y.
     todo = [t for t in tickers if not (
-        cache.get(t) and "upside" in cache[t]
+        cache.get(t) and all(k in cache[t] for k in ("upside", "eps_q", "eps_est", "revenue_surp"))
         and (today - dt.date.fromisoformat(cache[t]["at"])).days < FRESH_DAYS
     )]
     done = []

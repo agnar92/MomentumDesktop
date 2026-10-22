@@ -7,7 +7,7 @@ from tkinter import messagebox, ttk
 
 import datetime as dt
 
-from . import calc, finviz, lines, sec, sync
+from . import calc, finviz, lines, prices, sec, sync
 from .chart import ChartWindow
 from .store import DEFAULT_SCANNERS, Store, normalize_scanners
 from .theme import BG, FG, PANEL, apply_dark, autowrap, setup_style
@@ -102,6 +102,7 @@ class App:
         apply_dark(self.root)
         self.store = Store(base)
         self.q, self.chart, self.sort = queue.Queue(), None, None
+        self._daily_alert_refreshing = False
         bar = tk.Frame(self.root, bg=PANEL)
         bar.pack(fill="x")
         self.sync_btn = tk.Button(bar, text="⟳ Sync (F5)", command=self.start_sync, relief="flat")
@@ -112,7 +113,7 @@ class App:
         self.scanner_box.pack(side="left", padx=2)
         self.scanner_box.bind("<<ComboboxSelected>>", lambda e: self.select_scanner(self.scanner.get()))
         tk.Button(bar, text="Skanery / ustawienia…", command=self.open_settings, relief="flat").pack(side="left", padx=4)
-        self.only_ok = tk.BooleanVar(value=True)
+        self.only_ok = tk.BooleanVar(value=False)
         tk.Checkbutton(bar, text="tylko spełniające warunki", variable=self.only_ok, command=self.refresh, bg=PANEL).pack(side="left", padx=8)
         self.flt_btn = tk.Button(bar, text="Filtry…", command=lambda: FilterDialog(self), relief="flat")
         self.flt_btn.pack(side="left", padx=4)
@@ -282,6 +283,15 @@ class App:
                     frac, stage = val
                     self.pbar["value"] = frac * 1000
                     self.plabel.config(text=progress_text(frac, stage, time.monotonic() - (self.t0 or time.monotonic())))
+                elif kind == "daily_alert_data":
+                    self._daily_alert_refreshing = False
+                    for ticker, series in val.items():
+                        self.store.save_daily_series(ticker, series)
+                        if self.chart is not None and self.chart.winfo_exists():
+                            self.chart.other["D"][ticker] = series
+                            if self.chart.ticker == ticker and self.chart.period == "D":
+                                self.chart.redraw()
+                    self.check_alerts(refresh_daily=False)
                 elif kind == "synced":
                     self.pframe.pack_forget()
                     self.sync_btn.config(state="normal")
@@ -301,14 +311,44 @@ class App:
         SettingsDialog(self)
 
     # --- alerty (linie trendu + obserwowane spółki), sprawdzane po starcie i po Sync
-    def check_alerts(self):
+    def check_alerts(self, refresh_daily=True):
         st = self.store
         weeks = [s["d"][-1] for s in st.series.values() if s and s.get("d")]
-        fresh = lines.eval_alerts(st.alerts, st.row, st.weekly, dt.datetime.now().isoformat(timespec="seconds"), max(weeks) if weeks else "")
+        fresh = lines.eval_alerts(
+            st.alerts, st.row, st.weekly, dt.datetime.now().isoformat(timespec="seconds"),
+            max(weeks) if weeks else "", daily_for=st.daily,
+        )
         st.save_alerts()
         self.alert_badge()
         if fresh:
             self.status.config(text=f"  🔔 {len(fresh)} nowych alertów: " + " · ".join(f"{a['t']} {a['msg']}" for a in fresh[:3]))
+        if refresh_daily:
+            self.refresh_daily_alerts()
+
+    def refresh_daily_alerts(self):
+        """Odświeża świece tylko dla dziennych linii, dla których włączono alert."""
+        if self._daily_alert_refreshing:
+            return
+        tickers = sorted(
+            ticker for ticker, items in self.store.alerts["lines"].items()
+            if any(ln.get("period") == "D" and ln.get("alert") is not False for ln in items)
+        )
+        if not tickers:
+            return
+        self._daily_alert_refreshing = True
+
+        def work():
+            fresh = {}
+            for ticker in tickers:
+                try:
+                    data = prices.daily_ohlc(ticker)
+                    if data:
+                        fresh[ticker] = data
+                except Exception as exc:
+                    self.q.put(("log", f"Alert dzienny {ticker}: {exc}"))
+            self.q.put(("daily_alert_data", fresh))
+
+        threading.Thread(target=work, daemon=True).start()
 
     def alert_badge(self):
         n = sum(1 for a in self.store.alerts["log"] if a["at"] > self.store.alerts["seen"])

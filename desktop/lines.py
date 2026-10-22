@@ -137,28 +137,35 @@ def snapshot(r):
     return {"glb_state": r.get("glb_state"), "macd": r.get("macd"), "macd_stop": r.get("macd_stop"), "price": r.get("price"), "ok": bool(r.get("ok")), "slow": r.get("slow")}
 
 
-def eval_alerts(st, row_for, series_for, now, as_of=""):
-    """st = {lines: {ticker: [linia]}, watch: {ticker: stan}, log: [...]} -> nowe wpisy (st['log'] i st['watch'] są aktualizowane).
-    Klucz zawiera tydzień, więc ten sam alert nie wraca przy następnym sprawdzeniu."""
+def eval_alerts(st, row_for, series_for, now, as_of="", daily_for=None):
+    """Sprawdza linie tygodniowe i dzienne oraz alerty pozycji/obserwowanych spółek.
+    daily_for(t) zwraca cache świec dziennych; stare linie bez period traktowane są jako tygodniowe."""
     seen, fresh = {a["key"] for a in st["log"]}, []
 
-    def add(key, t, week, msg):
+    def add(key, t, day, msg):
         if key not in seen:
             seen.add(key)
-            fresh.append({"key": key, "t": t, "week": week, "msg": msg, "at": now})
+            fresh.append({"key": key, "t": t, "week": day, "msg": msg, "at": now})
 
-    for t, lines in st.get("lines", {}).items():
-        data = series_for(t)
-        if not data or len(data.get("c") or []) < 2:
-            continue
-        week = data["d"][-1]
-        for ln in lines:
+    for t, ticker_lines in st.get("lines", {}).items():
+        for ln in ticker_lines:
+            period = ln.get("period", "W")
+            data = daily_for(t) if period == "D" and daily_for else None if period == "D" else series_for(t)
+            if not data or len(data.get("c") or []) < 2:
+                continue
+            day = data["d"][-1]
             if ln.get("alert") is False:
                 continue
-            x = line_cross(ln, data)
-            if x:
+            cross = line_cross(ln, data)
+            if cross:
                 v = line_at(ln, data["d"], len(data["c"]) - 1)
-                add(f"L:{t}:{ln['id']}:{week}:{x}", t, week, f"zamknięcie {'nad linią' if x == 'up' else 'pod linią'} trendu ({v:.2f})")
+                if period == "D":
+                    key = f"L:{t}:D:{ln['id']}:{day}:{cross}"
+                    label = "zamknięcie dzienne"
+                else:
+                    key = f"L:{t}:{ln['id']}:{day}:{cross}"
+                    label = "zamknięcie"
+                add(key, t, day, f"{label} {'nad linią' if cross == 'up' else 'pod linią'} trendu ({v:.2f})")
     for t, p in (st.get("pos") or {}).items():   # pozycja: spadek 20 % od szczytu -> sprzedaj połowę (raz na szczyt)
         data = series_for(t)
         if not data or not data.get("c"):

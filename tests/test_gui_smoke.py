@@ -35,7 +35,11 @@ def app(tmp_path):
 
 def test_list_chart_and_navigation(app):
     app.root.update()
-    assert app.tree.get_children() == ("AAA",)          # domyślnie tylko spełniające warunki (BBB: marża +1 pp)
+    assert app.only_ok.get() is False
+    assert set(app.tree.get_children()) == {"AAA", "BBB"}  # domyślnie filtr warunków jest wyłączony
+    app.only_ok.set(True)
+    app.refresh()
+    assert app.tree.get_children() == ("AAA",)              # po włączeniu zostają tylko spełniające warunki
     app.only_ok.set(False)
     app.refresh()
     assert set(app.tree.get_children()) == {"AAA", "BBB"}
@@ -78,7 +82,10 @@ def test_scanner_switch_and_settings_dialog(app):
     app.select_scanner(names[1])
     assert app.tree.get_children() == () and app.store.settings["scanner"] == names[1]
     app.select_scanner(names[0])
-    assert app.tree.get_children() == ("AAA",)
+    assert set(app.tree.get_children()) == {"AAA", "BBB"}  # domyślnie pokazujemy wszystkie akcje
+    app.only_ok.set(True)
+    app.refresh()
+    assert app.tree.get_children() == ("AAA",)             # filtr można włączyć świadomie
     d = A.SettingsDialog(app)
     d.new()
     d.name.set("Mój")
@@ -198,9 +205,77 @@ def test_daily_chart_rwb_and_blue_dot(app, monkeypatch):
             break
         time.sleep(0.02)
     assert ch.period == "D" and ch.geom["n"] == min(n, 260)
+    assert ch.daily_style == "bars" and ch.daily_style_btn.cget("text") == "D: RWB"
+    ch.toggle_daily_style()     # nadal można przełączyć dzienny na RWB / GMMA
+    ch.redraw()
+    assert ch.daily_style == "line" and ch.daily_style_btn.cget("text") == "D: słupki"
     texts = [ch.cv.itemcget(i, "text") for i in ch.cv.find_all() if ch.cv.type(i) == "text"]
-    assert not any(t.startswith("Stochastic") or t.startswith("Przychody kw.") or t.startswith("MACD") for t in texts)   # dzienny: linia + RWB + Blue Dot + GLB
+    assert not any(t.startswith("Stochastic") or t.startswith("Przychody kw.") or t.startswith("MACD") for t in texts)   # dzienny: RWB + Blue Dot + GLB
     assert any("Blue Dot" in t for t in texts) and ch.geom["g"]["rev"] is None
+
+
+def test_daily_trend_lines_right_click_menu_and_preserve_weekly_lines(app, monkeypatch):
+    import datetime as dt
+    import time
+    from desktop import prices
+
+    n = 100
+    dates = [(dt.date(2026, 5, 1) + dt.timedelta(days=i)).isoformat() for i in range(n)]
+    close = [40 + i * 0.2 for i in range(n)]
+    daily = {"d": dates, "o": close, "h": [x + 1 for x in close], "l": [x - 1 for x in close],
+             "c": close, "v": [1e6] * n}
+    monkeypatch.setattr(prices, "daily_ohlc", lambda ticker: dict(daily))
+    weekly = app.store.weekly("AAA")
+    weekly_line = {"id": "weekly-line", "d1": weekly["d"][20], "p1": 55, "d2": weekly["d"][50], "p2": 62, "alert": True}
+    app.store.alerts["lines"]["AAA"] = [weekly_line]
+    app.store.save_alerts()
+    app.refresh_daily_alerts = lambda: None
+
+    app.open_chart("AAA")
+    ch = app.chart
+    ch.update()
+    ch.toggle_period("D")
+    for _ in range(50):
+        app.root.update()
+        if ch.geom and ch.geom["n"] == n:
+            break
+        time.sleep(0.02)
+    assert ch.period == "D" and ch.daily_style == "bars"
+    assert app.store.daily("AAA")["d"] == dates
+
+    g = ch.geom["g"]
+    E = lambda x, y, xr=300, yr=300: type("E", (), {"x": x, "y": y, "x_root": xr, "y_root": yr})()
+    x0 = g["x0"] + 25
+    x1 = g["x0"] + (g["x1"] - g["x0"]) * 0.7
+    y0 = (g["price"][0] + g["price"][1]) / 2
+    ch.press(E(x0, y0))
+    ch.drag_line(E(x0 + 15, y0 - 10))
+    ch.drag_line(E(x1, y0 - 35))
+    ch.release(E(x1, y0 - 35))
+    daily_lines = [ln for ln in app.store.alerts["lines"]["AAA"] if ln.get("period") == "D"]
+    assert len(daily_lines) == 1 and daily_lines[0]["alert"] is False
+    daily_id = daily_lines[0]["id"]
+
+    menus = []
+    monkeypatch.setattr(tk.Menu, "tk_popup", lambda self, x, y: menus.append(self))
+    monkeypatch.setattr(tk.Menu, "grab_release", lambda self: None)
+    seg = ch.geom["segs"][0]
+    ch.right_click(E((seg["x1"] + seg["x2"]) / 2, (seg["y1"] + seg["y2"]) / 2))
+    menu = menus[-1]
+    labels = [menu.entrycget(i, "label") for i in range(menu.index("end") + 1) if menu.type(i) != "separator"]
+    assert "Dodaj alert linii" in labels and "Usuń linię" in labels
+    menu.invoke(0)
+    assert next(ln for ln in app.store.alerts["lines"]["AAA"] if ln["id"] == daily_id)["alert"] is True
+    assert any(ln["id"] == "weekly-line" for ln in app.store.alerts["lines"]["AAA"])
+
+    seg = ch.geom["segs"][0]
+    ch.right_click(E((seg["x1"] + seg["x2"]) / 2, (seg["y1"] + seg["y2"]) / 2))
+    menu = menus[-1]
+    assert menu.entrycget(0, "label") == "Wyłącz alert linii"
+    menu.invoke(2)
+    remaining = app.store.alerts["lines"]["AAA"]
+    assert all(ln["id"] != daily_id for ln in remaining)
+    assert any(ln["id"] == "weekly-line" for ln in remaining)
 
 
 def test_exit_method_toggle_and_position_plan(app):

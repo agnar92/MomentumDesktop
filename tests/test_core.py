@@ -451,6 +451,25 @@ def test_finviz_all_views_merge_fundamental_fields():
     assert rows[0]["sales_qoq"] == pytest.approx(31.0)
     assert rows[0]["eps_qoq"] == pytest.approx(42.0)
     assert rows[0]["ps"] == pytest.approx(8.5)
+    assert set(rows[0]["finviz_views"]) == set(finviz.ALL_VIEWS)
+    assert {"roi", "opm", "sales_qoq", "eps_qoq", "ps"}.issubset(rows[0]["finviz_fields"])
+
+
+def test_finviz_legacy_headers_normalize_financial_and_valuation_metrics():
+    page = """<div>#1 / 1 Total</div><table class="screener_table"><thead><tr>
+    <th>No.</th><th>Ticker</th><th>ROI</th><th>ROA</th><th>Forward P/E</th>
+    <th>EPS growth next year</th><th>Gross Margin</th><th>Perf Quarter</th>
+    </tr></thead><tbody><tr class="styled-row"><td>1</td><td data-boxover-ticker="AAA">AAA</td>
+    <td>22.4%</td><td>18.1%</td><td>24.5</td><td>35.0%</td><td>60.2%</td><td>18.5%</td>
+    </tr></tbody></table>"""
+    rows, total = finviz.parse_data_page(page)
+    assert total == 1 and rows[0]["ticker"] == "AAA"
+    assert rows[0]["roi"] == pytest.approx(22.4)
+    assert rows[0]["roa"] == pytest.approx(18.1)
+    assert rows[0]["forward_pe"] == pytest.approx(24.5)
+    assert rows[0]["eps_next_year"] == pytest.approx(35.0)
+    assert rows[0]["gross_margin"] == pytest.approx(60.2)
+    assert rows[0]["perf_quarter"] == pytest.approx(18.5)
 
 
 def test_growth_score_uses_finviz_roi_and_growth_fields():

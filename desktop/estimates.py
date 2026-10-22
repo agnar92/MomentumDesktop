@@ -1,7 +1,7 @@
 """Prognozy analityków z yfinance (ten sam plik w Momentum Desktop): niespodzianki EPS (konsensus vs wynik, kolejne raporty) i rewizja konsensusu EPS
 na przyszły rok obrotowy (dziś vs 90 dni temu). Backtest 2015–2026 (niespodzianki od 2014 r.): 2 ostatnie raporty powyżej konsensusu = +5,8 pp rocznie
 w obecnej regule. Rewizji nie da się sprawdzić wstecz (yfinance podaje tylko stan dziś) — zapisujemy ją co tydzień w `hist`, żeby kiedyś to przetestować.
-Cache {ticker: {at, surp: [[data, %], ...], rev90, hist: [[data, rev90], ...]}}, odświeżany co FRESH_DAYS dni."""
+Cache zawiera też daty publikacji raportów `earnings_dates`, używane do oznaczeń E na wykresie; odświeżany co FRESH_DAYS dni."""
 import datetime as dt
 import math
 import time
@@ -18,14 +18,20 @@ def _yf():
 def fetch(t):
     """-> {surp: [[YYYY-MM-DD, niespodzianka %], ...] (od najstarszego, tylko opublikowane), rev90: % albo None}."""
     tk = _yf().Ticker(t)
-    surp = []
+    surp, earnings_dates = [], []
     try:
-        d = tk.get_earnings_dates(limit=12)
+        # Większy zakres, aby znaczniki E objęły historię widoczną na wykresie tygodniowym.
+        d = tk.get_earnings_dates(limit=32)
         if d is not None and len(d):
+            today = dt.date.today().isoformat()
             for ts, r in d.sort_index().iterrows():
                 est, rep, s = r.get("EPS Estimate"), r.get("Reported EPS"), r.get("Surprise(%)")
+                report_date = ts.strftime("%Y-%m-%d")
+                # Datę raportu zapisujemy także wtedy, gdy Yahoo nie podało konsensusu lub niespodzianki EPS.
+                if isinstance(rep, (int, float)) and math.isfinite(rep) and report_date <= today:
+                    earnings_dates.append(report_date)
                 if all(isinstance(x, (int, float)) and math.isfinite(x) for x in (est, rep, s)) and abs(est) >= 0.01:
-                    surp.append([ts.strftime("%Y-%m-%d"), round(float(s), 2)])
+                    surp.append([report_date, round(float(s), 2)])
     except Exception:   # brak kalendarza wyników (ETF, spółka zagraniczna) — bez niespodzianek
         pass
     rev90 = None
@@ -37,7 +43,7 @@ def fetch(t):
                 rev90 = round((cur / old - 1) * 100, 2)
     except Exception:
         pass
-    return {"surp": surp[-8:], "rev90": rev90}
+    return {"surp": surp[-8:], "rev90": rev90, "earnings_dates": sorted(set(earnings_dates))[-24:]}
 
 
 def update(tickers, cache, log=print, today=None, pause=0.1, progress=None, fetch_one=None):

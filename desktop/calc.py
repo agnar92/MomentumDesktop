@@ -323,7 +323,7 @@ def growth_score(row, min_coverage=GROWTH_SCORE_MIN_COVERAGE):
     margin_change_points = _growth_component_points(row.get("dopm"), ((-5, 0), (0, 1), (3, 2), (6, 3)))
     roi_value = row.get("roi") if _ok(row.get("roi")) else row.get("roic")
     roi_points = _growth_component_points(roi_value, ((0, 0), (5, 1.5), (10, 3.5), (15, 5.5), (25, 7)))
-    conversion = eps_growth - row["rev_rr"] if _ok(eps_growth) and _ok(row.get("rev_rr")) else None
+    conversion = eps_growth - rev_growth if _ok(eps_growth) and _ok(rev_growth) else None
     conversion_points = _growth_component_points(conversion, ((-20, 0), (-5, 1), (0, 2), (10, 3), (25, 5)))
 
     qs = row.get("qs") or []

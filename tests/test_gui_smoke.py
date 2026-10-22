@@ -293,6 +293,41 @@ def test_daily_chart_rwb_and_blue_dot(app, monkeypatch):
     assert any("Blue Dot" in t for t in texts) and ch.geom["g"]["rev"] is None
 
 
+
+def test_earnings_markers_on_weekly_and_daily_charts(app, monkeypatch):
+    import datetime as dt
+    import time
+    from desktop import prices
+
+    weekly = app.store.weekly("AAA")
+    week_event = weekly["d"][80]
+    n = 120
+    daily_dates = [(dt.date(2026, 1, 1) + dt.timedelta(days=i)).isoformat() for i in range(n)]
+    closes = [50 + i * 0.2 for i in range(n)]
+    daily_event = daily_dates[70]
+    daily = {"d": daily_dates, "o": closes, "h": [x + 1 for x in closes], "l": [x - 1 for x in closes],
+             "c": closes, "v": [1e6] * n}
+    monkeypatch.setattr(prices, "daily_ohlc", lambda ticker: dict(daily))
+    app.store.save_cache("estimates", {"AAA": {"at": "2026-10-20", "surp": [], "rev90": None,
+                                                  "earnings_dates": [week_event, daily_event]}})
+
+    app.open_chart("AAA")
+    ch = app.chart
+    ch.update()
+    ch.redraw()
+    texts = [ch.cv.itemcget(i, "text") for i in ch.cv.find_all() if ch.cv.type(i) == "text"]
+    assert "E" in texts   # raport trafia pod świecę tygodnia zawierającego datę publikacji
+
+    ch.toggle_period("D")
+    for _ in range(60):
+        app.root.update()
+        if ch.geom and ch.geom.get("n") == n:
+            break
+        time.sleep(0.02)
+    assert ch.period == "D" and ch.geom and ch.geom.get("n") == n
+    texts = [ch.cv.itemcget(i, "text") for i in ch.cv.find_all() if ch.cv.type(i) == "text"]
+    assert "E" in texts   # w interwale dziennym E jest pod sesją raportu
+
 def test_daily_trend_lines_right_click_menu_and_preserve_weekly_lines(app, monkeypatch):
     import datetime as dt
     import time

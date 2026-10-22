@@ -1220,10 +1220,9 @@ class GrowthScoreDialog(tk.Toplevel):
 
         self.weights_label = tk.Label(
             self,
-            text=("Wagi: przychody r/r 35, przyspieszenie 25, rewizja EPS 90d 20, "
-                  "zmiana marży oper. 10, dwa pozytywne zaskoczenia EPS 10. "
-                  "Brakujące dane pomijamy i normalizujemy wynik do dostępnych wag; "
-                  "pokazujemy score przy pokryciu co najmniej 70/100."),
+            text=("Wagi: przyspieszenie wzrostu 30, zaskoczenia EPS 20, przyszły wzrost/revizje 20, "
+                  "jakość biznesu 20, trwałość wzrostu 10. Braki danych są pomijane; score pokazujemy "
+                  "przy pokryciu co najmniej 70/100. Revenue Surprise, ROI/ROIC i katalizatory wymagają uzupełnienia."),
             bg=PANEL, fg="#8b95a3", justify="left", wraplength=365, anchor="w"
         )
         self.weights_label.pack(fill="x", padx=12, pady=(8, 4))
@@ -1269,6 +1268,7 @@ class GrowthScoreDialog(tk.Toplevel):
                 return (1, 0.0, ticker)
             return (0, -score if self.descending else score, ticker)
         rows.sort(key=key)
+        rows = rows[:10]
         for ticker, score, coverage in rows:
             shown = f"{score:.1f}" if score is not None else "—"
             tags = ("high",) if score is not None and score >= 75 else ()
@@ -1315,19 +1315,16 @@ class GrowthScoreDialog(tk.Toplevel):
             )
             components = result["components"]
             specs = (
-                ("revenue", "Przychody r/r", row.get("rev_rr"), "%", 35),
-                ("acceleration", "Przyspieszenie przychodów", row.get("accel"), " pp", 25),
-                ("eps_revision", "Rewizja EPS 90 dni", row.get("eps_rev"), "%", 20),
-                ("op_margin", "Zmiana marży operacyjnej", row.get("dopm"), " pp", 10),
+                ("acceleration", "Przyspieszenie wzrostu", None, "", 30),
+                ("surprises", "Zaskoczenia EPS (Revenue Surprise brak)", row.get("surp"), "%", 20),
+                ("future", "Przyszły wzrost / rewizje EPS", row.get("eps_rev"), "%", 20),
+                ("quality", "Jakość biznesu (marża operacyjna)", row.get("opm"), "%", 20),
+                ("durability", "Trwałość wzrostu (proxy historii)", None, "", 10),
             )
-            content += "\n"
+            content += "\\n"
             for key, label, value, suffix, weight in specs:
-                content += f"{label}: {self._fmt_value(value, suffix)} → {self._fmt_points(components.get(key), weight)}\n"
-            points = components.get("eps_beats")
-            if points is None:
-                beats = "brak pełnych danych · pominięte"
-            else:
-                beats = f"{'TAK' if row.get('beat2') else 'NIE'} → {self._fmt_points(points, 10)}"
+                content += f"{label}: {self._fmt_value(value, suffix)} → {self._fmt_points(components.get(key), weight)}\\n"
+            content += "Brak Revenue Surprise i ROI/ROIC w źródłach danych; katalizatory wymagają ręcznej weryfikacji.\\n"
             content += (
                 f"EPS surprise (najnowszy / poprzedni): "
                 f"{self._fmt_value(row.get('surp'), '%')} / {self._fmt_value(row.get('surp_prev'), '%')}\n"

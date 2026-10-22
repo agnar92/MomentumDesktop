@@ -152,8 +152,13 @@ _HEADER_ALIASES = {
 }
 
 
+_CANONICAL_FIELDS = set(_FIELD_ALIASES.values()) | set(_HEADER_ALIASES.values())
+
+
 def _field_name(name):
     raw = str(name).strip()
+    if raw in _CANONICAL_FIELDS:
+        return raw
     if raw in _FIELD_ALIASES:
         return _FIELD_ALIASES[raw]
     lowered = raw.casefold().replace("_", " ").replace("-", " ")

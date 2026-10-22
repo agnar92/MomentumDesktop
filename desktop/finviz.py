@@ -1,6 +1,7 @@
 """Lista spółek z darmowego screenera Finviz (widok Overview: ticker, spółka, sektor, branża, kapitalizacja).
 Finviz robi tylko wstępne cięcie listy do pobrania; dokładne warunki liczy aplikacja. UWAGA: Finviz po cichu ignoruje nieznany kod
 filtra (lista robi się szersza zamiast błędu) — po zmianie filtra sprawdź liczbę spółek."""
+import json
 import re
 import time
 
@@ -112,7 +113,7 @@ _FIELD_ALIASES = {
     "insiderOwn": "insider_ownership", "insiderTrans": "insider_change", "high52": "high_52w",
     "low52": "low_52w", "forwardPE": "forward_pe", "peg": "peg", "ps": "ps", "pb": "pb",
     "pfcf": "pfcf", "pe": "pe", "evEbitda": "ev_ebitda", "evSales": "ev_sales",
-    "grossMargin": "gross_margin", "dividend": "dividend", "payout": "payout",
+    "dividend": "dividend", "payout": "payout",
     "sales": "sales", "income": "income", "bookSh": "book_value_share", "cashSh": "cash_share",
     "employees": "employees", "country": "country", "exchange": "exchange", "industry": "industry",
     "sector": "sector", "index": "index", "earnings": "earnings_date", "recom": "analyst_recommendation",

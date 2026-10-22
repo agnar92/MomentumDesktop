@@ -257,9 +257,14 @@ def fetch_all(filters, max_tickers=MAX_TICKERS, pause=0.25, log=print, get=None,
                 seen.add(row["ticker"])
                 fields_by_view.setdefault(view, set()).update(k for k, value in row.items() if k != "ticker" and value is not None)
                 if view == 111:
-                    merged.setdefault(row["ticker"], {}).update(row)
+                    target = merged.setdefault(row["ticker"], {})
+                    target.update(row)
+                    target["_finviz_view_ids"] = [view]
                 elif row["ticker"] in merged:
-                    merged[row["ticker"]].update({k: v for k, v in row.items() if v is not None})
+                    target = merged[row["ticker"]]
+                    target.update({k: v for k, v in row.items() if v is not None})
+                    if view not in target.setdefault("_finviz_view_ids", []):
+                        target["_finviz_view_ids"].append(view)
                 else:
                     # If the provider sorts/views differ slightly, preserve the row but Overview remains authoritative below.
                     view_rows.append(row)
@@ -281,7 +286,7 @@ def fetch_all(filters, max_tickers=MAX_TICKERS, pause=0.25, log=print, get=None,
             raise RuntimeError("Finviz Overview nie zwrócił spółek; nie pobieram pozostałych zakładek.")
     out = list(merged.values())[:max_tickers]
     for row in out:
-        row["finviz_views"] = [view for view in views if fields_by_view.get(view)]
+        row["finviz_views"] = row.pop("_finviz_view_ids", [])
         row["finviz_fields"] = sorted(k for k, value in row.items() if k not in {"ticker", "finviz_views", "finviz_fields"} and value is not None)
     if out:
         log(f"Finviz: pobrano {len(out)} spółek; połączono zakładki {','.join(map(str, views))}; pola łącznie: {len(set().union(*fields_by_view.values())) if fields_by_view else 0}")

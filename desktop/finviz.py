@@ -143,7 +143,7 @@ def _field_value(name, value):
 
 def parse_data_page(page):
     """Parse every visible column in a Finviz screener view, retaining unknown fields too."""
-    m = re.search(r"#\\d+\\s*/\\s*(\\d+)\\s*Total", page)
+    m = re.search(r"#\d+\s*/\s*(\d+)\s*Total", page)
     total = int(m.group(1)) if m else None
     json_match = re.search(r'<script type="application/json" data-ssr-props="[^"]*">(.*?)</script>', page, re.S)
     if json_match:

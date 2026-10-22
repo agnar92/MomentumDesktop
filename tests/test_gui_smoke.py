@@ -95,6 +95,29 @@ def test_scanner_switch_and_settings_dialog(app):
     assert "Mój" in app.scanner_box["values"] and app.tree.get_children() == ()
 
 
+def test_strategy_conditions_dialog_recalculates_and_persists(app, tmp_path):
+    from desktop import app as A
+    from desktop.store import Store
+
+    assert not next(row for row in app.store.rows if row["ticker"] == "BBB")["ok"]
+    d = A.StrategyConditionsDialog(app)
+    assert d.enabled["op_margin"].get() is True
+    d.enabled["op_margin"].set(False)
+    d.save()
+
+    cfg = app.store.settings["strategy_conditions"]
+    assert cfg["op_margin"]["enabled"] is False
+    assert next(row for row in app.store.rows if row["ticker"] == "BBB")["ok"] is True
+    app.only_ok.set(True)
+    app.refresh()
+    assert set(app.tree.get_children()) == {"AAA", "BBB"}
+
+    # Ustawienia obowiązują również po ponownym uruchomieniu i przełączeniu skanera.
+    reloaded = Store(tmp_path)
+    assert reloaded.settings["strategy_conditions"]["op_margin"]["enabled"] is False
+    assert next(row for row in reloaded.rows if row["ticker"] == "BBB")["ok"] is True
+
+
 def test_trend_line_draw_move_delete_and_filters(app):
     from desktop import app as A
     app.open_chart("AAA")

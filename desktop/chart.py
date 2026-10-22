@@ -505,8 +505,9 @@ def draw_glb_history(cv, data, i0, i1, xf, yf, g, pmin, pmax, level):
                    anchor="w", fill=GLB_COLOR, font=FONT)
 
 
-def fund_panel_lines(r, pos=None, plan=None, exit_method="MACD"):
-    """Treść panelu fundamentów -> [(tekst, tag)]; plan = calc.position_plan dla 📌 pozycji, exit_method = MACD / GLB."""
+def fund_panel_lines(r, pos=None, plan=None, exit_method="MACD", conditions=None):
+    """Treść panelu fundamentów -> [(tekst, tag)]; pokazuje progi strategii i warunki aktualnie włączone."""
+    cfg = calc.normalize_conditions(conditions)
     def v(x, u, d=1):
         return "—" if x is None else f"{x:+.{d}f}{u}"
     if not r:
@@ -530,11 +531,30 @@ def fund_panel_lines(r, pos=None, plan=None, exit_method="MACD"):
         out.append((("✓ " if ok is True else "✗ " if ok is False else "— ") + txt, "ok" if ok is True else "no" if ok is False else "na"))
     def cond(x, test):
         return None if x is None else test(x)
-    item(cond(r.get("rev_rr"), lambda x: x >= calc.MIN_REV_GROWTH), "przychody kw. ≥ +15 % r/r")
-    item(cond(r.get("dopm"), lambda x: x >= calc.MIN_DOPM), "marża oper. ≥ +3 pp r/r")
-    item(cond(r.get("ps"), lambda x: x < calc.MAX_PS), "wycena P/S < 20")
-    item(cond(r.get("rs"), lambda x: x >= calc.MIN_RS), "siła względna 52 tyg. ≥ +50 pp nad S&P 500")
-    item(r.get("beat2"), f"2 ostatnie raporty powyżej konsensusu EPS ({v(r.get('surp'), ' %')}, wcześniej {v(r.get('surp_prev'), ' %')})")
+    if cfg["rev_growth"]["enabled"]:
+        item(cond(r.get("rev_rr"), lambda x: x >= cfg["rev_growth"]["threshold"]),
+             f"przychody kw. ≥ +{cfg['rev_growth']['threshold']:g} % r/r")
+    else:
+        item(None, f"przychody kw. — kryterium wyłączone (próg +{cfg['rev_growth']['threshold']:g} %)")
+    if cfg["op_margin"]["enabled"]:
+        item(cond(r.get("dopm"), lambda x: x >= cfg["op_margin"]["threshold"]),
+             f"marża oper. ≥ +{cfg['op_margin']['threshold']:g} pp r/r")
+    else:
+        item(None, f"marża oper. — kryterium wyłączone (próg +{cfg['op_margin']['threshold']:g} pp)")
+    if cfg["ps"]["enabled"]:
+        item(cond(r.get("ps"), lambda x: x < cfg["ps"]["threshold"]),
+             f"wycena P/S < {cfg['ps']['threshold']:g}")
+    else:
+        item(None, f"wycena P/S — kryterium wyłączone (próg {cfg['ps']['threshold']:g})")
+    if cfg["rs"]["enabled"]:
+        item(cond(r.get("rs"), lambda x: x >= cfg["rs"]["threshold"]),
+             f"siła względna 52 tyg. ≥ +{cfg['rs']['threshold']:g} pp nad S&P 500")
+    else:
+        item(None, f"siła względna — kryterium wyłączone (próg +{cfg['rs']['threshold']:g} pp)")
+    if cfg["beat2"]["enabled"]:
+        item(r.get("beat2"), f"2 ostatnie raporty powyżej konsensusu EPS ({v(r.get('surp'), ' %')}, wcześniej {v(r.get('surp_prev'), ' %')})")
+    else:
+        item(None, "2 ostatnie raporty EPS — kryterium wyłączone")
     st = r.get("glb_state")
     item(True if st in ("WYBICIE", "SYGNAŁ", "BLUE DOT") else None if st == "NAD" else False, f"Green Line: {st or '—'} (kupno: przebicie dowolnie wysoko, 0–10 % albo Blue Dot)")
     item(r.get("macd") == "nad", f"MACD tyg. {r.get('macd') or '—'} sygnałem" + (f" · stop {r['macd_stop']:.2f}" if r.get("macd_stop") else ""))
@@ -984,7 +1004,10 @@ class ChartWindow(tk.Toplevel):
         t = self.ptext
         t.config(state="normal")
         t.delete("1.0", "end")
-        for txt, tag in fund_panel_lines(r, self.app.store.alerts["pos"].get(self.ticker), self.plan(), self.app.store.settings.get("exit", "MACD")):
+        for txt, tag in fund_panel_lines(
+            r, self.app.store.alerts["pos"].get(self.ticker), self.plan(),
+            self.app.store.settings.get("exit", "MACD"), self.app.store.settings.get("strategy_conditions"),
+        ):
             t.insert("end", txt + "\n", tag)
         t.config(state="disabled")
 

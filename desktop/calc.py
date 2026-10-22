@@ -19,6 +19,13 @@ MIN_REV_GROWTH = 15.0   # przychody kw. r/r (%) — bez niego 34,9 % rocznie
 MIN_DOPM = 3.0          # zmiana marży operacyjnej r/r (pp) — bez niej 28,9 %
 MAX_PS = 20.0           # wycena P/S < 20 (kapitalizacja / przychody TTM) — bez niej 31,5 % (drogie spółki tracą); odcina też RGTI (P/S 200)
 MIN_RS = 50.0           # siła względna: zmiana ceny z 52 tyg. minus zmiana SPY ≥ 50 pp — bez niej 21,4 %; próg 40 pp: 31,3 %
+DEFAULT_CONDITIONS = {
+    "rev_growth": {"enabled": True, "threshold": MIN_REV_GROWTH},
+    "op_margin": {"enabled": True, "threshold": MIN_DOPM},
+    "ps": {"enabled": True, "threshold": MAX_PS},
+    "rs": {"enabled": True, "threshold": MIN_RS},
+    "beat2": {"enabled": True},
+}
 RS_WEEKS = 52
 STOP_PCT = 10.0         # stop początkowy pod wejściem
 SURPRISE_DAYS = 120     # niespodzianka EPS: ostatni raport nie starszy niż 120 dni (jak w backteście)
@@ -197,13 +204,47 @@ def surprises(est, as_of):
     return last, prev, bool(last > 0 and prev is not None and prev > 0)
 
 
-def passes(row):
-    """Warunki strategii: przychody kw. ≥ +15 % r/r, marża oper. ≥ +3 pp r/r, P/S < 20 (brak P/S nie blokuje),
-    siła względna 52 tyg. ≥ 50 pp nad SPY, 2 ostatnie raporty powyżej konsensusu EPS (brak historii / niespodzianek blokuje — tak było w backteście:
-    bez niespodzianek 36,6 % rocznie, z nimi 42,4 %, oba okresy lepiej)."""
-    r, d, ps, rs = (row.get(k) for k in ("rev_rr", "dopm", "ps", "rs"))
-    return (_ok(r) and r >= MIN_REV_GROWTH and _ok(d) and d >= MIN_DOPM
-            and not (_ok(ps) and ps >= MAX_PS) and _ok(rs) and rs >= MIN_RS and row.get("beat2") is True)
+def normalize_conditions(conditions=None):
+    """Wypełnia brakujące progi ustawieniami domyślnymi i odrzuca niepoprawne wartości."""
+    source = conditions if isinstance(conditions, dict) else {}
+    out = {}
+    for key, default in DEFAULT_CONDITIONS.items():
+        saved = source.get(key) if isinstance(source.get(key), dict) else {}
+        enabled = saved.get("enabled", default["enabled"])
+        if key == "beat2":
+            out[key] = {"enabled": bool(enabled)}
+            continue
+        try:
+            threshold = float(saved.get("threshold", default["threshold"]))
+        except (TypeError, ValueError):
+            threshold = default["threshold"]
+        if not math.isfinite(threshold):
+            threshold = default["threshold"]
+        if key == "ps" and threshold <= 0:
+            threshold = default["threshold"]
+        out[key] = {"enabled": bool(enabled), "threshold": threshold}
+    return out
+
+
+def passes(row, conditions=None):
+    """Sprawdza tylko włączone warunki konieczne; brak P/S nie blokuje, jeśli próg P/S jest włączony."""
+    cfg = normalize_conditions(conditions)
+    required = []
+    if cfg["rev_growth"]["enabled"]:
+        value = row.get("rev_rr")
+        required.append(_ok(value) and value >= cfg["rev_growth"]["threshold"])
+    if cfg["op_margin"]["enabled"]:
+        value = row.get("dopm")
+        required.append(_ok(value) and value >= cfg["op_margin"]["threshold"])
+    if cfg["ps"]["enabled"]:
+        value = row.get("ps")
+        required.append(not _ok(value) or value < cfg["ps"]["threshold"])
+    if cfg["rs"]["enabled"]:
+        value = row.get("rs")
+        required.append(_ok(value) and value >= cfg["rs"]["threshold"])
+    if cfg["beat2"]["enabled"]:
+        required.append(row.get("beat2") is True)
+    return all(required)
 
 
 def slowdown(row):
@@ -215,7 +256,7 @@ def slowdown(row):
     return "HAMUJE+MB" if _ok(g) and g < 0 else "HAMUJE"
 
 
-def build_row(base, weekly, months, fund, spy=None, est=None):
+def build_row(base, weekly, months, fund, spy=None, est=None, conditions=None):
     """Wiersz listy: base (z Finviz), weekly {d, o, h, l, c, v}, months (High zamkniętych miesięcy), fund (z SEC albo None), spy (tygodniowe {d, c}),
     est (prognozy z yfinance: niespodzianki EPS i rewizja 90 dni)."""
     c, lo, v = weekly.get("c") or [], weekly.get("l") or [], weekly.get("v") or []
@@ -241,6 +282,6 @@ def build_row(base, weekly, months, fund, spy=None, est=None):
     # tydzień z danych zaczyna się w poniedziałek: raport z tego tygodnia (do piątku) też jest znany
     row["surp"], row["surp_prev"], row["beat2"] = surprises(est, (dt.date.fromisoformat(as_of) + dt.timedelta(days=6)).isoformat()) if as_of else (None, None, None)
     row["eps_rev"] = (est or {}).get("rev90")
-    row["ok"] = passes(row)
+    row["ok"] = passes(row, conditions)
     row["slow"] = slowdown(row)
     return row

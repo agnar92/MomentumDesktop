@@ -328,7 +328,8 @@ def growth_score(row, min_coverage=GROWTH_SCORE_MIN_COVERAGE):
     if p is not None:
         quality_values.append(p)
     p = _growth_component_points(row.get("roic"), ((0, 0), (5, 5), (10, 12), (15, 16), (25, 20)))
-    if p is not None: quality_values.append(p)
+    if p is not None:
+        quality_values.append(p)
     quality = sum(quality_values) / len(quality_values) if quality_values else None
     # Prefer an explicit human-reviewed catalyst rating; otherwise show a clearly labelled historical proxy.
     catalyst_score = row.get("catalyst_score")

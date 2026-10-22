@@ -1218,14 +1218,15 @@ class GrowthScoreDialog(tk.Toplevel):
         self.detail_text.tag_configure("muted", foreground="#8b95a3")
         self.detail_text.pack(fill="x", padx=10, pady=(0, 4))
 
-        tk.Label(
+        self.weights_label = tk.Label(
             self,
             text=("Wagi: przychody r/r 35, przyspieszenie 25, rewizja EPS 90d 20, "
                   "zmiana marży oper. 10, dwa pozytywne zaskoczenia EPS 10. "
                   "Brakujące dane pomijamy i normalizujemy wynik do dostępnych wag; "
                   "pokazujemy score przy pokryciu co najmniej 70/100."),
             bg=PANEL, fg="#8b95a3", justify="left", wraplength=365, anchor="w"
-        ).pack(fill="x", padx=12, pady=(8, 4))
+        )
+        self.weights_label.pack(fill="x", padx=12, pady=(8, 4))
         buttons = tk.Frame(self, bg=PANEL)
         buttons.pack(fill="x", padx=10, pady=(4, 10))
         self.components_btn = tk.Button(
@@ -1288,7 +1289,7 @@ class GrowthScoreDialog(tk.Toplevel):
     def toggle_components(self):
         self.show_components = not self.show_components
         if self.show_components:
-            self.detail_frame.pack(fill="x", padx=10, pady=(0, 4))
+            self.detail_frame.pack(fill="x", padx=10, pady=(0, 4), before=self.weights_label)
             self.components_btn.config(text="▾ Ukryj składowe")
             if not self.tree.selection() and self.tree.get_children():
                 self.tree.selection_set(self.tree.get_children()[0])

@@ -75,6 +75,46 @@ def earnings_indices(dates, earnings_dates, period="W"):
     return sorted(found)
 
 
+def _surprise_map(rows):
+    """Mapuje wiersze [data, niespodzianka %] na datę -> wartość liczbową."""
+    out = {}
+    for row in rows or ():
+        if not isinstance(row, (list, tuple)) or len(row) < 2:
+            continue
+        try:
+            out[str(row[0])[:10]] = float(row[1]) if row[1] is not None else None
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
+def earnings_tooltip_lines(data, index, entry, period):
+    """Niespodzianki EPS i przychodów tylko dla świecy, pod którą rysowana jest litera E."""
+    eps = _surprise_map((entry or {}).get("surp"))
+    revenue = _surprise_map((entry or {}).get("revenue_surp"))
+    events = set((entry or {}).get("earnings_dates") or ()) | set(eps) | set(revenue)
+    dates = data.get("d") or []
+    matched = sorted(
+        (str(event)[:10] for event in events if index in earnings_indices(dates, [event], period)),
+        reverse=True,
+    )
+    if not matched:
+        return []
+
+    def pct(value):
+        return "N/D" if value is None else f"{value:+.1f}%"
+
+    # Zwykle jedna publikacja na świecę. Przy kilku (np. zduplikowanych zdarzeniach) podajemy każdą.
+    out = []
+    for date in matched:
+        out.extend([
+            f"WYNIKI · {date}",
+            f"Earnings Surprise: {pct(eps.get(date))}",
+            f"Revenue Surprise: {pct(revenue.get(date))}",
+        ])
+    return out
+
+
 def boxed(cv, x, y, text, fill, anchor="w", font=FONT):
     """Napis na tle wykresu (prostokąt w kolorze tła pod spodem), żeby nie zlewał się ze świecami i liniami."""
     t = cv.create_text(x, y, text=text, anchor=anchor, fill=fill, font=font)
@@ -713,6 +753,7 @@ class ChartWindow(tk.Toplevel):
         """Bieżące daty wyników z cache; zgodność ze starszym cache przez daty niespodzianek EPS."""
         ticker = ticker or self.ticker
         entry = self.app.store.cache("estimates").get(ticker) or {}
+        self.earnings_cache_entry = entry
         dates = entry.get("earnings_dates") or [x[0] for x in entry.get("surp", []) if x]
         self.earnings_dates = sorted({str(x)[:10] for x in dates if x and len(str(x)[:10]) == 10})
 
@@ -886,6 +927,9 @@ class ChartWindow(tk.Toplevel):
         self.cv.create_line(e.x, g["spx"][0], e.x, g["macd"][1], fill="#3a4654", tags="tip")
         index = self.geom["i0"] + i
         lines = [s for s in info_lines(data, index) if s]
+        if self.period in ("D", "W"):
+            cache = getattr(self, "earnings_cache_entry", None) or {}
+            lines.extend(earnings_tooltip_lines(data, index, cache, self.period))
         # Blue Dot pokazujemy w dymku danych po najechaniu na świecę, bez dodatkowej linii na wykresie.
         if self.period == "D" and self.daily_style == "line":
             row = self.app.store.row(self.ticker) or {}
@@ -893,8 +937,9 @@ class ChartWindow(tk.Toplevel):
             if index in dots:
                 low = data["l"][index]
                 lines.extend([f"BLUE DOT · {data['d'][index]}", f"Stop pod Low: {fmt(low)}"])
-        x = e.x + 14 if e.x < g["x1"] - 200 else e.x - 190
-        self.cv.create_rectangle(x, e.y + 10, x + 176, e.y + 16 + 15 * len(lines), fill="#1b2027", outline="#3a4654", tags="tip")
+        tip_w = 252
+        x = e.x + 14 if e.x < g["x1"] - tip_w - 14 else e.x - tip_w - 14
+        self.cv.create_rectangle(x, e.y + 10, x + tip_w, e.y + 16 + 15 * len(lines), fill="#1b2027", outline="#3a4654", tags="tip")
         for k, s in enumerate(lines):
             self.cv.create_text(x + 6, e.y + 20 + 15 * k, text=s, anchor="w", fill=FG, font=FONT, tags="tip")
 

@@ -15,10 +15,35 @@ def _yf():
     return yf
 
 
+def _number(value):
+    """Wartość liczbowa z danych Yahoo albo None (obsługa NaN / braków / pól tekstowych)."""
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if math.isfinite(number) else None
+
+
+def _revenue_surprise(row):
+    """Procentowa niespodzianka przychodów, jeśli źródło dostarczy actual i consensus."""
+    explicit = None
+    for key in ("Revenue Surprise(%)", "Revenue Surprise (%)"):
+        explicit = _number(row.get(key))
+        if explicit is not None:
+            return round(explicit, 2)
+    actual = next((_number(row.get(key)) for key in ("Reported Revenue", "Revenue Actual", "Actual Revenue")
+                   if _number(row.get(key)) is not None), None)
+    estimate = next((_number(row.get(key)) for key in ("Revenue Estimate", "Estimated Revenue")
+                     if _number(row.get(key)) is not None), None)
+    if actual is None or estimate is None or estimate == 0:
+        return None
+    return round((actual - estimate) / abs(estimate) * 100, 2)
+
+
 def fetch(t):
-    """-> {surp: [[YYYY-MM-DD, niespodzianka %], ...] (od najstarszego, tylko opublikowane), rev90: % albo None}."""
+    """-> daty i procentowe niespodzianki EPS / przychodów (jeśli źródło je udostępnia), rev90."""
     tk = _yf().Ticker(t)
-    surp, earnings_dates = [], []
+    surp, revenue_surp, earnings_dates = [], [], []
     try:
         # Większy zakres, aby znaczniki E objęły historię widoczną na wykresie tygodniowym.
         d = tk.get_earnings_dates(limit=32)
@@ -28,10 +53,14 @@ def fetch(t):
                 est, rep, s = r.get("EPS Estimate"), r.get("Reported EPS"), r.get("Surprise(%)")
                 report_date = ts.strftime("%Y-%m-%d")
                 # Datę raportu zapisujemy także wtedy, gdy Yahoo nie podało konsensusu lub niespodzianki EPS.
-                if isinstance(rep, (int, float)) and math.isfinite(rep) and report_date <= today:
+                rev_surp = _revenue_surprise(r)
+                if (_number(rep) is not None or _number(r.get("Reported Revenue")) is not None or
+                        _number(r.get("Revenue Actual")) is not None or _number(r.get("Actual Revenue")) is not None) and report_date <= today:
                     earnings_dates.append(report_date)
-                if all(isinstance(x, (int, float)) and math.isfinite(x) for x in (est, rep, s)) and abs(est) >= 0.01:
+                if all(_number(x) is not None for x in (est, rep, s)) and abs(float(est)) >= 0.01:
                     surp.append([report_date, round(float(s), 2)])
+                if rev_surp is not None and report_date <= today:
+                    revenue_surp.append([report_date, rev_surp])
     except Exception:   # brak kalendarza wyników (ETF, spółka zagraniczna) — bez niespodzianek
         pass
     rev90 = None
@@ -43,7 +72,8 @@ def fetch(t):
                 rev90 = round((cur / old - 1) * 100, 2)
     except Exception:
         pass
-    return {"surp": surp[-8:], "rev90": rev90, "earnings_dates": sorted(set(earnings_dates))[-24:]}
+    return {"surp": surp[-24:], "revenue_surp": revenue_surp[-24:], "rev90": rev90,
+            "earnings_dates": sorted(set(earnings_dates))[-24:]}
 
 
 def update(tickers, cache, log=print, today=None, pause=0.1, progress=None, fetch_one=None):

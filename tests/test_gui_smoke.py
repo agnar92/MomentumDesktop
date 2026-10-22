@@ -294,6 +294,15 @@ def test_daily_chart_rwb_and_blue_dot(app, monkeypatch):
 
 
 
+
+def test_revenue_surprise_is_computed_if_actual_and_estimate_are_supplied():
+    from desktop.estimates import _revenue_surprise
+
+    assert _revenue_surprise({"Reported Revenue": 110, "Revenue Estimate": 100}) == 10.0
+    assert _revenue_surprise({"Reported Revenue": 90, "Revenue Estimate": 100}) == -10.0
+    assert _revenue_surprise({"Reported Revenue": 90, "Revenue Estimate": 0}) is None
+
+
 def test_earnings_markers_on_weekly_and_daily_charts(app, monkeypatch):
     import datetime as dt
     import time
@@ -308,8 +317,13 @@ def test_earnings_markers_on_weekly_and_daily_charts(app, monkeypatch):
     daily = {"d": daily_dates, "o": closes, "h": [x + 1 for x in closes], "l": [x - 1 for x in closes],
              "c": closes, "v": [1e6] * n}
     monkeypatch.setattr(prices, "daily_ohlc", lambda ticker: dict(daily))
-    app.store.save_cache("estimates", {"AAA": {"at": "2026-10-20", "surp": [], "rev90": None,
-                                                  "earnings_dates": [week_event, daily_event]}})
+    app.store.save_cache("estimates", {"AAA": {
+        "at": "2026-10-20",
+        "surp": [[week_event, 6.7], [daily_event, -2.5]],
+        "revenue_surp": [[week_event, 4.1], [daily_event, 8.2]],
+        "rev90": None,
+        "earnings_dates": [week_event, daily_event],
+    }})
 
     app.open_chart("AAA")
     ch = app.chart
@@ -317,6 +331,14 @@ def test_earnings_markers_on_weekly_and_daily_charts(app, monkeypatch):
     ch.redraw()
     texts = [ch.cv.itemcget(i, "text") for i in ch.cv.find_all() if ch.cv.type(i) == "text"]
     assert "E" in texts   # raport trafia pod świecę tygodnia zawierającego datę publikacji
+    g = ch.geom["g"]
+    from desktop.chart import earnings_indices
+    weekly_index = earnings_indices(weekly["d"], [week_event], "W")[0]
+    x = g["x0"] + (weekly_index + 0.5) * ch.geom["step"]
+    ch.on_motion(type("E", (), {"x": x, "y": (g["price"][0] + g["price"][1]) / 2})())
+    tooltip = [ch.cv.itemcget(i, "text") for i in ch.cv.find_withtag("tip") if ch.cv.type(i) == "text"]
+    assert "Earnings Surprise: +6.7%" in tooltip
+    assert "Revenue Surprise: +4.1%" in tooltip
 
     ch.toggle_period("D")
     for _ in range(60):
@@ -327,6 +349,12 @@ def test_earnings_markers_on_weekly_and_daily_charts(app, monkeypatch):
     assert ch.period == "D" and ch.geom and ch.geom.get("n") == n
     texts = [ch.cv.itemcget(i, "text") for i in ch.cv.find_all() if ch.cv.type(i) == "text"]
     assert "E" in texts   # w interwale dziennym E jest pod sesją raportu
+    g = ch.geom["g"]
+    x = g["x0"] + (70 + 0.5) * ch.geom["step"]
+    ch.on_motion(type("E", (), {"x": x, "y": (g["price"][0] + g["price"][1]) / 2})())
+    tooltip = [ch.cv.itemcget(i, "text") for i in ch.cv.find_withtag("tip") if ch.cv.type(i) == "text"]
+    assert "Earnings Surprise: -2.5%" in tooltip
+    assert "Revenue Surprise: +8.2%" in tooltip
 
 def test_daily_trend_lines_right_click_menu_and_preserve_weekly_lines(app, monkeypatch):
     import datetime as dt

@@ -332,7 +332,9 @@ def test_earnings_markers_on_weekly_and_daily_charts(app, monkeypatch):
     texts = [ch.cv.itemcget(i, "text") for i in ch.cv.find_all() if ch.cv.type(i) == "text"]
     assert "E" in texts   # raport trafia pod świecę tygodnia zawierającego datę publikacji
     g = ch.geom["g"]
-    x = g["x0"] + (80 + 0.5) * ch.geom["step"]
+    from desktop.chart import earnings_indices
+    weekly_index = earnings_indices(weekly["d"], [week_event], "W")[0]
+    x = g["x0"] + (weekly_index + 0.5) * ch.geom["step"]
     ch.on_motion(type("E", (), {"x": x, "y": (g["price"][0] + g["price"][1]) / 2})())
     tooltip = [ch.cv.itemcget(i, "text") for i in ch.cv.find_withtag("tip") if ch.cv.type(i) == "text"]
     assert "Earnings Surprise: +6.7%" in tooltip

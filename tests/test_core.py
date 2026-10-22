@@ -291,7 +291,7 @@ def test_sync_run_with_fake_sources(tmp_path):
 def test_scanners_have_own_lists_and_share_weekly(tmp_path):
     store = Store(tmp_path)
     names = [x["name"] for x in store.settings["scanners"]]
-    assert names[0] == "Bezpieczny (backtest)" and store.settings["scanner"] == names[0] and len(names) == 4
+    assert names[0] == "Bezpieczny (backtest)" and store.settings["scanner"] == names[0] and len(names) == 5
     w = {"d": ["2026-01-05"] * 40, "o": [1] * 40, "h": [1] * 40, "l": [1] * 40, "c": [100.0] * 40, "v": [5e6] * 40}
     store.save_scan([{"ticker": "A"}], {"A": w}, "x")
     store.select(names[1])

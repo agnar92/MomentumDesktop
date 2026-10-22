@@ -15,7 +15,7 @@ from .theme import BG, FG, PANEL, apply_dark, autowrap, setup_style
 
 COLUMNS = [  # (klucz, nagłówek, szerokość, format)
     ("ticker", "Ticker", 70, "s"), ("company", "Spółka", 200, "s"), ("sector", "Sektor", 140, "s"), ("price", "Cena", 80, "p"),
-    ("glb", "Green Line", 90, "p"), ("glb_pct", "Do linii %", 85, "%"), ("glb_state", "GLB", 85, "s"), ("macd", "MACD", 60, "s"), ("trend", "SMA 10>30", 85, "b"),
+    ("upside", "Upside 12M %", 110, "%"), ("glb", "Green Line", 90, "p"), ("glb_pct", "Do linii %", 85, "%"), ("glb_state", "GLB", 85, "s"), ("macd", "MACD", 60, "s"), ("trend", "SMA 10>30", 85, "b"),
     ("macd_stop", "Stop MACD", 85, "p"), ("dopm", "Δ marża oper. pp", 120, "%"), ("rev_rr", "Przychody r/r %", 115, "%"),
     ("dgm", "Δ marża brutto pp", 125, "%"), ("quarter", "Kwartał", 105, "s"), ("turnover", "Obrót mln $", 95, "m"),
     ("ps", "P/S", 60, "x"), ("rs", "RS 52 tyg. pp", 105, "%"), ("surp", "Niesp. EPS %", 95, "%"), ("beat2", "2× nad konsensus", 115, "b"), ("eps_rev", "Rewizja EPS 90 dni %", 140, "%"), ("rvol_w", "RVol tyg.", 80, "x"), ("rvol_d", "RVol dz.", 75, "x"), ("cc250", "C/C250", 85, "r"), ("ok", "Warunki", 75, "b"), ("slow", "Hamuje", 95, "w"),
@@ -144,7 +144,18 @@ class App:
         hsb.grid(row=1, column=0, sticky="ew")
         frame.grid_rowconfigure(0, weight=1)
         frame.grid_columnconfigure(0, weight=1)
-        self.tree["displaycolumns"] = self.store.settings.get("main_columns") or [c[0] for c in COLUMNS]
+        all_columns = [c[0] for c in COLUMNS]
+        display_columns = self.store.settings.get("main_columns")
+        if display_columns:
+            display_columns = [k for k in display_columns if k in all_columns]
+            # Dodaj nową kolumnę do wcześniej zapisanych układów, aby Upside było od razu widoczne.
+            if "upside" not in display_columns:
+                display_columns.append("upside")
+                self.store.settings["main_columns"] = display_columns
+                self.store.save_settings()
+            self.tree["displaycolumns"] = display_columns or all_columns
+        else:
+            self.tree["displaycolumns"] = all_columns
         self.tree.tag_configure("signal", background="#123a24")
         self.tree.tag_configure("dim", foreground="#6b7684")
         self.tree.tag_configure("poswarn", foreground="#ffb020")

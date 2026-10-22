@@ -472,6 +472,20 @@ def test_finviz_legacy_headers_normalize_financial_and_valuation_metrics():
     assert rows[0]["perf_quarter"] == pytest.approx(18.5)
 
 
+def test_build_row_prefers_finviz_surprises_and_roi_over_fallbacks():
+    est = {**EST, "revenue_surp": [["2026-02-01", 9.0]]}
+    base = {
+        "ticker": "FINVIZ_FIRST",
+        "eps_surprise_finviz": -3.0,
+        "revenue_surprise_finviz": 2.0,
+        "roi": 22.4,
+    }
+    row = calc.build_row(base, W, [50, 100, 90, 90, 90, 95], {"dopm": 5, "roic": 8}, SPY, est)
+    assert row["surp"] == pytest.approx(-3.0)
+    assert row["rev_surp"] == pytest.approx(2.0)
+    assert row["roi"] == pytest.approx(22.4)
+
+
 def test_growth_score_uses_finviz_roi_and_growth_fields():
     result = calc.growth_score({
         "sales_qoq": 30, "eps_qoq": 40, "roi": 20,

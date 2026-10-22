@@ -575,8 +575,8 @@ class ChartWindow(tk.Toplevel):
         self.period, self.other = "W", {"M": {}, "D": {}}   # W = tygodniowy, D = dzienny (2 lata), M = miesięczny (pełna historia) — w pamięci
         top = tk.Frame(self, bg=PANEL)
         top.pack(fill="x")
-        self.daily_style = "line"
-        self.daily_style_btn = tk.Button(top, text="D: linia", command=self.toggle_daily_style, relief="flat")
+        self.daily_style = "bars"
+        self.daily_style_btn = tk.Button(top, text="D: RWB", command=self.toggle_daily_style, relief="flat")
         self.daily_style_btn.pack(side="right", padx=2, pady=2)
         self.watch_btn = tk.Button(top, text="🔕 Obserwuj", command=self.toggle_watch, relief="flat")
         self.watch_btn.pack(side="right", padx=4, pady=2)
@@ -702,6 +702,9 @@ class ChartWindow(tk.Toplevel):
                 self.cv.create_text(20, 20, text=f"Nie udało się pobrać danych {t} (sieć / yfinance) — 📅 przełącza dalej.", anchor="w", fill=FG)
             return
         self.other[per][t] = m
+        if per == "D":
+            self.app.store.save_daily_series(t, m)
+            self.app.check_alerts(refresh_daily=False)
         if t == self.ticker and self.winfo_exists():
             self.load_period()
 
@@ -727,7 +730,7 @@ class ChartWindow(tk.Toplevel):
             self.cv.create_text(20, 20, text="Brak danych — zrób Sync albo Ctrl+K.", anchor="w", fill=FG)
             return
         self.daily_style_btn.config(state="normal" if self.period == "D" else "disabled",
-                                    text="D: słupki" if self.daily_style == "line" else "D: linia")
+                                    text="D: RWB" if self.daily_style == "bars" else "D: słupki")
         self.geom = draw(self.cv, data, self.row_for_chart(), n_show=self.n_show, end=self.end, tlines=self.lines(), sel=self.sel,
                          spx=self.app.store.weekly("SPY"), period=self.period, daily_style=self.daily_style)
 
@@ -817,16 +820,22 @@ class ChartWindow(tk.Toplevel):
 
     # --- linie trendu
     def lines(self):
-        return self.app.store.alerts["lines"].get(self.ticker, [])
+        if self.period not in ("W", "D"):
+            return []
+        return [ln for ln in self.app.store.alerts["lines"].get(self.ticker, [])
+                if ln.get("period", "W") == self.period]
 
     def find(self, lid):
         return next((x for x in self.lines() if x["id"] == lid), None)
 
     def save_lines(self):
         st = self.app.store
-        ls = [x for x in self.lines() if x["d1"] != x["d2"]]
-        if ls:
-            st.alerts["lines"][self.ticker] = ls
+        all_lines = st.alerts["lines"].get(self.ticker, [])
+        other = [ln for ln in all_lines if ln.get("period", "W") != self.period]
+        current = [ln for ln in self.lines() if ln["d1"] != ln["d2"]]
+        merged = other + current
+        if merged:
+            st.alerts["lines"][self.ticker] = merged
         else:
             st.alerts["lines"].pop(self.ticker, None)
         st.save_alerts()
@@ -845,7 +854,7 @@ class ChartWindow(tk.Toplevel):
         return data["d"][k], float(f"{p:.6g}"), k
 
     def press(self, e):
-        if not self.geom or not self.data() or self.period != "W":   # linie trendu rysujemy na tygodniowym
+        if not self.geom or not self.data() or self.period not in ("W", "D"):  # linie trendu: tygodniowy i dzienny
             return
         self.cv.focus_set()
         hit = L.hit_line(self.geom["segs"], e.x, e.y, 7)
@@ -868,7 +877,9 @@ class ChartWindow(tk.Toplevel):
                 return
             d, p, _ = self.value(gs["x"], gs["y"])
             lid = format(int(time.time() * 1000), "x")
-            self.app.store.alerts["lines"][self.ticker] = self.lines() + [{"id": lid, "d1": d, "p1": p, "d2": d, "p2": p, "alert": True}]
+            self.app.store.alerts["lines"][self.ticker] = self.app.store.alerts["lines"].get(self.ticker, []) + [
+                {"id": lid, "period": self.period, "d1": d, "p1": p, "d2": d, "p2": p,
+                 "alert": self.period != "D"}]
             self.sel, gs["mode"] = lid, "p2"
             self.tools()
         ln = self.find(self.sel)
@@ -900,9 +911,26 @@ class ChartWindow(tk.Toplevel):
 
     def right_click(self, e):
         hit = self.geom and L.hit_line(self.geom["segs"], e.x, e.y, 7)
-        if hit:
-            self.sel = hit[0]
-            self.delete_selected()
+        if not hit:
+            return
+        self.gest = None
+        self.sel = hit[0]
+        self.tools()
+        self.redraw()
+        ln = self.find(self.sel)
+        if not ln:
+            return
+        menu = tk.Menu(self, tearoff=0)
+        menu.add_command(
+            label="Wyłącz alert linii" if ln.get("alert") is not False else "Dodaj alert linii",
+            command=self.toggle_line_alert,
+        )
+        menu.add_separator()
+        menu.add_command(label="Usuń linię", command=self.delete_selected)
+        try:
+            menu.tk_popup(e.x_root, e.y_root)
+        finally:
+            menu.grab_release()
 
     def unselect(self):
         self.sel = None
@@ -912,7 +940,8 @@ class ChartWindow(tk.Toplevel):
     def delete_selected(self):
         if not self.sel:
             return
-        self.app.store.alerts["lines"][self.ticker] = [x for x in self.lines() if x["id"] != self.sel]
+        all_lines = self.app.store.alerts["lines"].get(self.ticker, [])
+        self.app.store.alerts["lines"][self.ticker] = [x for x in all_lines if x["id"] != self.sel]
         self.sel = None
         self.save_lines()
         self.tools()
@@ -925,6 +954,8 @@ class ChartWindow(tk.Toplevel):
             self.save_lines()
             self.tools()
             self.redraw()
+            if ln.get("alert") is not False and ln.get("period", "W") == "D":
+                self.app.refresh_daily_alerts()
 
     def toggle_watch(self):
         st = self.app.store
@@ -982,10 +1013,4 @@ class ChartWindow(tk.Toplevel):
         self.render_panel()
         watched = self.ticker in self.app.store.alerts["watch"]
         self.watch_btn.config(text="🔔 Obserwujesz" if watched else "🔕 Obserwuj", bg="#1f3b5c" if watched else self.del_btn.cget("bg"))
-        ln = self.find(self.sel) if self.sel else None
-        for b in (self.del_btn, self.alert_btn):
-            b.pack_forget()
-        if ln:
-            self.alert_btn.config(text="🔕 alert linii" if ln.get("alert") is False else "🔔 alert linii")
-            self.alert_btn.pack(side="right", padx=2, pady=2, before=self.watch_btn)
-            self.del_btn.pack(side="right", padx=2, pady=2, before=self.watch_btn)
+        # Operacje na wybranej linii są dostępne z menu pod prawym przyciskiem myszy.

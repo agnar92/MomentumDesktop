@@ -1164,12 +1164,13 @@ def checklist(row, pos=None, conditions=None):
 
 
 class GrowthScoreDialog(tk.Toplevel):
-    """Prosty ranking Growth Score dla spółek z aktualnego skanera; klik w ticker otwiera wykres."""
+    """Ranking Growth Score; rozwijany panel pokazuje wejścia i punkty każdej składowej."""
 
     def __init__(self, app):
         super().__init__(app.root)
         self.app = app
         self.descending = True
+        self.show_components = False
         self.title("Growth Score — ranking wzrostu")
         self.geometry("390x650")
         self.minsize(330, 350)
@@ -1196,26 +1197,64 @@ class GrowthScoreDialog(tk.Toplevel):
         wrap.grid_columnconfigure(0, weight=1)
         self.tree.tag_configure("high", foreground="#3ddc84")
         self.tree.bind("<ButtonRelease-1>", self.on_cell_click)
+        self.tree.bind("<<TreeviewSelect>>", self.update_components)
         self.tree.bind("<Double-1>", self.open_selected)
         self.tree.bind("<Return>", self.open_selected)
 
-        tk.Label(
+        # Panel jest domyślnie zwinięty, tak jak panel fundamentów na wykresie.
+        self.detail_frame = tk.Frame(self, bg=PANEL)
+        self.detail_heading = tk.Label(
+            self.detail_frame, text="Składowe Growth Score", bg=PANEL, fg=FG,
+            font=("Segoe UI", 10, "bold"), anchor="w"
+        )
+        self.detail_heading.pack(fill="x", padx=12, pady=(4, 2))
+        self.detail_text = tk.Text(
+            self.detail_frame, bg="#151a21", fg="#dde3ea", relief="flat", wrap="word",
+            font=("Segoe UI", 9), padx=10, pady=7, height=8, highlightthickness=0,
+            cursor="arrow", state="disabled"
+        )
+        self.detail_text.tag_configure("h", font=("Segoe UI", 10, "bold"), foreground="#ffffff")
+        self.detail_text.tag_configure("good", foreground="#3ddc84")
+        self.detail_text.tag_configure("muted", foreground="#8b95a3")
+        self.detail_text.pack(fill="x", padx=10, pady=(0, 4))
+
+        self.weights_label = tk.Label(
             self,
             text=("Wagi: przychody r/r 35, przyspieszenie 25, rewizja EPS 90d 20, "
                   "zmiana marży oper. 10, dwa pozytywne zaskoczenia EPS 10. "
                   "Brakujące dane pomijamy i normalizujemy wynik do dostępnych wag; "
                   "pokazujemy score przy pokryciu co najmniej 70/100."),
             bg=PANEL, fg="#8b95a3", justify="left", wraplength=365, anchor="w"
-        ).pack(fill="x", padx=12, pady=(8, 4))
+        )
+        self.weights_label.pack(fill="x", padx=12, pady=(8, 4))
         buttons = tk.Frame(self, bg=PANEL)
         buttons.pack(fill="x", padx=10, pady=(4, 10))
+        self.components_btn = tk.Button(
+            buttons, text="▸ Składowe score", command=self.toggle_components, relief="flat"
+        )
+        self.components_btn.pack(side="left", padx=(0, 4))
         tk.Button(buttons, text="Odśwież", command=self.fill, relief="flat").pack(side="left")
         tk.Button(buttons, text="Zamknij", command=self.close, relief="flat").pack(side="right")
         self.protocol("WM_DELETE_WINDOW", self.close)
         app.growth_dialog = self
         self.fill()
 
+    @staticmethod
+    def _fmt_value(value, suffix=""):
+        if value is None:
+            return "brak danych"
+        try:
+            return f"{float(value):+.1f}{suffix}".replace(".", ",")
+        except (TypeError, ValueError):
+            return str(value)
+
+    @staticmethod
+    def _fmt_points(points, weight):
+        return "brak danych · pominięte" if points is None else f"{points:.1f}/{weight} pkt".replace(".", ",")
+
     def fill(self):
+        selected = self.tree.selection()
+        selected_ticker = selected[0] if selected else None
         self.tree.delete(*self.tree.get_children())
         rows = []
         for row in self.app.store.rows:
@@ -1236,18 +1275,84 @@ class GrowthScoreDialog(tk.Toplevel):
             self.tree.insert("", "end", iid=ticker, values=(ticker, shown), tags=tags)
         scored = sum(1 for _, score, _ in rows if score is not None)
         self.count_label.config(text=f"{scored} z {len(rows)} spółek ma wystarczające dane · sortowanie po score")
+        if selected_ticker in self.tree.get_children():
+            self.tree.selection_set(selected_ticker)
+        elif self.tree.get_children():
+            self.tree.selection_set(self.tree.get_children()[0])
+        self.update_components()
 
     def toggle_sort(self):
         self.descending = not self.descending
         self.tree.heading("score", text=f"Score {'↓' if self.descending else '↑'}", command=self.toggle_sort)
         self.fill()
 
+    def toggle_components(self):
+        self.show_components = not self.show_components
+        if self.show_components:
+            self.detail_frame.pack(fill="x", padx=10, pady=(0, 4), before=self.weights_label)
+            self.components_btn.config(text="▾ Ukryj składowe")
+            if not self.tree.selection() and self.tree.get_children():
+                self.tree.selection_set(self.tree.get_children()[0])
+            self.update_components()
+        else:
+            self.detail_frame.pack_forget()
+            self.components_btn.config(text="▸ Składowe score")
+
+    def update_components(self, _event=None):
+        if not self.show_components:
+            return
+        selected = self.tree.selection()
+        ticker = selected[0] if selected else None
+        row = next((r for r in self.app.store.rows if r.get("ticker") == ticker), None)
+        if row is None:
+            content = "Zaznacz spółkę w rankingu, aby zobaczyć szczegóły."
+        else:
+            result = calc.growth_score(row)
+            score = "brak (za małe pokrycie)" if result["score"] is None else f"{result['score']:.1f}/100".replace(".", ",")
+            content = (
+                f"{ticker} · Growth Score: {score}\n"
+                f"Pokrycie danych: {result['coverage']:.0f}/100 pkt wag; wynik = suma punktów ÷ dostępne wagi × 100\n"
+            )
+            components = result["components"]
+            specs = (
+                ("revenue", "Przychody r/r", row.get("rev_rr"), "%", 35),
+                ("acceleration", "Przyspieszenie przychodów", row.get("accel"), " pp", 25),
+                ("eps_revision", "Rewizja EPS 90 dni", row.get("eps_rev"), "%", 20),
+                ("op_margin", "Zmiana marży operacyjnej", row.get("dopm"), " pp", 10),
+            )
+            content += "\n"
+            for key, label, value, suffix, weight in specs:
+                content += f"{label}: {self._fmt_value(value, suffix)} → {self._fmt_points(components.get(key), weight)}\n"
+            points = components.get("eps_beats")
+            if points is None:
+                beats = "brak pełnych danych · pominięte"
+            else:
+                beats = f"{'TAK' if row.get('beat2') else 'NIE'} → {self._fmt_points(points, 10)}"
+            content += (
+                f"EPS surprise (najnowszy / poprzedni): "
+                f"{self._fmt_value(row.get('surp'), '%')} / {self._fmt_value(row.get('surp_prev'), '%')}\n"
+                f"Dwa pozytywne zaskoczenia EPS: {beats}\n"
+                f"Suma punktów: {result['points']:.1f}/{result['coverage']:.0f} dostępnych wag".replace(".", ",")
+            )
+        self.detail_text.configure(state="normal")
+        self.detail_text.delete("1.0", "end")
+        self.detail_text.insert("1.0", content)
+        if row is not None:
+            self.detail_text.tag_add("h", "1.0", "1.end")
+        self.detail_text.configure(state="disabled")
+
     def on_cell_click(self, event):
-        if self.tree.identify_region(event.x, event.y) != "cell" or self.tree.identify_column(event.x) != "#1":
+        if self.tree.identify_region(event.x, event.y) != "cell":
             return
         ticker = self.tree.identify_row(event.y)
-        if ticker:
+        if not ticker:
+            return
+        self.tree.selection_set(ticker)
+        self.tree.focus(ticker)
+        if self.tree.identify_column(event.x) == "#1":
             self.app.open_chart(ticker)
+        else:
+            self.update_components()
 
     def open_selected(self, event=None):
         selected = self.tree.selection()

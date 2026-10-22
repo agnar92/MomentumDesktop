@@ -1220,10 +1220,9 @@ class GrowthScoreDialog(tk.Toplevel):
 
         self.weights_label = tk.Label(
             self,
-            text=("Wagi: przychody r/r 35, przyspieszenie 25, rewizja EPS 90d 20, "
-                  "zmiana marży oper. 10, dwa pozytywne zaskoczenia EPS 10. "
-                  "Brakujące dane pomijamy i normalizujemy wynik do dostępnych wag; "
-                  "pokazujemy score przy pokryciu co najmniej 70/100."),
+            text=("Wagi: przyspieszenie wzrostu 30, zaskoczenia wynikowe 20, przyszły wzrost 20, "
+                  "jakość biznesu 20, trwałość wzrostu 10. Braki pomijamy; wynik normalizujemy do dostępnych wag. "
+                  "ROI/ROA są bramką filtra Finviz; trwałość to proxy z historii przychodów, katalizatory sprawdź ręcznie. Score od pokrycia 70/100."),
             bg=PANEL, fg="#8b95a3", justify="left", wraplength=365, anchor="w"
         )
         self.weights_label.pack(fill="x", padx=12, pady=(8, 4))
@@ -1269,12 +1268,13 @@ class GrowthScoreDialog(tk.Toplevel):
                 return (1, 0.0, ticker)
             return (0, -score if self.descending else score, ticker)
         rows.sort(key=key)
-        for ticker, score, coverage in rows:
+        display_rows = rows[:10]
+        for ticker, score, coverage in display_rows:
             shown = f"{score:.1f}" if score is not None else "—"
             tags = ("high",) if score is not None and score >= 75 else ()
             self.tree.insert("", "end", iid=ticker, values=(ticker, shown), tags=tags)
         scored = sum(1 for _, score, _ in rows if score is not None)
-        self.count_label.config(text=f"{scored} z {len(rows)} spółek ma wystarczające dane · sortowanie po score")
+        self.count_label.config(text=f"TOP 10 · {scored} z {len(rows)} spółek ma wystarczające dane · sortowanie po Growth Score")
         if selected_ticker in self.tree.get_children():
             self.tree.selection_set(selected_ticker)
         elif self.tree.get_children():
@@ -1311,29 +1311,41 @@ class GrowthScoreDialog(tk.Toplevel):
             score = "brak (za małe pokrycie)" if result["score"] is None else f"{result['score']:.1f}/100".replace(".", ",")
             content = (
                 f"{ticker} · Growth Score: {score}\n"
-                f"Pokrycie danych: {result['coverage']:.0f}/100 pkt wag; wynik = suma punktów ÷ dostępne wagi × 100\n"
+                f"Pokrycie danych: {result['coverage']:.0f}/100 pkt wag; suma punktów ÷ dostępne wagi × 100\n"
+                "Brakujące składniki są pomijane, nie traktowane jako zero.\n\n"
             )
-            components = result["components"]
-            specs = (
-                ("revenue", "Przychody r/r", row.get("rev_rr"), "%", 35),
-                ("acceleration", "Przyspieszenie przychodów", row.get("accel"), " pp", 25),
-                ("eps_revision", "Rewizja EPS 90 dni", row.get("eps_rev"), "%", 20),
-                ("op_margin", "Zmiana marży operacyjnej", row.get("dopm"), " pp", 10),
-            )
-            content += "\n"
-            for key, label, value, suffix, weight in specs:
-                content += f"{label}: {self._fmt_value(value, suffix)} → {self._fmt_points(components.get(key), weight)}\n"
-            points = components.get("eps_beats")
-            if points is None:
-                beats = "brak pełnych danych · pominięte"
-            else:
-                beats = f"{'TAK' if row.get('beat2') else 'NIE'} → {self._fmt_points(points, 10)}"
+            raw = {
+                "revenue_growth": ("Przychody r/r", row.get("rev_rr"), "%"),
+                "eps_growth": ("EPS Growth r/r", row.get("eps_growth_q"), "%"),
+                "revenue_acceleration": ("Zmiana tempa przychodów", row.get("accel"), " pp"),
+                "eps_surprise": ("EPS Surprise", row.get("surp"), "%"),
+                "revenue_surprise": ("Revenue Surprise", row.get("rev_surp"), "%"),
+                "eps_next_year": ("Prognozowany wzrost EPS +1y", row.get("eps_growth_next_year"), "%"),
+                "eps_revision": ("Rewizja EPS 90 dni", row.get("eps_rev"), "%"),
+                "op_margin": ("Marża operacyjna", row.get("opm"), "%"),
+                "op_margin_change": ("Zmiana marży operacyjnej", row.get("dopm"), " pp"),
+                "profit_conversion": ("EPS growth minus sales growth",
+                                      (row.get("eps_growth_q") - row.get("rev_rr"))
+                                      if row.get("eps_growth_q") is not None and row.get("rev_rr") is not None else None, " pp"),
+                "durability": ("Regularność wzrostu przychodów (proxy)", None, ""),
+            }
+            for group_key, (group_label, members) in calc.GROWTH_SCORE_GROUPS.items():
+                group = result["categories"][group_key]
+                content += f"{group_label}: {group['points']:.1f}/{group['coverage']:.0f} dostępnych / {group['weight']:.0f} pkt\n".replace(".", ",")
+                for key in members:
+                    label, value, suffix = raw[key]
+                    pts = result["components"].get(key)
+                    shown_value = self._fmt_value(value, suffix)
+                    shown_points = self._fmt_points(pts, calc.GROWTH_SCORE_WEIGHTS[key])
+                    content += f"  {label}: {shown_value} → {shown_points}\n"
+                if group_key == "durability":
+                    history = [q.get("rev_rr") for q in (row.get("qs") or [])[-4:] if isinstance(q, dict) and q.get("rev_rr") is not None]
+                    content += "  Ostatnie tempo przychodów r/r: " + (", ".join(self._fmt_value(v, "%") for v in history) if history else "brak danych") + "\n"
             content += (
-                f"EPS surprise (najnowszy / poprzedni): "
-                f"{self._fmt_value(row.get('surp'), '%')} / {self._fmt_value(row.get('surp_prev'), '%')}\n"
-                f"Dwa pozytywne zaskoczenia EPS: {beats}\n"
-                f"Suma punktów: {result['points']:.1f}/{result['coverage']:.0f} dostępnych wag".replace(".", ",")
-            )
+                "\nROI/ROA: bramka wstępnego filtra Finviz, nie są punktowane ponownie bez surowych wartości.\n"
+                "Trwałość to proxy z historii przychodów; produkt, popyt i kontrakty wymagają ręcznej weryfikacji.\n"
+                f"Suma punktów: {result['points']:.1f}/{result['coverage']:.0f} dostępnych wag"
+            ).replace(".", ",")
         self.detail_text.configure(state="normal")
         self.detail_text.delete("1.0", "end")
         self.detail_text.insert("1.0", content)

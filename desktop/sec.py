@@ -9,7 +9,7 @@ import time
 import urllib.request
 
 UA = "MomentumDesktop research@example.com"
-SEC_VERSION = 4     # 4 = przychody TTM i liczba akcji (rozwodnienie, P/S); 3 = zmiana zysku oper. w $; 2 = 8 kwartałów
+SEC_VERSION = 5     # 4 = przychody TTM i liczba akcji (rozwodnienie, P/S); 3 = zmiana zysku oper. w $; 2 = 8 kwartałów
 FRESH_DAYS = 7
 TICKERS_URL = "https://www.sec.gov/files/company_tickers.json"
 FACTS_URL = "https://data.sec.gov/api/xbrl/companyfacts/CIK{:010d}.json"
@@ -18,6 +18,8 @@ TAGS = {
     "gp": ["GrossProfit"],
     "cogs": ["CostOfRevenue", "CostOfGoodsAndServicesSold", "CostOfGoodsSold", "CostOfSales"],
     "op": ["OperatingIncomeLoss", "ProfitLossFromOperatingActivities"],
+    "pretax": ["IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest", "IncomeLossFromContinuingOperationsBeforeIncomeTaxesMinorityInterestAndIncomeLossFromEquityMethodInvestments"],
+    "tax": ["IncomeTaxExpenseBenefit"],
 }
 SHARE_TAGS = ["WeightedAverageNumberOfDilutedSharesOutstanding", "WeightedAverageNumberOfShareOutstandingBasicAndDiluted",
               "WeightedAverageNumberOfSharesOutstandingBasic"]
@@ -55,6 +57,20 @@ def _durations(facts, tags, unit="USD", derive_q4=True):
     return out
 
 
+
+def _latest_instant(facts, tags):
+    """Latest balance-sheet USD value from SEC facts, preferring the newest filing."""
+    values = []
+    for tax in ("us-gaap", "ifrs-full"):
+        for tag in tags:
+            units = (facts.get(tax, {}).get(tag) or {}).get("units", {})
+            for item in units.get("USD", []):
+                if "start" not in item and item.get("end") and isinstance(item.get("val"), (int, float)):
+                    values.append((item["end"], item.get("filed", ""), float(item["val"])))
+    return max(values, default=(None, None, None), key=lambda x: (x[0], x[1]))[2]
+
+
+
 def _quarter(s, rev, e0, ends):
     """Cechy kwartału e0 względem kwartału ~rok wcześniej -> dict albo None."""
     e4 = next((e for e in reversed([x for x in ends if x < e0]) if 330 <= (e0 - e).days <= 400), None)
@@ -84,6 +100,20 @@ def metrics(facts):
         return {}
     out = {k: v for k, v in last.items() if k != "rev"}
     out["rev_q"] = last["rev"]                             # przychody ostatniego kwartału ($)
+    # Approximate ROIC: TTM operating profit after effective tax / (assets - current liabilities).
+    # This is an SEC-derived estimate, not a vendor-reported ratio; missing inputs remain null.
+    assets = _latest_instant(facts, ["Assets", "AssetsCurrentAndNoncurrent"])
+    current_liabilities = _latest_instant(facts, ["LiabilitiesCurrent", "CurrentLiabilities"])
+    pretax, tax = s["pretax"], s["tax"]
+    op_values = [s["op"][e] for e in ends[-4:] if e in s["op"]]
+    pretax_values = [pretax[e] for e in ends[-4:] if e in pretax]
+    tax_values = [tax[e] for e in ends[-4:] if e in tax]
+    if assets is not None and current_liabilities is not None and assets > current_liabilities and len(op_values) == 4:
+        tax_rate = sum(tax_values) / sum(pretax_values) if len(tax_values) == 4 and len(pretax_values) == 4 and sum(pretax_values) > 0 else 0.21
+        tax_rate = min(0.5, max(0.0, tax_rate))
+        out["roic"] = round(sum(op_values) * (1 - tax_rate) / (assets - current_liabilities) * 100, 2)
+    else:
+        out["roic"] = None
     if len(ends) >= 4 and (ends[-1] - ends[-4]).days <= 300:   # 4 kolejne kwartały -> przychody TTM (do wyceny P/S)
         out["ttm_rev"] = sum(rev[e] for e in ends[-4:])
     sh = _durations(facts, SHARE_TAGS, "shares", derive_q4=False)   # średnia rozwodniona liczba akcji w kwartale

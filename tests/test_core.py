@@ -357,38 +357,35 @@ def test_surprises_known_at_date_and_fresh():
 
 
 
-def test_growth_score_uses_weighted_growth_factors_and_normalizes_known_data():
+def test_growth_score_uses_five_categories_and_normalizes_known_data():
     strong = {
-        "rev_rr": 35, "accel": 10, "eps_rev": 20, "dopm": 3,
-        "surp": 5, "surp_prev": 4, "beat2": True,
+        "rev_rr": 35, "eps_growth_q": 60, "accel": 10,
+        "surp": 30, "rev_surp": 30, "eps_growth_next_year": 50, "eps_rev": 20,
+        "opm": 30, "dopm": 6,
+        "qs": [{"rev_rr": 10}, {"rev_rr": 20}, {"rev_rr": 30}, {"rev_rr": 40}],
     }
     scored = calc.growth_score(strong)
     assert scored["score"] == 100.0
     assert scored["coverage"] == 100.0
-    assert scored["components"] == {
-        "revenue": 35.0, "acceleration": 25.0, "eps_revision": 20.0,
-        "op_margin": 10.0, "eps_beats": 10.0,
-    }
+    assert [scored["categories"][k]["weight"] for k in ("growth", "surprises", "future", "quality", "durability")] == [30, 20, 20, 20, 10]
 
     weak = {
-        "rev_rr": 0, "accel": -10, "eps_rev": -10, "dopm": -3,
-        "surp": -5, "surp_prev": -4, "beat2": False,
+        "rev_rr": 0, "eps_growth_q": -10, "accel": -10,
+        "surp": -5, "rev_surp": -5, "eps_growth_next_year": -10, "eps_rev": -10,
+        "opm": -10, "dopm": -5,
+        "qs": [{"rev_rr": 5}, {"rev_rr": 0}, {"rev_rr": -5}, {"rev_rr": -10}],
     }
-    assert calc.growth_score(weak)["score"] == 0.0
+    assert calc.growth_score(weak)["score"] < scored["score"]
 
-    # Brak analityków nie oznacza automatycznie zera: składniki fundamentalne ważą 70 pkt.
-    without_estimates = calc.growth_score({"rev_rr": 25, "accel": 5, "dopm": 2})
-    assert without_estimates["coverage"] == 70.0
-    assert without_estimates["score"] is not None and without_estimates["score"] > 0
 
-    # Za mało danych, by stworzyć porównywalny ranking.
+def test_growth_score_omits_missing_data_and_requires_70_points_coverage():
+    partial = calc.growth_score({
+        "rev_rr": 20, "eps_growth_q": 25, "accel": 5,
+        "surp": 10, "rev_surp": 8, "eps_growth_next_year": 25, "eps_rev": 10,
+    })
+    assert partial["coverage"] == 70.0
+    assert partial["score"] is not None
+
     insufficient = calc.growth_score({"rev_rr": 25, "accel": 5})
-    assert insufficient["coverage"] == 60.0
+    assert insufficient["coverage"] == 20.0
     assert insufficient["score"] is None
-
-
-def test_growth_score_does_not_treat_missing_second_eps_surprise_as_a_failure():
-    row = {"rev_rr": 20, "accel": 4, "dopm": 2, "eps_rev": 10, "beat2": False, "surp": 5}
-    result = calc.growth_score(row)
-    assert result["coverage"] == 90.0
-    assert result["components"]["eps_beats"] is None

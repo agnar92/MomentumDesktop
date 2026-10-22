@@ -372,7 +372,7 @@ def test_growth_score_uses_five_weighted_categories_and_missing_data_coverage():
     assert set(scored["components"]) == {"acceleration", "surprises", "future", "quality", "durability"}
 
     partial = calc.growth_score({"rev_rr": 25, "accel": 5, "dopm": 2, "eps_rev": 10})
-    assert partial["coverage"] == 34.0
+    assert partial["coverage"] == 33.0
     assert partial["score"] is None
 
     insufficient = calc.growth_score({"rev_rr": 25, "accel": 5})

@@ -189,10 +189,10 @@ def parse_data_page(page):
             continue
         row = {"ticker": ticker}
         for heading, cell in zip(heads, tds):
-            name = _field_name(heading)
+            name = HEADERS_OLD.get(heading) or _field_name(heading)
             if name in {"no", "ticker"}:
                 continue
-            row[name] = _field_value(heading, cell.text_content().strip())
+            row[name] = _field_value(name, cell.text_content().strip())
         rows.append(row)
     return rows, total
 

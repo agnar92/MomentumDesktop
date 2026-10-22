@@ -495,7 +495,11 @@ def test_ctrl_k_fetches_symbol_that_has_only_candles(app, monkeypatch):
 def test_growth_score_dialog_can_expand_component_breakdown(app):
     from desktop import app as A
 
-    app.store.row("AAA").update(rev_rr=30, accel=8, eps_rev=15, dopm=5, surp=4, surp_prev=3, beat2=True)
+    app.store.row("AAA").update(
+        rev_rr=30, eps_growth_q=50, accel=8, eps_rev=15, eps_growth_next_year=30,
+        opm=20, dopm=5, surp=4, rev_surp=5,
+        qs=[{"rev_rr": 10}, {"rev_rr": 20}, {"rev_rr": 25}, {"rev_rr": 30}],
+    )
     dialog = A.GrowthScoreDialog(app)
     dialog.update()
     assert dialog.show_components is False
@@ -506,10 +510,15 @@ def test_growth_score_dialog_can_expand_component_breakdown(app):
     assert "AAA · Growth Score:" in details
     assert "Pokrycie danych: 100/100" in details
     assert "Przychody r/r: +30,0% →" in details
-    assert "Dwa pozytywne zaskoczenia EPS: TAK" in details
+    assert "EPS Surprise: +4,0% →" in details
+    assert "Revenue Surprise: +5,0% →" in details
+    assert "Przyszły wzrost:" in details
 
     # Brakujące dane są jawnie pokazane jako pominięte i nie dostają punktów automatycznie.
-    app.store.row("BBB").update(rev_rr=None, accel=None, eps_rev=None, dopm=None, surp=None, surp_prev=None, beat2=None)
+    app.store.row("BBB").update(
+        rev_rr=None, eps_growth_q=None, accel=None, eps_rev=None, eps_growth_next_year=None,
+        opm=None, dopm=None, surp=None, rev_surp=None, qs=[],
+    )
     dialog.tree.selection_set("BBB")
     dialog.update_components()
     details = dialog.detail_text.get("1.0", "end")

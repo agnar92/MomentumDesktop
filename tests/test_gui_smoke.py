@@ -66,6 +66,62 @@ def test_list_chart_and_navigation(app):
     assert app.tree.get_children()[0] == "AAA"
 
 
+def test_chart_sync_button_refreshes_only_the_open_ticker(app, monkeypatch):
+    import datetime as dt
+    import time
+    from desktop import prices, sync
+
+    app.open_chart("AAA")
+    ch = app.chart
+    ch.update()
+    original = dict(app.store.row("AAA"))
+    old_weekly = app.store.weekly("AAA")
+    refreshed_weekly = {k: list(v) if isinstance(v, list) else v for k, v in old_weekly.items()}
+    refreshed_weekly["c"][-1] = refreshed_weekly["c"][-1] + 1
+    refreshed_row = {**original, "price": 123.45, "glb_state": "SYGNAŁ"}
+
+    daily_closes = [20 + i * 0.2 for i in range(160)]
+    daily_dates = [(dt.date(2026, 1, 1) + dt.timedelta(days=i)).isoformat() for i in range(160)]
+    daily = {
+        "d": daily_dates, "o": daily_closes,
+        "h": [v + 1 for v in daily_closes], "l": [v - 1 for v in daily_closes],
+        "c": daily_closes, "v": [1e6] * len(daily_closes),
+    }
+    monthly_closes = [20, 22, 21, 24, 23, 25]
+    monthly = {
+        "d": [f"2026-{i:02d}-01" for i in range(1, 7)],
+        "o": monthly_closes, "h": [v + 1 for v in monthly_closes],
+        "l": [v - 1 for v in monthly_closes], "c": monthly_closes, "v": [1e6] * len(monthly_closes),
+    }
+    calls = []
+
+    def fake_symbol(ticker, store, log=print):
+        calls.append(ticker)
+        return dict(refreshed_row), dict(refreshed_weekly)
+
+    monkeypatch.setattr(sync, "symbol", fake_symbol)
+    monkeypatch.setattr(prices, "daily_ohlc", lambda ticker: dict(daily))
+    monkeypatch.setattr(prices, "monthly_ohlc", lambda ticker: dict(monthly))
+
+    ch.sync_btn.invoke()
+    for _ in range(100):
+        app.root.update()
+        if app.store.row("AAA").get("price") == 123.45 and ch.sync_btn["state"] == "normal":
+            break
+        time.sleep(0.02)
+
+    assert calls == ["AAA"]
+    assert app.store.row("AAA")["price"] == 123.45
+    assert app.store.weekly("AAA")["c"][-1] == refreshed_weekly["c"][-1]
+    assert app.store.daily("AAA")["c"] == daily_closes
+    assert app.store.row("AAA")["rvol_d"] == 1.0
+    assert app.store.row("AAA")["cc250"] == daily_closes[-1] / daily_closes[0]
+    assert ch.other["D"]["AAA"]["c"] == daily_closes
+    assert ch.other["M"]["AAA"]["c"] == monthly_closes
+    assert ch.sync_btn["text"] == "⟳ Sync"
+    assert "Odświeżono AAA" in app.status.cget("text")
+
+
 def test_progress_bar_text_and_visibility(app):
     from desktop import app as A
     assert A.progress_text(0.5, "Etap 2/4: yfinance — tygodniowe 100/200", 60) == "Etap 2/4: yfinance — tygodniowe 100/200 · 50 % · 1:00 · zostało ~1:00"

@@ -104,6 +104,7 @@ class App:
         self.store = Store(base)
         self.q, self.chart, self.sort = queue.Queue(), None, None
         self._daily_alert_refreshing = False
+        self._symbol_syncs = set()
         bar = tk.Frame(self.root, bg=PANEL)
         bar.pack(fill="x")
         self.sync_btn = tk.Button(bar, text="⟳ Sync (F5)", command=self.start_sync, relief="flat")
@@ -282,7 +283,7 @@ class App:
 
     # --- Sync i symbole (w wątkach; komunikaty przez kolejkę do pętli Tk)
     def start_sync(self):
-        if self.sync_btn["state"] == "disabled":
+        if self.sync_btn["state"] == "disabled" or self._symbol_syncs:
             return
         self.sync_btn.config(state="disabled")
         log = lambda s: self.q.put(("log", s))   # noqa: E731
@@ -299,6 +300,39 @@ class App:
                 self.q.put(("error", str(e)))
         threading.Thread(target=work, daemon=True).start()
 
+    def start_symbol_sync(self, ticker):
+        """Odświeża dane jednej spółki w tle bez pobierania całej listy Finviz."""
+        chart = self.chart if self.chart is not None and self.chart.winfo_exists() else None
+        if self.sync_btn["state"] == "disabled":
+            self.status.config(text="  Pełna synchronizacja już trwa — spróbuj ponownie po jej zakończeniu.")
+            return
+        if ticker in self._symbol_syncs:
+            return
+        self._symbol_syncs.add(ticker)
+        if chart is not None:
+            chart.set_sync_state(ticker, True)
+        self.status.config(text=f"  ⟳ Odświeżam dane {ticker}…")
+        log = lambda msg: self.q.put(("log", msg))  # noqa: E731
+
+        def work():
+            try:
+                row, weekly = sync.symbol(ticker, self.store, log=log)
+                try:
+                    daily = prices.daily_ohlc(ticker)
+                except Exception as exc:
+                    log(f"Dane dzienne {ticker}: {exc}")
+                    daily = None
+                try:
+                    monthly = prices.monthly_ohlc(ticker)
+                except Exception as exc:
+                    log(f"Dane miesięczne {ticker}: {exc}")
+                    monthly = None
+                self.q.put(("symbol_synced", (ticker, row, weekly, daily, monthly)))
+            except Exception as exc:
+                self.q.put(("symbol_sync_error", (ticker, str(exc))))
+
+        threading.Thread(target=work, daemon=True).start()
+
     def open_symbol(self):
         SymbolDialog(self)
 
@@ -312,6 +346,58 @@ class App:
                     frac, stage = val
                     self.pbar["value"] = frac * 1000
                     self.plabel.config(text=progress_text(frac, stage, time.monotonic() - (self.t0 or time.monotonic())))
+                elif kind == "symbol_synced":
+                    ticker, row, weekly, daily, monthly = val
+                    self._symbol_syncs.discard(ticker)
+                    old = self.store.row(ticker) or {}
+                    if daily and daily.get("c"):
+                        row["rvol_d"] = calc.rel_volume(daily.get("v") or [], calc.RVOL_D)
+                        closes = daily["c"]
+                        base_i = max(0, len(closes) - 251)
+                        row["cc250"] = closes[-1] / closes[base_i] if len(closes) >= 2 and closes[base_i] else None
+                        blue_dot = calc.fresh_blue_dot(daily, row.get("glb")) if row.get("glb_state") == "NAD" else None
+                        if blue_dot:
+                            row["glb_state"], row["bdot"] = "BLUE DOT", blue_dot
+                        else:
+                            row.pop("bdot", None)
+                        daily["period"] = "D"
+                        self.store.save_daily_series(ticker, daily)
+                    else:
+                        for key in ("rvol_d", "cc250", "bdot"):
+                            if key in old:
+                                row[key] = old[key]
+                    if monthly:
+                        monthly["period"] = "M"
+                        monthly["open_last"] = monthly["d"][-1][:7] == dt.date.today().strftime("%Y-%m")
+                    self.store.save_symbol(ticker, row, weekly)
+                    chart = self.chart if self.chart is not None and self.chart.winfo_exists() else None
+                    if chart is not None:
+                        chart.set_sync_state(ticker, False)
+                        if daily:
+                            chart.other["D"][ticker] = daily
+                        if monthly:
+                            chart.other["M"][ticker] = monthly
+                        if chart.ticker == ticker:
+                            chart.load_period()
+                            chart.render_panel()
+                    self.refresh()
+                    self.check_alerts(refresh_daily=False)
+                    dlg = getattr(self, "_positions_dialog", None)
+                    if dlg is not None and dlg.winfo_exists():
+                        dlg.fill()
+                    parts = ["tygodniowe i fundamenty"]
+                    if daily:
+                        parts.append("dzienne")
+                    if monthly:
+                        parts.append("miesięczne")
+                    self.status.config(text=f"  ✓ Odświeżono {ticker}: " + ", ".join(parts))
+                elif kind == "symbol_sync_error":
+                    ticker, error = val
+                    self._symbol_syncs.discard(ticker)
+                    chart = self.chart if self.chart is not None and self.chart.winfo_exists() else None
+                    if chart is not None:
+                        chart.set_sync_state(ticker, False)
+                    self.status.config(text=f"  ❌ Nie udało się odświeżyć {ticker}: {error}")
                 elif kind == "daily_alert_data":
                     self._daily_alert_refreshing = False
                     for ticker, series in val.items():

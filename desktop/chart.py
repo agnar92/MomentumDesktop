@@ -598,6 +598,9 @@ class ChartWindow(tk.Toplevel):
         self.daily_style = "bars"
         self.daily_style_btn = tk.Button(top, text="D: RWB", command=self.toggle_daily_style, relief="flat")
         self.daily_style_btn.pack(side="right", padx=2, pady=2)
+        self.sync_btn = tk.Button(top, text="⟳ Sync", command=self.sync_current_ticker, relief="flat")
+        self.sync_btn.pack(side="right", padx=2, pady=2)
+        self.syncing_ticker = None
         self.watch_btn = tk.Button(top, text="🔕 Obserwuj", command=self.toggle_watch, relief="flat")
         self.watch_btn.pack(side="right", padx=4, pady=2)
         self.per_btns = {}   # osobne przyciski M / T / D (klawisze m / w / d)
@@ -669,6 +672,18 @@ class ChartWindow(tk.Toplevel):
         if self.period in ("M", "D"):
             return self.other[self.period].get(self.ticker)
         return self.app.store.weekly(self.ticker)
+
+    def sync_current_ticker(self):
+        """Odświeża wyłącznie spółkę aktualnie otwartą na wykresie."""
+        self.app.start_symbol_sync(self.ticker)
+
+    def set_sync_state(self, ticker, syncing):
+        if syncing:
+            self.syncing_ticker = ticker
+            self.sync_btn.config(state="disabled", text="⟳ Pobieram…")
+        elif self.syncing_ticker == ticker:
+            self.syncing_ticker = None
+            self.sync_btn.config(state="normal", text="⟳ Sync")
 
     def toggle_daily_style(self):
         self.daily_style = "bars" if self.daily_style == "line" else "line"

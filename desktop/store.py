@@ -122,6 +122,29 @@ class Store:
         write(self.dir / "weekly.json", self.series)
         self.reload()
 
+    def save_symbol(self, ticker, row, series):
+        """Zapisuje odświeżone dane jednego symbolu, nie zmieniając czasu pełnego skanu."""
+        row = dict(row)
+        if series:
+            self.series[ticker] = series
+            write(self.dir / "weekly.json", self.series)
+        current = self.settings["scanner"]
+        found_current = any(r.get("ticker") == ticker for r in self.rows)
+        if found_current:
+            self.rows = [row if r.get("ticker") == ticker else r for r in self.rows]
+            write(self.scan_path(current), {"at": self.at, "rows": self.rows})
+        for scanner in self.settings["scanners"]:
+            if scanner["name"] == current:
+                continue
+            path = self.scan_path(scanner["name"])
+            saved = read(path, {})
+            rows = saved.get("rows", [])
+            if any(r.get("ticker") == ticker for r in rows):
+                saved["rows"] = [row if r.get("ticker") == ticker else r for r in rows]
+                write(path, saved)
+        self.extra[ticker] = (row, series)
+
+
     def daily(self, ticker):
         return self.daily_series.get(ticker)
 

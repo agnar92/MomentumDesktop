@@ -134,7 +134,7 @@ def test_progress_bar_text_and_visibility(app):
 def test_scanner_switch_and_settings_dialog(app):
     from desktop import app as A
     names = list(app.scanner_box["values"])
-    assert names[0] == "Bezpieczny (backtest)" and len(names) == 4
+    assert names[0] == "Bezpieczny (backtest)" and len(names) == 5
     app.select_scanner(names[1])
     assert app.tree.get_children() == () and app.store.settings["scanner"] == names[1]
     app.select_scanner(names[0])

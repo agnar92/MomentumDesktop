@@ -82,7 +82,10 @@ def test_scanner_switch_and_settings_dialog(app):
     app.select_scanner(names[1])
     assert app.tree.get_children() == () and app.store.settings["scanner"] == names[1]
     app.select_scanner(names[0])
-    assert app.tree.get_children() == ("AAA",)
+    assert set(app.tree.get_children()) == {"AAA", "BBB"}  # domyślnie pokazujemy wszystkie akcje
+    app.only_ok.set(True)
+    app.refresh()
+    assert app.tree.get_children() == ("AAA",)             # filtr można włączyć świadomie
     d = A.SettingsDialog(app)
     d.new()
     d.name.set("Mój")
@@ -259,7 +262,7 @@ def test_daily_trend_lines_right_click_menu_and_preserve_weekly_lines(app, monke
     seg = ch.geom["segs"][0]
     ch.right_click(E((seg["x1"] + seg["x2"]) / 2, (seg["y1"] + seg["y2"]) / 2))
     menu = menus[-1]
-    labels = [menu.entrycget(i, "label") for i in range(menu.index("end") + 1)]
+    labels = [menu.entrycget(i, "label") for i in range(menu.index("end") + 1) if menu.type(i) != "separator"]
     assert "Dodaj alert linii" in labels and "Usuń linię" in labels
     menu.invoke(0)
     assert next(ln for ln in app.store.alerts["lines"]["AAA"] if ln["id"] == daily_id)["alert"] is True

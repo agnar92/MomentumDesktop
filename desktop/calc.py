@@ -282,6 +282,7 @@ def build_row(base, weekly, months, fund, spy=None, est=None, conditions=None):
     # tydzień z danych zaczyna się w poniedziałek: raport z tego tygodnia (do piątku) też jest znany
     row["surp"], row["surp_prev"], row["beat2"] = surprises(est, (dt.date.fromisoformat(as_of) + dt.timedelta(days=6)).isoformat()) if as_of else (None, None, None)
     row["eps_rev"] = (est or {}).get("rev90")
+    row["upside"] = (est or {}).get("upside")
     row["ok"] = passes(row, conditions)
     row["slow"] = slowdown(row)
     return row

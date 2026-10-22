@@ -1220,10 +1220,9 @@ class GrowthScoreDialog(tk.Toplevel):
 
         self.weights_label = tk.Label(
             self,
-            text=("Wagi: przychody r/r 35, przyspieszenie 25, rewizja EPS 90d 20, "
-                  "zmiana marży oper. 10, dwa pozytywne zaskoczenia EPS 10. "
-                  "Brakujące dane pomijamy i normalizujemy wynik do dostępnych wag; "
-                  "pokazujemy score przy pokryciu co najmniej 70/100."),
+            text=("Wagi: przyspieszenie wzrostu 30, zaskoczenia EPS/przychodów 20, przyszły wzrost 20, "
+                  "jakość biznesu 20, trwałość wzrostu 10. Ranking fundamentalny, niezależny od GLB i ceny. "
+                  "Brakujące dane pomijamy; katalizator nie jest zgadywany; score wymaga pokrycia ≥70/100."),
             bg=PANEL, fg="#8b95a3", justify="left", wraplength=365, anchor="w"
         )
         self.weights_label.pack(fill="x", padx=12, pady=(8, 4))

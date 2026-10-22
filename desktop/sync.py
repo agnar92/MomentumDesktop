@@ -45,7 +45,10 @@ def symbol(sym, store, log=print, weekly=prices.weekly, monthly=prices.monthly, 
         log(f"prognozy: {e}")
     store.save_cache("estimates", ecache)
     spy = w if sym == BENCH else (store.series.get(BENCH) or (store.extra.get(BENCH) or (None, None))[1])
-    row = calc.build_row({"ticker": sym}, w, prices.monthly_highs(mcache.get(sym)), scache.get(sym), spy, ecache.get(sym),
+    existing = store.row(sym) or {}
+    base = {k: existing[k] for k in ("ticker", "company", "sector", "market_cap") if k in existing}
+    base["ticker"] = sym
+    row = calc.build_row(base, w, prices.monthly_highs(mcache.get(sym)), scache.get(sym), spy, ecache.get(sym),
                          conditions=store.settings.get("strategy_conditions"))
     store.extra[sym] = (row, w)
     return row, w

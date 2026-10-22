@@ -1269,12 +1269,13 @@ class GrowthScoreDialog(tk.Toplevel):
                 return (1, 0.0, ticker)
             return (0, -score if self.descending else score, ticker)
         rows.sort(key=key)
+        rows = rows[:10]
         for ticker, score, coverage in rows:
             shown = f"{score:.1f}" if score is not None else "—"
             tags = ("high",) if score is not None and score >= 75 else ()
             self.tree.insert("", "end", iid=ticker, values=(ticker, shown), tags=tags)
         scored = sum(1 for _, score, _ in rows if score is not None)
-        self.count_label.config(text=f"{scored} z {len(rows)} spółek ma wystarczające dane · sortowanie po score")
+        self.count_label.config(text=f"TOP 10 · {scored} z {len(rows)} wyświetlonych ma wystarczające dane · ranking bez wykresu ceny")
         if selected_ticker in self.tree.get_children():
             self.tree.selection_set(selected_ticker)
         elif self.tree.get_children():
@@ -1315,24 +1316,30 @@ class GrowthScoreDialog(tk.Toplevel):
             )
             components = result["components"]
             specs = (
-                ("revenue", "Przychody r/r", row.get("rev_rr"), "%", 35),
-                ("acceleration", "Przyspieszenie przychodów", row.get("accel"), " pp", 25),
-                ("eps_revision", "Rewizja EPS 90 dni", row.get("eps_rev"), "%", 20),
-                ("op_margin", "Zmiana marży operacyjnej", row.get("dopm"), " pp", 10),
+                ("revenue_growth", "Przychody r/r", row.get("rev_rr"), "%", 10),
+                ("revenue_acceleration", "Przyspieszenie przychodów", row.get("accel"), " pp", 8),
+                ("eps_growth", "Wzrost EPS r/r", row.get("eps_growth_q"), "%", 12),
+                ("eps_surprise", "EPS Surprise", row.get("surp"), "%", 10),
+                ("revenue_surprise", "Revenue Surprise", row.get("revenue_surprise"), "%", 10),
+                ("eps_next_year", "Prognozowany wzrost EPS +1y", row.get("eps_growth_next_year"), "%", 10),
+                ("eps_revision", "Rewizja EPS 90 dni", row.get("eps_rev"), "%", 10),
+                ("operating_margin", "Marża operacyjna", row.get("opm"), "%", 10),
+                ("margin_change", "Zmiana marży operacyjnej", row.get("dopm"), " pp", 5),
+                ("roi", "ROI/ROIC", row.get("roic") if row.get("roic") is not None else row.get("roi"), "%", 5),
+                ("revenue_consistency", "Spójność wzrostu przychodów", None, "", 5),
+                ("eps_consistency", "Spójność wzrostu EPS", None, "", 3),
+                ("catalyst", "Katalizator (produkt/popyt/kontrakty)", row.get("growth_catalyst_score"), "/2", 2),
             )
             content += "\n"
             for key, label, value, suffix, weight in specs:
-                content += f"{label}: {self._fmt_value(value, suffix)} → {self._fmt_points(components.get(key), weight)}\n"
-            points = components.get("eps_beats")
-            if points is None:
-                beats = "brak pełnych danych · pominięte"
-            else:
-                beats = f"{'TAK' if row.get('beat2') else 'NIE'} → {self._fmt_points(points, 10)}"
+                value_text = "historia wielokwartałowa" if key in ("revenue_consistency", "eps_consistency") else self._fmt_value(value, suffix)
+                content += f"{label}: {value_text} → {self._fmt_points(components.get(key), weight)}\n"
             content += (
-                f"EPS surprise (najnowszy / poprzedni): "
-                f"{self._fmt_value(row.get('surp'), '%')} / {self._fmt_value(row.get('surp_prev'), '%')}\n"
-                f"Dwa pozytywne zaskoczenia EPS: {beats}\n"
-                f"Suma punktów: {result['points']:.1f}/{result['coverage']:.0f} dostępnych wag".replace(".", ",")
+                f"Grupy (maks.): wzrost {result['groups']['acceleration']:.1f}/30 · "
+                f"surprise {result['groups']['surprises']:.1f}/20 · przyszłość {result['groups']['future']:.1f}/20 · "
+                f"jakość {result['groups']['quality']:.1f}/20 · trwałość {result['groups']['durability']:.1f}/10\n"
+                f"Revenue Surprise i ROI/ROIC mogą nie być dostępne w źródle; katalizatory są niepunktowane bez danych jawnych.\n"
+                f"Suma: {result['points']:.1f}/{result['coverage']:.0f} dostępnych wag".replace(".", ",")
             )
         self.detail_text.configure(state="normal")
         self.detail_text.delete("1.0", "end")

@@ -561,7 +561,14 @@ def test_growth_score_dialog_lists_ranked_tickers_and_opens_chart_on_ticker_clic
     dialog.on_cell_click(event)
     assert opened == ["AAA"]
 
-    app.store.row("BBB").update(rev_rr=40, accel=10, eps_rev=20, dopm=4, surp=3, surp_prev=2, beat2=True)
+    app.store.row("BBB").update(
+        rev_rr=40, accel=10, eps_rev=20, dopm=4, opm=30, roic=25,
+        surp=10, rev_surp=10, surp_prev=2, beat2=True,
+        eps_q=[["2025-03-31", 1.0], ["2025-06-30", 1.2], ["2025-09-30", 1.5],
+               ["2025-12-31", 1.8], ["2026-03-31", 2.5]],
+        eps_est=[{"period": "+1y", "growth": 50}],
+        qs=[{"rev_rr": 15}, {"rev_rr": 25}, {"rev_rr": 35}, {"rev_rr": 40}],
+    )
     app.refresh()
     assert dialog.tree.get_children()[0] == "BBB"
     dialog.close()

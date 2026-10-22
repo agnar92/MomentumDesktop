@@ -1324,11 +1324,9 @@ class GrowthScoreDialog(tk.Toplevel):
             content += "\\n"
             for key, label, value, suffix, weight in specs:
                 content += f"{label}: {self._fmt_value(value, suffix)} → {self._fmt_points(components.get(key), weight)}\\n"
-            content += "Brak Revenue Surprise i ROI/ROIC w źródłach danych; katalizatory wymagają ręcznej weryfikacji.\\n"
             content += (
                 f"EPS surprise (najnowszy / poprzedni): "
-                f"{self._fmt_value(row.get('surp'), '%')} / {self._fmt_value(row.get('surp_prev'), '%')}\n"
-                f"Dwa pozytywne zaskoczenia EPS: {beats}\n"
+                f"{self._fmt_value(row.get('surp'), '%')} / {self._fmt_value(row.get('surp_prev'), '%')}\\n"
                 f"Suma punktów: {result['points']:.1f}/{result['coverage']:.0f} dostępnych wag".replace(".", ",")
             )
         self.detail_text.configure(state="normal")

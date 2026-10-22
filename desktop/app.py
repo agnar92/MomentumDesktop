@@ -1221,8 +1221,8 @@ class GrowthScoreDialog(tk.Toplevel):
         self.weights_label = tk.Label(
             self,
             text=("Wagi: przyspieszenie wzrostu 30, zaskoczenia EPS 20, przyszły wzrost/revizje 20, "
-                  "jakość biznesu 20, trwałość wzrostu 10. Braki danych są pomijane; score pokazujemy "
-                  "przy pokryciu co najmniej 70/100. ROIC jest estymowany z SEC; trwałość opiera się na historii, a katalizatory wymagają ręcznej oceny."),
+                  "jakość biznesu 20 (w tym ROI z Finviz), trwałość wzrostu 10. Braki danych są pomijane; score pokazujemy "
+                  "przy pokryciu co najmniej 70/100. Finviz jest źródłem podstawowym; SEC uzupełnia brakujące pola. Trwałość opiera się na historii, a katalizatory wymagają ręcznej oceny."),
             bg=PANEL, fg="#8b95a3", justify="left", wraplength=365, anchor="w"
         )
         self.weights_label.pack(fill="x", padx=12, pady=(8, 4))
@@ -1321,7 +1321,7 @@ class GrowthScoreDialog(tk.Toplevel):
                 ("acceleration", "Przyspieszenie wzrostu", None, "", 30),
                 ("surprises", "Zaskoczenia EPS + przychodów", row.get("surp"), "%", 20),
                 ("future", "Przyszły wzrost / rewizje EPS", row.get("eps_rev"), "%", 20),
-                ("quality", "Jakość biznesu (marża + ROIC)", row.get("roic"), "%", 20),
+                ("quality", "Jakość biznesu (marża + ROI)", row.get("roi") if row.get("roi") is not None else row.get("roic"), "%", 20),
                 ("durability", "Trwałość wzrostu (katalizator / proxy)", assessment.get("score"), "/10", 10),
             )
             content += "\\n"
@@ -1331,7 +1331,7 @@ class GrowthScoreDialog(tk.Toplevel):
                 f"EPS surprise (najnowszy / poprzedni): "
                 f"{self._fmt_value(row.get('surp'), '%')} / {self._fmt_value(row.get('surp_prev'), '%')}\\n"
                 f"Revenue surprise (ostatni raport): {self._fmt_value(row.get('rev_surp'), '%')}\\n"
-                f"ROIC (szacunek SEC): {self._fmt_value(row.get('roic'), '%')}\\n"
+                f"ROI (Finviz; SEC fallback): {self._fmt_value(row.get('roi') if row.get('roi') is not None else row.get('roic'), '%')}\\n"
                 f"Katalizator / uzasadnienie: {assessment.get('note') or 'brak ręcznej oceny; użyto proxy historii przychodów'}\\n"
                 f"Suma punktów: {result['points']:.1f}/{result['coverage']:.0f} dostępnych wag".replace(".", ",")
             )

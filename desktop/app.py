@@ -6,6 +6,7 @@ import tkinter as tk
 from tkinter import messagebox, ttk
 
 import datetime as dt
+import math
 
 from . import calc, finviz, lines, prices, sec, sync
 from .chart import ChartWindow
@@ -987,8 +988,10 @@ Wykres tygodniowy: S&P 500 nad ceną = kierunek rynku; słupki przychodów pod w
 Heurystyka z backtestu na spółkach notowanych dziś (bez wycofanych z giełdy), nie porada inwestycyjna."""
 
 
-def checklist(row, pos=None):
-    """Lista kontrolna spółki -> linie tekstu."""
+def checklist(row, pos=None, conditions=None):
+    """Lista kontrolna spółki -> linie tekstu, zgodnie z konfigurowalnymi warunkami koniecznymi."""
+    cfg = calc.normalize_conditions(conditions)
+
     def yes(v):
         return "✓" if v is True else "✗" if v is False else "—"
 
@@ -997,6 +1000,10 @@ def checklist(row, pos=None):
 
     def cond(v, test):
         return None if v is None else test(v)
+
+    def criterion(enabled, result, label):
+        return f"{yes(result)} {label}" if enabled else f"— Kryterium wyłączone: {label}"
+
     r = row
     ps_txt = f"{r['ps']:.1f}" if r.get("ps") else "—"
     t_txt = f"{r['turnover'] / 1e6:.0f}" if r.get("turnover") else "—"
@@ -1005,11 +1012,18 @@ def checklist(row, pos=None):
               f"Przychody {f(r.get('rev_rr'), ' %')} r/r (kwartał wcześniej {f(r.get('rev_rr1'), ' %')}), Δ marży oper. {f(r.get('dopm'), ' pp')} "
               f"(wcześniej {f(r.get('dopm1'), ' pp')}), marża oper. {f(r.get('opm'), ' %')} · kwartał {r.get('quarter') or '—'}", "",
               f"Obrót {t_txt} mln $ dziennie (bez progu — płynność ustawiasz filtrem w Finviz)",
-              f"{yes(cond(r.get('rev_rr'), lambda v: v >= calc.MIN_REV_GROWTH))} Przychody kw. ≥ +15 % r/r ({f(r.get('rev_rr'), ' %')})",
-              f"{yes(cond(r.get('dopm'), lambda v: v >= calc.MIN_DOPM))} Marża oper. ≥ +3 pp r/r ({f(r.get('dopm'), ' pp')})",
-              f"{yes(cond(r.get('ps'), lambda v: v < calc.MAX_PS))} Wycena P/S < 20 ({ps_txt})",
-              f"{yes(cond(r.get('rs'), lambda v: v >= calc.MIN_RS))} Siła względna 52 tyg. ≥ +50 pp nad S&P 500 ({f(r.get('rs'), ' pp')})",
-              f"{yes(r.get('beat2'))} 2 ostatnie raporty powyżej konsensusu EPS ({f(r.get('surp'), ' %')}, wcześniej {f(r.get('surp_prev'), ' %')})",
+              criterion(cfg["rev_growth"]["enabled"],
+                        cond(r.get("rev_rr"), lambda v: v >= cfg["rev_growth"]["threshold"]),
+                        f"Przychody kw. ≥ +{cfg['rev_growth']['threshold']:g} % r/r ({f(r.get('rev_rr'), ' %')})"),
+              criterion(cfg["op_margin"]["enabled"],
+                        cond(r.get("dopm"), lambda v: v >= cfg["op_margin"]["threshold"]),
+                        f"Marża oper. ≥ +{cfg['op_margin']['threshold']:g} pp r/r ({f(r.get('dopm'), ' pp')})"),
+              criterion(cfg["ps"]["enabled"], cond(r.get("ps"), lambda v: v < cfg["ps"]["threshold"]),
+                        f"Wycena P/S < {cfg['ps']['threshold']:g} ({ps_txt})"),
+              criterion(cfg["rs"]["enabled"], cond(r.get("rs"), lambda v: v >= cfg["rs"]["threshold"]),
+                        f"Siła względna 52 tyg. ≥ +{cfg['rs']['threshold']:g} pp nad S&P 500 ({f(r.get('rs'), ' pp')})"),
+              criterion(cfg["beat2"]["enabled"], r.get("beat2"),
+                        f"2 ostatnie raporty powyżej konsensusu EPS ({f(r.get('surp'), ' %')}, wcześniej {f(r.get('surp_prev'), ' %')})"),
               f"{yes(cond(r.get('eps_rev'), lambda v: v > 0))} Rewizja prognozy EPS na przyszły rok, 90 dni: {f(r.get('eps_rev'), ' %')} (podgląd, bez backtestu)"]
     st = r.get("glb_state")
     lines_.append(f"{yes(True if st in SIGNAL else None if st == 'NAD' else False)} Green Line: {st or '—'} ({f(r.get('glb_pct'), ' %')} od linii; kupno: tydzień przebicia dowolnie wysoko, 0–10 % nad albo Blue Dot na dziennym, gdy > 10 %)")
@@ -1044,7 +1058,7 @@ class GuideDialog(tk.Toplevel):
         txt.tag_configure("no", foreground="#ff5c5c")
         txt.tag_configure("warn", foreground="#ffb020")
         if row:
-            for n, ln in enumerate(checklist(row, app.store.alerts["pos"].get(t))):
+            for n, ln in enumerate(checklist(row, app.store.alerts["pos"].get(t), app.store.settings.get("strategy_conditions"))):
                 tag = "h" if n == 0 else "ok" if ln.startswith("✓") else "no" if ln.startswith("✗") else "warn" if ln.startswith("⚠") else ""
                 txt.insert("end", ln + "\n", tag)
         else:

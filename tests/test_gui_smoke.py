@@ -489,3 +489,29 @@ def test_ctrl_k_fetches_symbol_that_has_only_candles(app, monkeypatch):
         if called:
             break
     assert called == ["ZZZ"]
+
+
+
+def test_growth_score_dialog_lists_ranked_tickers_and_opens_chart_on_ticker_click(app, monkeypatch):
+    from desktop import app as A
+
+    app.store.row("AAA").update(rev_rr=30, accel=8, eps_rev=15, dopm=5, surp=4, surp_prev=3, beat2=True)
+    app.store.row("BBB").update(rev_rr=10, accel=0, eps_rev=0, dopm=0, surp=-2, surp_prev=1, beat2=False)
+    dialog = A.GrowthScoreDialog(app)
+    app.root.update_idletasks()
+    assert dialog.tree.get_children() == ("AAA", "BBB")
+    assert float(dialog.tree.set("AAA", "score")) > float(dialog.tree.set("BBB", "score"))
+
+    opened = []
+    monkeypatch.setattr(app, "open_chart", lambda ticker: opened.append(ticker))
+    box = dialog.tree.bbox("AAA", column="#1")
+    assert box
+    event = type("E", (), {"x": box[0] + 8, "y": box[1] + box[3] // 2})()
+    dialog.on_cell_click(event)
+    assert opened == ["AAA"]
+
+    # Zmiana danych i odświeżenie odświeża istniejące okno.
+    app.store.row("BBB").update(rev_rr=40, accel=10, eps_rev=20, dopm=4, surp=3, surp_prev=2, beat2=True)
+    app.refresh()
+    assert dialog.tree.get_children()[0] == "BBB"
+    dialog.close()

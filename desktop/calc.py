@@ -256,13 +256,26 @@ def slowdown(row):
     return "HAMUJE+MB" if _ok(g) and g < 0 else "HAMUJE"
 
 
-# Growth Score = dynamika wzrostu i poprawa perspektyw; oddzielny ranking od warunków GLB.
+# Growth Score = ranking fundamentalny niezależny od sygnałów technicznych.
 GROWTH_SCORE_MIN_COVERAGE = 70.0
-GROWTH_SCORE_WEIGHTS = {"revenue": 35.0, "acceleration": 25.0, "eps_revision": 20.0, "op_margin": 10.0, "eps_beats": 10.0}
+GROWTH_SCORE_WEIGHTS = {
+    "revenue_growth": 10.0, "eps_growth": 10.0, "revenue_acceleration": 10.0,
+    "eps_surprise": 10.0, "revenue_surprise": 10.0,
+    "eps_next_year": 10.0, "eps_revision": 10.0,
+    "op_margin": 8.0, "op_margin_change": 6.0, "profit_conversion": 6.0,
+    "durability": 10.0,
+}
+GROWTH_SCORE_GROUPS = {
+    "growth": ("Przyspieszenie wzrostu", ("revenue_growth", "eps_growth", "revenue_acceleration")),
+    "surprises": ("Zaskoczenia wynikowe", ("eps_surprise", "revenue_surprise")),
+    "future": ("Przyszły wzrost", ("eps_next_year", "eps_revision")),
+    "quality": ("Jakość biznesu", ("op_margin", "op_margin_change", "profit_conversion")),
+    "durability": ("Trwałość wzrostu", ("durability",)),
+}
 
 
 def _growth_component_points(value, knots):
-    """Liniowo interpoluje punkty między progami (x, punkty); ogranicza wynik do krańców skali."""
+    """Liniowo interpoluje punkty między progami; brak danych pozostaje None."""
     if not _ok(value):
         return None
     value = float(value)
@@ -274,35 +287,84 @@ def _growth_component_points(value, knots):
     return float(knots[-1][1])
 
 
+def _revenue_durability(qs):
+    """0–10 pkt: regularność dodatniego wzrostu przychodów i kierunek zmian tempa."""
+    values = [q.get("rev_rr") for q in (qs or [])[-4:] if isinstance(q, dict) and _ok(q.get("rev_rr"))]
+    if len(values) < 2:
+        return None
+    positive = sum(v > 0 for v in values) / len(values) * 5.0
+    improving = sum(b > a for a, b in zip(values, values[1:])) / (len(values) - 1) * 5.0
+    return positive + improving
+
+
+def _eps_growth_yoy(history):
+    """Zmiana EPS względem okresu sprzed ok. 4 kwartałów; nie liczy procentów od ujemnej bazy."""
+    values = sorted((x for x in (history or []) if isinstance(x, (list, tuple)) and len(x) >= 2
+                     and isinstance(x[0], str) and _ok(x[1])), key=lambda x: x[0])
+    if len(values) < 5:
+        return None
+    current, previous = values[-1], values[-5]
+    try:
+        days = (dt.date.fromisoformat(current[0]) - dt.date.fromisoformat(previous[0])).days
+    except ValueError:
+        return None
+    if not 330 <= days <= 400:
+        return None
+    if previous[1] > 0:
+        return (current[1] / previous[1] - 1) * 100.0
+    if current[1] > 0 >= previous[1]:
+        return 100.0
+    return None
+
+
+def _latest_surprise(history, as_of):
+    values = [x for x in (history or []) if isinstance(x, (list, tuple)) and len(x) >= 2
+              and isinstance(x[0], str) and x[0] <= as_of and _ok(x[1])]
+    return float(values[-1][1]) if values else None
+
+
+def _estimate_growth(est):
+    for item in (est or {}).get("eps_est") or []:
+        if isinstance(item, dict) and item.get("period") == "+1y" and _ok(item.get("growth")):
+            return float(item["growth"])
+    return None
+
+
 def growth_score(row, min_coverage=GROWTH_SCORE_MIN_COVERAGE):
-    """Zwraca Growth Score 0–100, pokrycie wag i składniki.
-    Wagi: przychody r/r 35, przyspieszenie sprzedaży 25, rewizja EPS 90d 20,
-    zmiana marży operacyjnej 10, dwa pozytywne zaskoczenia EPS 10.
-    Brak danych jest pomijany, nie otrzymuje automatycznie zera. Wynik jest normalizowany
-    do dostępnych wag; poniżej min_coverage score=None. EPS beats są znane tylko wtedy,
-    gdy dostępne są oba ostatnie zaskoczenia EPS.
+    """Growth Score 0–100 w pięciu kategoriach. Braki pomijamy i normalizujemy do dostępnych wag.
+    ROI/ROA są bramką wstępnego filtra Finviz; nie udajemy, że znamy surowe wartości do rankingu.
+    Trwałość to mierzalny proxy z historii wzrostu przychodów; katalizatory wymagają osobnej analizy.
     """
     row = row or {}
+    rev_growth, eps_growth = row.get("rev_rr"), row.get("eps_growth_q")
+    conversion = (eps_growth - rev_growth) if _ok(eps_growth) and _ok(rev_growth) else None
     points = {
-        "revenue": _growth_component_points(row.get("rev_rr"), ((0, 0), (5, 7), (10, 14), (15, 22), (25, 29), (35, 35))),
-        "acceleration": _growth_component_points(row.get("accel"), ((-10, 0), (-5, 6), (0, 12), (5, 19), (10, 25))),
-        "eps_revision": _growth_component_points(row.get("eps_rev"), ((-10, 0), (0, 8), (5, 14), (10, 18), (20, 20))),
-        "op_margin": _growth_component_points(row.get("dopm"), ((-3, 0), (0, 5), (3, 10))),
-        "eps_beats": None,
+        "revenue_growth": _growth_component_points(rev_growth, ((0, 0), (10, 4), (20, 7), (35, 10))),
+        "eps_growth": _growth_component_points(eps_growth, ((0, 0), (10, 4), (25, 7), (50, 10))),
+        "revenue_acceleration": _growth_component_points(row.get("accel"), ((-10, 0), (0, 3), (5, 7), (10, 10))),
+        "eps_surprise": _growth_component_points(row.get("surp"), ((-20, 0), (0, 0), (5, 6), (15, 9), (30, 10))),
+        "revenue_surprise": _growth_component_points(row.get("rev_surp"), ((-20, 0), (0, 0), (5, 6), (15, 9), (30, 10))),
+        "eps_next_year": _growth_component_points(row.get("eps_growth_next_year"), ((-10, 0), (0, 0), (10, 4), (25, 7), (50, 10))),
+        "eps_revision": _growth_component_points(row.get("eps_rev"), ((-10, 0), (0, 0), (5, 6), (10, 8), (20, 10))),
+        "op_margin": _growth_component_points(row.get("opm"), ((-10, 0), (0, 1), (10, 5), (20, 7), (30, 8))),
+        "op_margin_change": _growth_component_points(row.get("dopm"), ((-5, 0), (0, 3), (3, 5), (6, 6))),
+        "profit_conversion": _growth_component_points(conversion, ((-20, 0), (-5, 1), (0, 3), (10, 5), (25, 6))),
+        "durability": _revenue_durability(row.get("qs")),
     }
-    if isinstance(row.get("beat2"), bool) and row.get("surp") is not None and row.get("surp_prev") is not None:
-        points["eps_beats"] = GROWTH_SCORE_WEIGHTS["eps_beats"] if row["beat2"] else 0.0
-
     coverage = sum(GROWTH_SCORE_WEIGHTS[k] for k, value in points.items() if value is not None)
     earned = sum(value for value in points.values() if value is not None)
+    categories = {}
+    for key, (label, members) in GROWTH_SCORE_GROUPS.items():
+        available = sum(GROWTH_SCORE_WEIGHTS[m] for m in members if points[m] is not None)
+        category_points = sum(points[m] for m in members if points[m] is not None)
+        categories[key] = {"label": label, "points": round(category_points, 2),
+                           "coverage": round(available, 2), "weight": sum(GROWTH_SCORE_WEIGHTS[m] for m in members)}
     minimum = float(min_coverage)
-    score = (earned / coverage * 100.0) if coverage >= minimum and coverage > 0 else None
-    return {
-        "score": round(score, 1) if score is not None else None,
-        "coverage": round(coverage, 1),
-        "points": round(earned, 2),
-        "components": points,
-    }
+    score = earned / coverage * 100.0 if coverage >= minimum and coverage > 0 else None
+    return {"score": round(score, 1) if score is not None else None,
+            "coverage": round(coverage, 1), "points": round(earned, 2),
+            "components": {k: round(v, 2) if v is not None else None for k, v in points.items()},
+            "categories": categories}
 
 
 def build_row(base, weekly, months, fund, spy=None, est=None, conditions=None):
@@ -331,7 +393,16 @@ def build_row(base, weekly, months, fund, spy=None, est=None, conditions=None):
     # tydzień z danych zaczyna się w poniedziałek: raport z tego tygodnia (do piątku) też jest znany
     row["surp"], row["surp_prev"], row["beat2"] = surprises(est, (dt.date.fromisoformat(as_of) + dt.timedelta(days=6)).isoformat()) if as_of else (None, None, None)
     row["eps_rev"] = (est or {}).get("rev90")
+    row["eps_growth_q"] = _eps_growth_yoy((est or {}).get("eps_q"))
+    row["eps_growth_next_year"] = _estimate_growth(est)
+    as_of = (weekly.get("d") or [""])[-1]
+    known_through = (dt.date.fromisoformat(as_of) + dt.timedelta(days=6)).isoformat() if as_of else ""
+    row["rev_surp"] = _latest_surprise((est or {}).get("revenue_surp"), known_through) if known_through else None
+    rev_history = [x for x in ((est or {}).get("revenue_surp") or [])
+                   if isinstance(x, (list, tuple)) and len(x) >= 2 and x[0] <= known_through]
+    row["rev_surp_prev"] = rev_history[-2][1] if len(rev_history) > 1 else None
     row["upside"] = (est or {}).get("upside")
     row["ok"] = passes(row, conditions)
     row["slow"] = slowdown(row)
+    row["growth_score"] = growth_score(row)
     return row

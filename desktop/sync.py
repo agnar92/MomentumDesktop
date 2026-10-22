@@ -45,7 +45,8 @@ def symbol(sym, store, log=print, weekly=prices.weekly, monthly=prices.monthly, 
         log(f"prognozy: {e}")
     store.save_cache("estimates", ecache)
     spy = w if sym == BENCH else (store.series.get(BENCH) or (store.extra.get(BENCH) or (None, None))[1])
-    row = calc.build_row({"ticker": sym}, w, prices.monthly_highs(mcache.get(sym)), scache.get(sym), spy, ecache.get(sym))
+    row = calc.build_row({"ticker": sym}, w, prices.monthly_highs(mcache.get(sym)), scache.get(sym), spy, ecache.get(sym),
+                         conditions=store.settings.get("strategy_conditions"))
     store.extra[sym] = (row, w)
     return row, w
 
@@ -79,13 +80,15 @@ def run(store, log=print, fetch_list=finviz.fetch, weekly=prices.weekly, monthly
     except Exception as e:
         log(f"⚠ prognozy EPS niedostępne ({e}) — używam zapisanych.")
     store.save_cache("estimates", ecache)
-    rows = [calc.build_row(b, series[b["ticker"]], prices.monthly_highs(mcache.get(b["ticker"])), scache.get(b["ticker"]), series.get(BENCH), ecache.get(b["ticker"]))
+    rows = [calc.build_row(b, series[b["ticker"]], prices.monthly_highs(mcache.get(b["ticker"])), scache.get(b["ticker"]), series.get(BENCH), ecache.get(b["ticker"]),
+                            conditions=store.settings.get("strategy_conditions"))
             for b in base if b["ticker"] in series]
     # Wiersze pomocnicze nie trafiają do listy skanera, ale zasilają panel pozycji/obserwowanych.
     tracked_rows = {}
     for t in tracked:
         if t in series:
-            tracked_rows[t] = calc.build_row({"ticker": t}, series[t], prices.monthly_highs(mcache.get(t)), scache.get(t), series.get(BENCH), ecache.get(t))
+            tracked_rows[t] = calc.build_row({"ticker": t}, series[t], prices.monthly_highs(mcache.get(t)), scache.get(t), series.get(BENCH), ecache.get(t),
+                                              conditions=store.settings.get("strategy_conditions"))
     try:   # Dwieście pięćdziesiąt sesji do C/C[250], a także RVol i Blue Dot.
         dser = daily(liquid, log=log, period="2y") if liquid else {}
     except Exception as e:

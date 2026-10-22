@@ -18,7 +18,7 @@ def _yf():
 def _number(value):
     """Wartość liczbowa z danych Yahoo albo None (obsługa NaN / braków / pól tekstowych)."""
     try:
-        number = float(value)
+        number = float(str(value).strip().replace("%", "").replace(",", "."))
     except (TypeError, ValueError):
         return None
     return number if math.isfinite(number) else None

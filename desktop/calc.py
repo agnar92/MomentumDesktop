@@ -298,13 +298,15 @@ def growth_score(row, min_coverage=GROWTH_SCORE_MIN_COVERAGE):
         surprise_points = min(20.0, surprise_points + 2.0)
     future_values = []
     p = _growth_component_points(eps_next_growth, ((0, 0), (5, 6), (10, 12), (20, 17), (35, 20)))
-    if p is not None: future_values.append(p)
+    if p is not None:
+        future_values.append(p)
     p = _growth_component_points(row.get("eps_rev"), ((-10, 0), (0, 8), (5, 14), (10, 18), (20, 20)))
     if p is not None: future_values.append(p)
     future = sum(future_values) / len(future_values) if future_values else None
     quality_values = []
     p = _growth_component_points(row.get("opm"), ((0, 0), (5, 8), (15, 14), (30, 17), (50, 20)))
-    if p is not None: quality_values.append(p)
+    if p is not None:
+        quality_values.append(p)
     p = _growth_component_points(row.get("dopm"), ((-5, 0), (0, 8), (3, 14), (8, 20)))
     if p is not None: quality_values.append(p)
     quality = sum(quality_values) / len(quality_values) if quality_values else None

@@ -115,6 +115,7 @@ class App:
         tk.Button(bar, text="Skanery / ustawienia…", command=self.open_settings, relief="flat").pack(side="left", padx=4)
         self.only_ok = tk.BooleanVar(value=False)
         tk.Checkbutton(bar, text="tylko spełniające warunki", variable=self.only_ok, command=self.refresh, bg=PANEL).pack(side="left", padx=8)
+        tk.Button(bar, text="Warunki…", command=lambda: StrategyConditionsDialog(self), relief="flat").pack(side="left", padx=2)
         self.flt_btn = tk.Button(bar, text="Filtry…", command=lambda: FilterDialog(self), relief="flat")
         self.flt_btn.pack(side="left", padx=4)
         tk.Label(bar, text="Szukaj:", bg=PANEL).pack(side="left")
@@ -190,6 +191,21 @@ class App:
         rows.sort(key=default_order)
         return rows
 
+    def apply_strategy_conditions(self):
+        """Przelicza stan „Warunki” dla bieżących i obserwowanych wierszy po edycji wymagań."""
+        conditions = calc.normalize_conditions(self.store.settings.get("strategy_conditions"))
+        self.store.settings["strategy_conditions"] = conditions
+        for row in self.store.rows:
+            row["ok"] = calc.passes(row, conditions)
+        for ticker, (row, series) in list(self.store.extra.items()):
+            if row:
+                row["ok"] = calc.passes(row, conditions)
+                self.store.extra[ticker] = (row, series)
+        self.refresh()
+        if self.chart is not None and self.chart.winfo_exists():
+            self.chart.render_panel()
+            self.chart.redraw()
+
     def pos_warn(self, r):
         """📌 pozycja do uwagi: wyjście wg wybranej metody (MACD: zamknięcie pod stopem MACD, GLB: pod Green Line), −20 % od szczytu, hamowanie."""
         st, price = self.store, r.get("price") or 0
@@ -215,10 +231,22 @@ class App:
         self.flt_btn.config(text=f"Filtry ({nf})…" if nf else "Filtry…")
         n_ok = sum(1 for r in self.store.rows if r.get("ok"))
         n_sig = sum(1 for r in self.store.rows if r.get("ok") and r.get("glb_state") in SIGNAL)
+        cfg = calc.normalize_conditions(self.store.settings.get("strategy_conditions"))
+        required = []
+        if cfg["rev_growth"]["enabled"]:
+            required.append(f"przychody ≥ {cfg['rev_growth']['threshold']:g} %")
+        if cfg["op_margin"]["enabled"]:
+            required.append(f"Δ marży oper. ≥ {cfg['op_margin']['threshold']:g} pp")
+        if cfg["ps"]["enabled"]:
+            required.append(f"P/S < {cfg['ps']['threshold']:g}")
+        if cfg["rs"]["enabled"]:
+            required.append(f"RS 52 tyg. ≥ {cfg['rs']['threshold']:g} pp")
+        if cfg["beat2"]["enabled"]:
+            required.append("2× EPS nad konsensusem")
+        condition_text = ", ".join(required) if required else "brak obowiązkowych kryteriów"
         self.status.config(text=f"  Skaner: {self.store.settings['scanner']}   Dane: {self.store.at or 'brak — kliknij ⟳ Sync'}   Na liście: {len(self.tree.get_children())} z {len(self.store.rows)}   spełnia warunki: {n_ok}   sygnał GLB: {n_sig}"
-                                f"   (warunki: przychody ≥ +{calc.MIN_REV_GROWTH:.0f} %, marża oper. ≥ +{calc.MIN_DOPM:.0f} pp r/r,"
-                                f" P/S < {calc.MAX_PS:.0f}, RS 52 tyg. ≥ +{calc.MIN_RS:.0f} pp;"
-                                f" sygnał: zamknięcie tyg. 0–{calc.ENTRY_MAX_PCT:.0f} % nad Green Line; wyjście: MACD tyg. + stop {calc.STOP_PCT:.0f} %)")
+                                f"   (warunki konieczne: {condition_text};"
+                                f" sygnał: zamknięcie tyg. 0–{calc.ENTRY_MAX_PCT:g} % nad Green Line; wyjście: MACD tyg. + stop {calc.STOP_PCT:g} %)")
 
     def sort_by(self, key):
         self.sort = (key, not self.sort[1]) if self.sort and self.sort[0] == key else (key, key not in ("ticker", "company", "sector"))
@@ -455,6 +483,105 @@ class SettingsDialog(tk.Toplevel):
         st.reload()
         self.app.fill_scanners()
         self.app.refresh()
+        self.destroy()
+
+
+class StrategyConditionsDialog(tk.Toplevel):
+    """Edytor kryteriów, które muszą być spełnione, aby wiersz otrzymał status „Warunki”."""
+
+    NUMERIC = (
+        ("rev_growth", "Przychody kwartalne r/r ≥", "%"),
+        ("op_margin", "Zmiana marży operacyjnej r/r ≥", "pp"),
+        ("ps", "P/S <", ""),
+        ("rs", "Siła względna 52 tyg. vs S&P 500 ≥", "pp"),
+    )
+
+    def __init__(self, app):
+        super().__init__(app.root)
+        self.app = app
+        self.title("Warunki konieczne strategii")
+        self.configure(bg=PANEL)
+        apply_dark(self)
+        self.resizable(False, False)
+        self.transient(app.root)
+        self.cfg = calc.normalize_conditions(app.store.settings.get("strategy_conditions"))
+        self.enabled = {}
+        self.threshold = {}
+        self.entries = {}
+        tk.Label(
+            self,
+            text="Zaznaczone kryteria są wymagane, aby spółka spełniała warunki. Zmiany działają od razu i są zapisywane.",
+            bg=PANEL, fg="#c9d1d9", wraplength=650, justify="left",
+        ).pack(anchor="w", padx=14, pady=(14, 10))
+        grid = tk.Frame(self, bg=PANEL)
+        grid.pack(fill="x", padx=14)
+        for i, (key, label, unit) in enumerate(self.NUMERIC):
+            var = tk.BooleanVar(value=self.cfg[key]["enabled"])
+            self.enabled[key] = var
+            tk.Checkbutton(
+                grid, text=label, variable=var, command=lambda k=key: self._toggle_entry(k),
+                bg=PANEL, activebackground=PANEL,
+            ).grid(row=i, column=0, sticky="w", pady=4)
+            threshold = tk.StringVar(value=f"{self.cfg[key]['threshold']:g}")
+            self.threshold[key] = threshold
+            entry = tk.Entry(grid, textvariable=threshold, width=10, justify="right")
+            entry.grid(row=i, column=1, sticky="w", padx=(8, 4), pady=4)
+            self.entries[key] = entry
+            suffix = " (brak danych P/S nie blokuje)" if key == "ps" else unit
+            tk.Label(grid, text=suffix, bg=PANEL, fg="#8b95a3").grid(row=i, column=2, sticky="w", pady=4)
+        self.enabled["beat2"] = tk.BooleanVar(value=self.cfg["beat2"]["enabled"])
+        tk.Checkbutton(
+            grid,
+            text="2 ostatnie raporty EPS powyżej konsensusu",
+            variable=self.enabled["beat2"], bg=PANEL, activebackground=PANEL,
+        ).grid(row=len(self.NUMERIC), column=0, columnspan=3, sticky="w", pady=4)
+        tk.Label(
+            self,
+            text="P/S bez dostępnych danych nie odrzuca spółki. Pozostałe włączone warunki wymagają danych.",
+            bg=PANEL, fg="#8b95a3", wraplength=650, justify="left",
+        ).pack(anchor="w", padx=14, pady=(8, 4))
+        buttons = tk.Frame(self, bg=PANEL)
+        buttons.pack(fill="x", padx=14, pady=12)
+        tk.Button(buttons, text="Domyślne", command=self.reset_defaults, relief="flat").pack(side="left")
+        tk.Button(buttons, text="Zapisz", command=self.save, relief="flat").pack(side="right")
+        tk.Button(buttons, text="Anuluj", command=self.destroy, relief="flat").pack(side="right", padx=8)
+        self.bind("<Escape>", lambda e: self.destroy())
+        self._sync_entries()
+
+    def _sync_entries(self):
+        for key, entry in self.entries.items():
+            entry.configure(state="normal" if self.enabled[key].get() else "disabled")
+
+    def _toggle_entry(self, key):
+        entry = self.entries.get(key)
+        if entry:
+            entry.configure(state="normal" if self.enabled[key].get() else "disabled")
+
+    def reset_defaults(self):
+        self.cfg = calc.normalize_conditions(calc.DEFAULT_CONDITIONS)
+        for key, enabled in self.enabled.items():
+            enabled.set(self.cfg[key]["enabled"])
+        for key, threshold in self.threshold.items():
+            threshold.set(f"{self.cfg[key]['threshold']:g}")
+        self._sync_entries()
+
+    def save(self):
+        conditions = {}
+        for key, _label, _unit in self.NUMERIC:
+            raw = self.threshold[key].get().strip().replace(",", ".")
+            try:
+                value = float(raw)
+            except ValueError:
+                messagebox.showerror("Nieprawidłowy próg", f"Wpisz liczbę dla warunku: {_label}.", parent=self)
+                return
+            if not math.isfinite(value) or (key == "ps" and value <= 0):
+                messagebox.showerror("Nieprawidłowy próg", f"Próg dla warunku „{_label}” jest nieprawidłowy.", parent=self)
+                return
+            conditions[key] = {"enabled": self.enabled[key].get(), "threshold": value}
+        conditions["beat2"] = {"enabled": self.enabled["beat2"].get()}
+        self.app.store.settings["strategy_conditions"] = calc.normalize_conditions(conditions)
+        self.app.store.save_settings()
+        self.app.apply_strategy_conditions()
         self.destroy()
 
 

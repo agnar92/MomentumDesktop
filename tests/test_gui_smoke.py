@@ -531,8 +531,8 @@ def test_growth_score_dialog_can_expand_component_breakdown(app):
 def test_growth_score_dialog_lists_ranked_tickers_and_opens_chart_on_ticker_click(app, monkeypatch):
     from desktop import app as A
 
-    app.store.row("AAA").update(rev_rr=30, accel=8, eps_rev=15, dopm=5, surp=4, surp_prev=3, beat2=True)
-    app.store.row("BBB").update(rev_rr=10, accel=0, eps_rev=0, dopm=0, surp=-2, surp_prev=1, beat2=False)
+    app.store.row("AAA").update(rev_rr=30, eps_growth_q=50, accel=8, eps_rev=15, eps_growth_next_year=30, opm=20, dopm=5, surp=4, rev_surp=5, qs=[{"rev_rr": 10}, {"rev_rr": 20}, {"rev_rr": 25}, {"rev_rr": 30}])
+    app.store.row("BBB").update(rev_rr=10, eps_growth_q=5, accel=0, eps_rev=0, eps_growth_next_year=5, opm=5, dopm=0, surp=-2, rev_surp=-2, qs=[{"rev_rr": 5}, {"rev_rr": 4}, {"rev_rr": 3}, {"rev_rr": 2}])
     dialog = A.GrowthScoreDialog(app)
     dialog.update()
     assert dialog.tree.get_children() == ("AAA", "BBB")

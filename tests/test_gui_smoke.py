@@ -514,7 +514,7 @@ def test_growth_score_dialog_can_expand_component_breakdown(app):
     assert "Pokrycie danych: 100/100" in details
     assert "Zaskoczenia EPS + przychodów" in details
     assert "Revenue surprise (ostatni raport):" in details
-    assert "ROIC (szacunek SEC):" in details
+    assert "ROI (Finviz; SEC fallback):" in details
 
     app.store.row("BBB").update(
         rev_rr=None, accel=None, eps_rev=None, dopm=None, opm=None, roic=None,

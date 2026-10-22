@@ -25,6 +25,7 @@ Heurystyka z backtestu (spółki z dzisiejszej listy, bez spółek wycofanych z 
   obrót w mln $). Gotowe zestawy, np. „Nad GLB + MACD dodatni”. Filtry zostają zapamiętane w ustawieniach.
 - **Wykres** (jeden, tygodniowy, 3 lata): słupki High–Low z kreską zamknięcia, SMA 10 i 30 tyg., **Green Line** (z ceną i górną granicą kupna +10 %),
   stop z MACD (czerwona przerywana), wolumen ze średnią 10 tyg., MACD z ▼ w tygodniach przecięcia w dół. ↑ / ↓ = następna / poprzednia spółka, ruch myszy = dane tygodnia.
+  **E pod Low świecy** oznacza dzień publikacji wyników finansowych (dzienny: sesja raportu, tygodniowy: tydzień raportu).
   **Suwak** nad wykresem (minimapa całej historii): przeciągnij ramkę = przesuń okno, krawędzie = zmień długość, klik obok ramki = skok, kółko myszy / + − = zoom, ← / → = przesuń o 4 tygodnie.
   Przycisk **⟳ Sync** w oknie wykresu odświeża tylko aktualną spółkę (świece tygodniowe, fundamenty oraz dane dzienne i miesięczne) w tle, bez ponownego skanowania całego Finviz.
 - **Linie trendu**: na wykresie tygodniowym i dziennym przeciągnij myszą po panelu ceny, aby narysować linię (punkty przyciągają się do High / Low świecy).

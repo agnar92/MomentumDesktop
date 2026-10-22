@@ -256,6 +256,55 @@ def slowdown(row):
     return "HAMUJE+MB" if _ok(g) and g < 0 else "HAMUJE"
 
 
+# Growth Score = dynamika wzrostu i poprawa perspektyw; oddzielny ranking od warunków GLB.
+GROWTH_SCORE_MIN_COVERAGE = 70.0
+GROWTH_SCORE_WEIGHTS = {"revenue": 35.0, "acceleration": 25.0, "eps_revision": 20.0, "op_margin": 10.0, "eps_beats": 10.0}
+
+
+def _growth_component_points(value, knots):
+    """Liniowo interpoluje punkty między progami (x, punkty); ogranicza wynik do krańców skali."""
+    if not _ok(value):
+        return None
+    value = float(value)
+    if value <= knots[0][0]:
+        return float(knots[0][1])
+    for (x0, y0), (x1, y1) in zip(knots, knots[1:]):
+        if value <= x1:
+            return float(y0 + (value - x0) * (y1 - y0) / (x1 - x0))
+    return float(knots[-1][1])
+
+
+def growth_score(row, min_coverage=GROWTH_SCORE_MIN_COVERAGE):
+    """Zwraca Growth Score 0–100, pokrycie wag i składniki.
+    Wagi: przychody r/r 35, przyspieszenie sprzedaży 25, rewizja EPS 90d 20,
+    zmiana marży operacyjnej 10, dwa pozytywne zaskoczenia EPS 10.
+    Brak danych jest pomijany, nie otrzymuje automatycznie zera. Wynik jest normalizowany
+    do dostępnych wag; poniżej min_coverage score=None. EPS beats są znane tylko wtedy,
+    gdy dostępne są oba ostatnie zaskoczenia EPS.
+    """
+    row = row or {}
+    points = {
+        "revenue": _growth_component_points(row.get("rev_rr"), ((0, 0), (5, 7), (10, 14), (15, 22), (25, 29), (35, 35))),
+        "acceleration": _growth_component_points(row.get("accel"), ((-10, 0), (-5, 6), (0, 12), (5, 19), (10, 25))),
+        "eps_revision": _growth_component_points(row.get("eps_rev"), ((-10, 0), (0, 8), (5, 14), (10, 18), (20, 20))),
+        "op_margin": _growth_component_points(row.get("dopm"), ((-3, 0), (0, 5), (3, 10))),
+        "eps_beats": None,
+    }
+    if isinstance(row.get("beat2"), bool) and row.get("surp") is not None and row.get("surp_prev") is not None:
+        points["eps_beats"] = GROWTH_SCORE_WEIGHTS["eps_beats"] if row["beat2"] else 0.0
+
+    coverage = sum(GROWTH_SCORE_WEIGHTS[k] for k, value in points.items() if value is not None)
+    earned = sum(value for value in points.values() if value is not None)
+    minimum = float(min_coverage)
+    score = (earned / coverage * 100.0) if coverage >= minimum and coverage > 0 else None
+    return {
+        "score": round(score, 1) if score is not None else None,
+        "coverage": round(coverage, 1),
+        "points": round(earned, 2),
+        "components": points,
+    }
+
+
 def build_row(base, weekly, months, fund, spy=None, est=None, conditions=None):
     """Wiersz listy: base (z Finviz), weekly {d, o, h, l, c, v}, months (High zamkniętych miesięcy), fund (z SEC albo None), spy (tygodniowe {d, c}),
     est (prognozy z yfinance: niespodzianki EPS i rewizja 90 dni)."""

@@ -59,6 +59,53 @@ def test_turnover_and_conditions():
         assert not calc.passes({**good, k: v})
 
 
+def test_strategy_conditions_are_configurable():
+    row = {"rev_rr": 20, "dopm": 4, "ps": 18, "rs": 55, "beat2": True}
+    cfg = calc.normalize_conditions()
+    assert calc.passes(row, cfg)
+
+    cfg["rev_growth"]["threshold"] = 25
+    assert not calc.passes(row, cfg)
+    cfg["rev_growth"]["enabled"] = False
+    assert calc.passes(row, cfg)
+
+    cfg["op_margin"]["threshold"] = 5
+    assert not calc.passes(row, cfg)
+    cfg["op_margin"]["enabled"] = False
+    assert calc.passes(row, cfg)
+
+    cfg["ps"]["threshold"] = 10
+    assert not calc.passes(row, cfg)
+    cfg["ps"]["enabled"] = False
+    assert calc.passes(row, cfg)
+
+    cfg["rs"]["threshold"] = 60
+    assert not calc.passes(row, cfg)
+    cfg["rs"]["enabled"] = False
+    assert calc.passes(row, cfg)
+
+    cfg["beat2"]["enabled"] = True
+    assert not calc.passes({**row, "beat2": False}, cfg)
+    cfg["beat2"]["enabled"] = False
+    assert calc.passes({**row, "beat2": False}, cfg)
+
+    assert calc.passes({}) is False                    # domyślnie brak danych nie spełnia wymagań
+    assert calc.passes({}, {key: {"enabled": False} for key in calc.DEFAULT_CONDITIONS}) is True
+
+
+def test_strategy_condition_normalization_falls_back_for_invalid_thresholds():
+    cfg = calc.normalize_conditions({
+        "rev_growth": {"enabled": False, "threshold": "nan"},
+        "op_margin": {"threshold": "invalid"},
+        "ps": {"threshold": -2},
+        "unknown": {"enabled": False},
+    })
+    assert cfg["rev_growth"] == {"enabled": False, "threshold": calc.MIN_REV_GROWTH}
+    assert cfg["op_margin"] == {"enabled": True, "threshold": calc.MIN_DOPM}
+    assert cfg["ps"] == {"enabled": True, "threshold": calc.MAX_PS}
+    assert set(cfg) == set(calc.DEFAULT_CONDITIONS)
+
+
 def test_build_row():
     w = {"d": ["2026-01-05"] * 40, "o": [1] * 40, "h": [1] * 40, "l": [1] * 40, "c": [100.0] * 38 + [99.0, 104.0], "v": [3e6] * 40}
     row = calc.build_row({"ticker": "X"}, w, [50, 100, 90, 90, 90, 95], {"rev_rr": 30, "dopm": 5})

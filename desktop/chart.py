@@ -5,6 +5,7 @@ Suwak nad wykresem (minimapa całej historii): przeciągnij ramkę = przesuń ok
 Linie trendu (lines.py): przeciągnij myszą po wykresie ceny = nowa linia (koniec przyciąga się do High / Low tygodnia), chwyć koniec = zmień punkt,
 chwyć środek = przesuń, klik = zaznacz, Delete / prawy przycisk = usuń. 🔔 Obserwuj = alerty strategii dla spółki."""
 import datetime as dt
+from bisect import bisect_left, bisect_right
 import math
 import threading
 import time
@@ -43,6 +44,35 @@ def ticks(lo, hi, n=7, log=True):
 
 def fmt(v):
     return "—" if v is None else f"{v:,.2f}" if abs(v) < 1000 else f"{v:,.0f}"
+
+
+def earnings_indices(dates, earnings_dates, period="W"):
+    """Indeksy świec dla dat publikacji wyników: dokładna/następna sesja D, tydzień zawierający raport W."""
+    if not dates or period not in ("D", "W"):
+        return []
+    found = set()
+    for event in earnings_dates or ():
+        event = str(event)[:10]
+        if len(event) != 10:
+            continue
+        if period == "D":
+            # get_earnings_dates może wskazać weekend; wówczas E trafia pod następną sesję.
+            if event < dates[0] or event > dates[-1]:
+                continue
+            i = bisect_left(dates, event)
+            if i < len(dates):
+                found.add(i)
+        else:
+            # Tygodniowe świece są datowane początkiem tygodnia.
+            i = bisect_right(dates, event) - 1
+            if i >= 0:
+                try:
+                    offset = (dt.date.fromisoformat(event) - dt.date.fromisoformat(dates[i])).days
+                except ValueError:
+                    continue
+                if 0 <= offset < 7:
+                    found.add(i)
+    return sorted(found)
 
 
 def boxed(cv, x, y, text, fill, anchor="w", font=FONT):
@@ -175,7 +205,7 @@ def draw_slider(cv, closes, n_show, end, unit="tyg."):
     cv.create_text(x1 - 6 if right else x1 + 6, 4, text=f"{i1 - i0} {unit}", fill=FG, font=FONT, anchor="ne" if right else "nw")
 
 
-def draw(cv, data, row=None, w=None, h=None, n_show=None, end=None, tlines=(), sel=None, spx=None, period="W", daily_style="line"):
+def draw(cv, data, row=None, w=None, h=None, n_show=None, end=None, tlines=(), sel=None, spx=None, period="W", daily_style="line", earnings_dates=()):
     """Rysuje wykres okna (n_show tygodni kończące się na `end`, domyślnie cała historia) na canvas `cv`; data = {d, o, h, l, c, v};
     tlines = linie trendu, sel = id zaznaczonej. -> geometria (do dymka i linii; `i0` = indeks pierwszego tygodnia okna w pełnej serii, segs = linie w px)."""
     cv.delete("all")
@@ -185,6 +215,7 @@ def draw(cv, data, row=None, w=None, h=None, n_show=None, end=None, tlines=(), s
     if total < 2:
         return None
     i0, i1 = window(total, n_show, end)
+    earnings_local = {i - i0 for i in earnings_indices(data.get("d", []), earnings_dates, period) if i0 <= i < i1}
     cfull = [v if v is not None else 0 for v in data["c"]]
     smas = {} if period == "D" else {k: calc.sma(cfull, k)[i0:i1] for k in ((4, 10, 30) if period == "W" else (10, 30))}
     daily_mas = {}
@@ -207,7 +238,8 @@ def draw(cv, data, row=None, w=None, h=None, n_show=None, end=None, tlines=(), s
 
     level = (row or {}).get("glb")
     vals = [v for v in hi + lo if v] + ([level] if level and min(x for x in lo if x) * 0.5 < level < max(x for x in hi if x) * 2 else [])
-    pmin, pmax = min(vals) * 0.97, max(vals) * 1.03
+    # Dodatkowy margines pod ceną tylko wtedy, gdy trzeba narysować E poniżej Low świecy.
+    pmin, pmax = min(vals) * (0.92 if earnings_local else 0.97), max(vals) * 1.03
     y0, y1 = g["price"]
     lmin, lmax = math.log(pmin), math.log(pmax)
 
@@ -263,6 +295,10 @@ def draw(cv, data, row=None, w=None, h=None, n_show=None, end=None, tlines=(), s
             cv.create_line(x, yf(c[i]), x + step * 0.3, yf(c[i]), fill=col)
         else:
             cv.create_line(x - step * 0.35, yf(c[i]), x + step * 0.35, yf(c[i]), fill=col)
+    # E = dzień publikacji wyników. E umieszczamy bezpośrednio pod Low świecy.
+    for i in sorted(earnings_local):
+        if i < len(lo) and lo[i] is not None:
+            boxed(cv, xf(i), yf(lo[i]) + 5, "E", "#f0b429", anchor="n", font=("Segoe UI", 9, "bold"))
     if level and pmin < level < pmax:
         y = yf(level)
         cv.create_line(x0, y, x1, y, fill="#0a2e18", width=6)
@@ -673,6 +709,13 @@ class ChartWindow(tk.Toplevel):
             return self.other[self.period].get(self.ticker)
         return self.app.store.weekly(self.ticker)
 
+    def refresh_earnings_dates(self, ticker=None):
+        """Bieżące daty wyników z cache; zgodność ze starszym cache przez daty niespodzianek EPS."""
+        ticker = ticker or self.ticker
+        entry = self.app.store.cache("estimates").get(ticker) or {}
+        dates = entry.get("earnings_dates") or [x[0] for x in entry.get("surp", []) if x]
+        self.earnings_dates = sorted({str(x)[:10] for x in dates if x and len(str(x)[:10]) == 10})
+
     def sync_current_ticker(self):
         """Odświeża wyłącznie spółkę aktualnie otwartą na wykresie."""
         self.app.start_symbol_sync(self.ticker)
@@ -703,6 +746,7 @@ class ChartWindow(tk.Toplevel):
 
     def load_period(self):
         t, per = self.ticker, self.period
+        self.refresh_earnings_dates(t)
         if per in ("M", "D") and t not in self.other[per]:
             self.cv.delete("all")
             self.cv.create_text(20, 20, text=f"Pobieram {'historię miesięczną' if per == 'M' else 'świece dzienne'} {t}…", anchor="w", fill=FG)
@@ -767,7 +811,8 @@ class ChartWindow(tk.Toplevel):
         self.daily_style_btn.config(state="normal" if self.period == "D" else "disabled",
                                     text="D: RWB" if self.daily_style == "bars" else "D: słupki")
         self.geom = draw(self.cv, data, self.row_for_chart(), n_show=self.n_show, end=self.end, tlines=self.lines(), sel=self.sel,
-                         spx=self.app.store.weekly("SPY"), period=self.period, daily_style=self.daily_style)
+                         spx=self.app.store.weekly("SPY"), period=self.period, daily_style=self.daily_style,
+                         earnings_dates=self.earnings_dates)
 
     def plan(self):
         st = self.app.store

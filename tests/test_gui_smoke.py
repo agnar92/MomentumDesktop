@@ -239,11 +239,23 @@ def test_trend_line_draw_move_delete_and_filters(app):
     ch.redraw()
     g = ch.geom["g"]
     E = lambda x, y: type("E", (), {"x": x, "y": y})()   # noqa: E731
-    y = (g["price"][0] + g["price"][1]) / 2
-    ch.press(E(200, y))
-    ch.drag_line(E(260, y - 20))
-    ch.drag_line(E(500, y - 60))
-    ch.release(E(500, y - 60))
+    # Use positions relative to the actual plot area. The chart width depends
+    # on display height and the now-wider fundamentals panel; fixed x=500 can
+    # fall outside the plot on smaller displays and clamp both endpoints to
+    # the same candle, so save_lines() correctly removes the zero-length line.
+    plot_width = max(1.0, g["x1"] - g["x0"])
+    x_start = g["x0"] + plot_width * 0.15
+    x_drag = g["x0"] + plot_width * 0.35
+    x_end = g["x0"] + plot_width * 0.75
+    price_top, price_bottom = g["price"]
+    price_height = max(1.0, price_bottom - price_top)
+    y = (price_top + price_bottom) / 2
+    y_drag = y - max(6.0, price_height * 0.07)
+    y_end = y - max(15.0, price_height * 0.20)
+    ch.press(E(x_start, y))
+    ch.drag_line(E(x_drag, y_drag))
+    ch.drag_line(E(x_end, y_end))
+    ch.release(E(x_end, y_end))
     ls = app.store.alerts["lines"]["AAA"]
     assert len(ls) == 1 and ls[0]["d1"] < ls[0]["d2"] and ch.sel == ls[0]["id"]
     assert (app.store.dir / "alerts.json").exists()

@@ -256,14 +256,32 @@ def slowdown(row):
     return "HAMUJE+MB" if _ok(g) and g < 0 else "HAMUJE"
 
 
-# Growth Score = dynamika wzrostu i poprawa perspektyw; oddzielny ranking od warunków GLB.
+# Growth Score: seven distinct signals for ranking high-growth companies.
+# Finviz's ROA/ROI conditions remain in the user's prefilter, so quality metrics are not double-counted here.
 GROWTH_SCORE_MIN_COVERAGE = 70.0
-# Growth Score v2: 30 acceleration, 20 surprises, 20 future growth,
-# 20 business quality, 10 durability. Unavailable metrics are never fabricated.
-GROWTH_SCORE_WEIGHTS = {"acceleration": 30.0, "surprises": 20.0, "future": 20.0, "quality": 20.0, "durability": 10.0}
+GROWTH_SCORE_WEIGHTS = {
+    "revenue_growth": 25.0,
+    "revenue_acceleration": 20.0,
+    "eps_growth": 15.0,
+    "eps_revision": 15.0,
+    "op_margin_change": 10.0,
+    "eps_surprise": 5.0,
+    "revenue_surprise": 5.0,
+    "durability": 5.0,
+}
+GROWTH_SCORE_GROUPS = {
+    "growth": ("Wzrost przychodów i EPS oraz przyspieszenie", (
+        "revenue_growth", "revenue_acceleration", "eps_growth",
+    )),
+    "revision": ("Rewizje prognoz EPS", ("eps_revision",)),
+    "margin": ("Zmiana marży operacyjnej", ("op_margin_change",)),
+    "surprises": ("Niespodzianki wynikowe", ("eps_surprise", "revenue_surprise")),
+    "durability": ("Trwałość wzrostu przychodów", ("durability",)),
+}
 
 
 def _growth_component_points(value, knots):
+    """Map a raw metric to its weighted points with linear interpolation and capped extremes."""
     if not _ok(value):
         return None
     value = float(value)
@@ -275,7 +293,6 @@ def _growth_component_points(value, knots):
     return float(knots[-1][1])
 
 
-
 def _latest_surprise(history, known_through):
     """Latest dated percentage in a [[date, value], ...] history known by the given date."""
     values = [item for item in (history or [])
@@ -285,86 +302,120 @@ def _latest_surprise(history, known_through):
 
 
 def growth_score(row, min_coverage=GROWTH_SCORE_MIN_COVERAGE):
-    """100-point fundamental score; coverage tracks each available submetric, not merely a partially filled category."""
+    """100-point Growth Score; absent data are excluded from both points and weight coverage."""
     row = row or {}
-    estimates = row.get("eps_est") or []
-    next_year = next((item for item in estimates if item.get("period") == "+1y"), None)
-    eps_next_growth = next_year.get("growth") if next_year else None
-    if _ok(eps_next_growth) and -1 <= eps_next_growth <= 1:
-        eps_next_growth *= 100
 
-    eps_history = row.get("eps_q") or []
-    eps_growth = None
-    if eps_history:
+    revenue_growth = row.get("sales_qoq") if _ok(row.get("sales_qoq")) else row.get("rev_rr")
+
+    # Prefer quarterly EPS growth from Finviz; calculate a same-quarter YoY fallback from history.
+    eps_growth = row.get("eps_qoq") if _ok(row.get("eps_qoq")) else row.get("eps_growth_q")
+    if not _ok(eps_growth):
+        eps_history = row.get("eps_q") or []
         try:
-            latest_day = dt.date.fromisoformat(eps_history[-1][0])
-            latest_eps = eps_history[-1][1]
-            prior_eps = next(
-                (item[1] for item in reversed(eps_history[:-1])
-                 if 330 <= (latest_day - dt.date.fromisoformat(item[0])).days <= 400),
-                None,
-            )
-            if _ok(latest_eps) and _ok(prior_eps) and prior_eps > 0:
-                eps_growth = (latest_eps / prior_eps - 1) * 100
+            if eps_history:
+                latest_day = dt.date.fromisoformat(eps_history[-1][0])
+                latest_eps = eps_history[-1][1]
+                prior_eps = next(
+                    (item[1] for item in reversed(eps_history[:-1])
+                     if 330 <= (latest_day - dt.date.fromisoformat(item[0])).days <= 400),
+                    None,
+                )
+                if _ok(latest_eps) and _ok(prior_eps) and prior_eps > 0:
+                    eps_growth = (latest_eps / prior_eps - 1) * 100
         except (TypeError, ValueError, IndexError):
             eps_growth = None
 
-    rev_growth = row.get("sales_qoq") if _ok(row.get("sales_qoq")) else row.get("rev_rr")
-    revenue_growth = _growth_component_points(rev_growth, ((0, 0), (10, 4), (20, 7), (35, 10)))
-    eps_growth = row.get("eps_qoq") if _ok(row.get("eps_qoq")) else eps_growth
-    eps_growth_points = _growth_component_points(eps_growth, ((0, 0), (10, 4), (25, 7), (50, 10)))
-    revenue_acceleration = _growth_component_points(row.get("accel"), ((-10, 0), (0, 3), (5, 7), (10, 10)))
-    eps_surprise = _growth_component_points(row.get("surp") if _ok(row.get("surp")) else row.get("eps_surprise_finviz"), ((-20, 0), (0, 0), (5, 6), (15, 9), (30, 10)))
-    revenue_surprise = _growth_component_points(row.get("rev_surp") if _ok(row.get("rev_surp")) else row.get("revenue_surprise_finviz"), ((-20, 0), (0, 0), (5, 6), (15, 9), (30, 10)))
-    finviz_next_growth = row.get("eps_next_year")
-    next_year_points = _growth_component_points(finviz_next_growth if _ok(finviz_next_growth) else eps_next_growth, ((-10, 0), (0, 0), (10, 4), (25, 7), (50, 10)))
-    revision_points = _growth_component_points(row.get("eps_rev"), ((-10, 0), (0, 0), (5, 6), (10, 8), (20, 10)))
-    op_margin_points = _growth_component_points(row.get("opm"), ((-10, 0), (0, 1), (10, 2.5), (20, 4), (30, 5)))
-    margin_change_points = _growth_component_points(row.get("dopm"), ((-5, 0), (0, 1), (3, 2), (6, 3)))
-    roi_value = row.get("roi") if _ok(row.get("roi")) else row.get("roic")
-    roi_points = _growth_component_points(roi_value, ((0, 0), (5, 1.5), (10, 3.5), (15, 5.5), (25, 7)))
-    conversion = eps_growth - rev_growth if _ok(eps_growth) and _ok(rev_growth) else None
-    conversion_points = _growth_component_points(conversion, ((-20, 0), (-5, 1), (0, 2), (10, 3), (25, 5)))
+    raw = {
+        "revenue_growth": revenue_growth,
+        "revenue_acceleration": row.get("accel"),
+        "eps_growth": eps_growth,
+        "eps_revision": row.get("eps_rev"),
+        "op_margin_change": row.get("dopm"),
+        "eps_surprise": row.get("surp") if _ok(row.get("surp")) else row.get("eps_surprise_finviz"),
+        "revenue_surprise": row.get("rev_surp") if _ok(row.get("rev_surp")) else row.get("revenue_surprise_finviz"),
+    }
 
-    qs = row.get("qs") or []
-    growths = [item.get("rev_rr") for item in qs if _ok(item.get("rev_rr"))]
-    catalyst_score = row.get("catalyst_score")
-    if _ok(catalyst_score):
-        durability_points = min(10.0, max(0.0, float(catalyst_score)))
+    # Piecewise thresholds keep one extreme quarter (e.g. a cyclical +300% rebound) from dominating.
+    points = {
+        "revenue_growth": _growth_component_points(raw["revenue_growth"], (
+            (0, 0), (5, 5), (10, 10), (20, 18), (35, 23), (50, 25),
+        )),
+        "revenue_acceleration": _growth_component_points(raw["revenue_acceleration"], (
+            (-10, 0), (0, 6), (5, 14), (10, 20),
+        )),
+        "eps_growth": _growth_component_points(raw["eps_growth"], (
+            (-10, 0), (0, 2), (10, 6), (25, 12), (50, 15),
+        )),
+        "eps_revision": _growth_component_points(raw["eps_revision"], (
+            (-20, 0), (-5, 3), (0, 6), (10, 12), (20, 15),
+        )),
+        "op_margin_change": _growth_component_points(raw["op_margin_change"], (
+            (-5, 0), (0, 3), (3, 7), (6, 10),
+        )),
+        "eps_surprise": _growth_component_points(raw["eps_surprise"], (
+            (-20, 0), (0, 0), (5, 3), (15, 4.5), (30, 5),
+        )),
+        "revenue_surprise": _growth_component_points(raw["revenue_surprise"], (
+            (-20, 0), (0, 0), (5, 3), (15, 4.5), (30, 5),
+        )),
+    }
+
+    # Durability proxy: in how many of the last four reported quarters did revenue grow YoY?
+    quarters = [
+        item["rev_rr"] for item in (row.get("qs") or [])
+        if isinstance(item, dict) and _ok(item.get("rev_rr"))
+    ][-4:]
+    durability_note = None
+    durability_value = None
+    if len(quarters) >= 2:
+        positive_quarters = sum(1 for value in quarters if value > 0)
+        durability_value = positive_quarters / len(quarters) * 100.0
+        points["durability"] = durability_value / 100.0 * GROWTH_SCORE_WEIGHTS["durability"]
+        durability_note = f"{positive_quarters}/{len(quarters)} ostatnich dostępnych kwartałów z dodatnim wzrostem r/r."
     else:
-        durability_points = _growth_component_points(
-            sum(growths[-4:]) / len(growths[-4:]), ((0, 0), (5, 3), (10, 6), (20, 8), (35, 10))
-        ) if len(growths) >= 2 else None
+        points["durability"] = None
+        durability_note = "Potrzeba danych z co najmniej 2 kwartałów."
 
-    inputs = {
-        "revenue_growth": (revenue_growth, 10),
-        "eps_growth": (eps_growth_points, 10),
-        "revenue_acceleration": (revenue_acceleration, 10),
-        "eps_surprise": (eps_surprise, 10),
-        "revenue_surprise": (revenue_surprise, 10),
-        "eps_next_year": (next_year_points, 10),
-        "eps_revision": (revision_points, 10),
-        "op_margin": (op_margin_points, 5),
-        "op_margin_change": (margin_change_points, 3),
-        "roi": (roi_points, 7),
-        "profit_conversion": (conversion_points, 5),
-        "durability": (durability_points, 10),
+    details = {}
+    labels = {
+        "revenue_growth": ("Przychody r/r", "%"),
+        "revenue_acceleration": ("Przyspieszenie przychodów", " pp"),
+        "eps_growth": ("EPS r/r", "%"),
+        "eps_revision": ("Rewizja EPS 90 dni", "%"),
+        "op_margin_change": ("Zmiana marży operacyjnej", " pp"),
+        "eps_surprise": ("EPS surprise — najnowszy raport", "%"),
+        "revenue_surprise": ("Revenue surprise — najnowszy raport", "%"),
+        "durability": ("Kwartały z dodatnim wzrostem przychodów r/r", "%"),
     }
-    groups = {
-        "acceleration": ("revenue_growth", "eps_growth", "revenue_acceleration"),
-        "surprises": ("eps_surprise", "revenue_surprise"),
-        "future": ("eps_next_year", "eps_revision"),
-        "quality": ("op_margin", "op_margin_change", "roi", "profit_conversion"),
-        "durability": ("durability",),
-    }
+    for key, weight in GROWTH_SCORE_WEIGHTS.items():
+        details[key] = {
+            "label": labels[key][0],
+            "value": durability_value if key == "durability" else raw.get(key),
+            "unit": labels[key][1],
+            "points": points.get(key),
+            "weight": weight,
+            "note": durability_note if key == "durability" else None,
+        }
+
+    categories = {}
     components = {}
     component_coverage = {}
-    for group, keys in groups.items():
-        available = [(inputs[key][0], inputs[key][1]) for key in keys if inputs[key][0] is not None]
-        components[group] = round(sum(value for value, _ in available), 2) if available else None
-        component_coverage[group] = sum(weight for _, weight in available)
-    coverage = sum(weight for value, weight in inputs.values() if value is not None)
-    earned = sum(value for value, _ in inputs.values() if value is not None)
+    for group, (label, metric_keys) in GROWTH_SCORE_GROUPS.items():
+        available = [key for key in metric_keys if points.get(key) is not None]
+        group_points = sum(points[key] for key in available) if available else None
+        group_coverage = sum(GROWTH_SCORE_WEIGHTS[key] for key in available)
+        group_weight = sum(GROWTH_SCORE_WEIGHTS[key] for key in metric_keys)
+        categories[group] = {
+            "label": label,
+            "points": round(group_points, 2) if group_points is not None else None,
+            "coverage": float(group_coverage),
+            "weight": float(group_weight),
+        }
+        components[group] = categories[group]["points"]
+        component_coverage[group] = float(group_coverage)
+
+    coverage = sum(GROWTH_SCORE_WEIGHTS[key] for key, value in points.items() if value is not None)
+    earned = sum(value for value in points.values() if value is not None)
     score = earned / coverage * 100.0 if coverage >= float(min_coverage) and coverage else None
     return {
         "score": round(score, 1) if score is not None else None,
@@ -372,8 +423,15 @@ def growth_score(row, min_coverage=GROWTH_SCORE_MIN_COVERAGE):
         "points": round(earned, 2),
         "components": components,
         "component_coverage": component_coverage,
-        "notes": ["Finviz fundamentals are preferred; SEC-derived ROIC is only a fallback when Finviz ROI is unavailable", "durability uses a manual catalyst score when provided, otherwise historical revenue growth"],
+        "categories": categories,
+        "details": details,
+        "notes": [
+            "Finviz ROI/ROA remain prefilter conditions and are not counted a second time in this score.",
+            "Durability is a proxy: share of the last up to four available quarters with positive revenue growth YoY.",
+            "Unavailable metrics are omitted from both points and coverage, never converted to zero.",
+        ],
     }
+
 
 def build_row(base, weekly, months, fund, spy=None, est=None, conditions=None):
     """Wiersz listy: base (z Finviz), weekly {d, o, h, l, c, v}, months (High zamkniętych miesięcy), fund (z SEC albo None), spy (tygodniowe {d, c}),

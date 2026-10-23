@@ -1172,8 +1172,8 @@ class GrowthScoreDialog(tk.Toplevel):
         self.descending = True
         self.show_components = False
         self.title("Growth Score — ranking wzrostu")
-        self.geometry("390x650")
-        self.minsize(330, 350)
+        self.geometry("470x720")
+        self.minsize(380, 420)
         self.configure(bg=PANEL)
         apply_dark(self)
         self.transient(app.root)
@@ -1210,7 +1210,7 @@ class GrowthScoreDialog(tk.Toplevel):
         self.detail_heading.pack(fill="x", padx=12, pady=(4, 2))
         self.detail_text = tk.Text(
             self.detail_frame, bg="#151a21", fg="#dde3ea", relief="flat", wrap="word",
-            font=("Segoe UI", 9), padx=10, pady=7, height=8, highlightthickness=0,
+            font=("Segoe UI", 9), padx=10, pady=7, height=12, highlightthickness=0,
             cursor="arrow", state="disabled"
         )
         self.detail_text.tag_configure("h", font=("Segoe UI", 10, "bold"), foreground="#ffffff")
@@ -1220,10 +1220,12 @@ class GrowthScoreDialog(tk.Toplevel):
 
         self.weights_label = tk.Label(
             self,
-            text=("Wagi: przyspieszenie wzrostu 30, zaskoczenia EPS 20, przyszły wzrost/revizje 20, "
-                  "jakość biznesu 20 (w tym ROI z Finviz), trwałość wzrostu 10. Braki danych są pomijane; score pokazujemy "
-                  "przy pokryciu co najmniej 70/100. Finviz jest źródłem podstawowym; SEC uzupełnia brakujące pola. Trwałość opiera się na historii, a katalizatory wymagają ręcznej oceny."),
-            bg=PANEL, fg="#8b95a3", justify="left", wraplength=365, anchor="w"
+            text=("Wagi: przychody r/r 25, przyspieszenie przychodów 20, EPS r/r 15, rewizje EPS 90 dni 15, "
+                  "zmiana marży operacyjnej 10, EPS surprise 5, revenue surprise 5, trwałość wzrostu 5. "
+                  "Finviz ROI/ROA pozostają w filtrze wstępnym, nie są punktowane drugi raz. "
+                  "Brakujące dane są pomijane; wynik pokazujemy przy pokryciu co najmniej 70/100. "
+                  "Trwałość to udział z ostatnich maksymalnie 4 kwartałów z dodatnim wzrostem przychodów r/r."),
+            bg=PANEL, fg="#8b95a3", justify="left", wraplength=445, anchor="w"
         )
         self.weights_label.pack(fill="x", padx=12, pady=(8, 4))
         buttons = tk.Frame(self, bg=PANEL)
@@ -1232,7 +1234,6 @@ class GrowthScoreDialog(tk.Toplevel):
             buttons, text="▸ Składowe score", command=self.toggle_components, relief="flat"
         )
         self.components_btn.pack(side="left", padx=(0, 4))
-        tk.Button(buttons, text="Katalizator…", command=self.edit_catalyst, relief="flat").pack(side="left", padx=(0, 4))
         tk.Button(buttons, text="Odśwież", command=self.fill, relief="flat").pack(side="left")
         tk.Button(buttons, text="Zamknij", command=self.close, relief="flat").pack(side="right")
         self.protocol("WM_DELETE_WINDOW", self.close)
@@ -1261,8 +1262,7 @@ class GrowthScoreDialog(tk.Toplevel):
             ticker = row.get("ticker")
             if not ticker:
                 continue
-            assessment = (self.app.store.settings.get("growth_catalysts") or {}).get(ticker) or {}
-            result = calc.growth_score({**row, "catalyst_score": assessment.get("score")})
+            result = calc.growth_score(row)
             rows.append((ticker, result["score"], result["coverage"]))
         def key(item):
             ticker, score, _ = item
@@ -1309,64 +1309,36 @@ class GrowthScoreDialog(tk.Toplevel):
         if row is None:
             content = "Zaznacz spółkę w rankingu, aby zobaczyć szczegóły."
         else:
-            assessment = (self.app.store.settings.get("growth_catalysts") or {}).get(ticker) or {}
-            result = calc.growth_score({**row, "catalyst_score": assessment.get("score")})
+            result = calc.growth_score(row)
             score = "brak (za małe pokrycie)" if result["score"] is None else f"{result['score']:.1f}/100".replace(".", ",")
             content = (
                 f"{ticker} · Growth Score: {score}\n"
-                f"Pokrycie danych: {result['coverage']:.0f}/100 pkt wag; wynik = suma punktów ÷ dostępne wagi × 100\n"
+                f"Pokrycie danych: {result['coverage']:.0f}/100 pkt wag; wynik = zdobyte punkty ÷ dostępne wagi × 100\n"
+                "Brakujące dane są pomijane, nie traktowane jako zero. Wynik liczbowy pokazujemy przy pokryciu ≥70/100.\n\n"
             )
-            components = result["components"]
-            specs = (
-                ("acceleration", "Przyspieszenie wzrostu", None, "", 30),
-                ("surprises", "Zaskoczenia EPS + przychodów", row.get("surp"), "%", 20),
-                ("future", "Przyszły wzrost / rewizje EPS", row.get("eps_rev"), "%", 20),
-                ("quality", "Jakość biznesu (marża + ROI)", row.get("roi") if row.get("roi") is not None else row.get("roic"), "%", 20),
-                ("durability", "Trwałość wzrostu (katalizator / proxy)", assessment.get("score"), "/10", 10),
-            )
-            content += "\\n"
-            for key, label, value, suffix, weight in specs:
-                content += f"{label}: {self._fmt_value(value, suffix)} → {self._fmt_points(components.get(key), weight)} (pokrycie {result['component_coverage'].get(key, 0)}/{weight})\\n"
+            for group_key, (group_label, metric_keys) in calc.GROWTH_SCORE_GROUPS.items():
+                category = result["categories"][group_key]
+                category_points = "brak danych" if category["points"] is None else f"{category['points']:.1f}"
+                content += (
+                    f"{group_label}: {category_points}/{category['coverage']:.0f} dostępnych / "
+                    f"{category['weight']:.0f} pkt\n"
+                ).replace(".", ",")
+                for key in metric_keys:
+                    detail = result["details"][key]
+                    value = self._fmt_value(detail["value"], detail["unit"])
+                    shown_points = self._fmt_points(detail["points"], detail["weight"])
+                    suffix = f" ({detail['note']})" if detail.get("note") else ""
+                    content += f"  {detail['label']}: {value} → {shown_points}{suffix}\n"
             content += (
-                f"EPS surprise (najnowszy / poprzedni): "
-                f"{self._fmt_value(row.get('surp'), '%')} / {self._fmt_value(row.get('surp_prev'), '%')}\\n"
-                f"Revenue surprise (ostatni raport): {self._fmt_value(row.get('rev_surp'), '%')}\\n"
-                f"ROI (Finviz; SEC fallback): {self._fmt_value(row.get('roi') if row.get('roi') is not None else row.get('roic'), '%')}\\n"
-                f"Katalizator / uzasadnienie: {assessment.get('note') or 'brak ręcznej oceny; użyto proxy historii przychodów'}\\n"
-                f"Suma punktów: {result['points']:.1f}/{result['coverage']:.0f} dostępnych wag".replace(".", ",")
-            )
+                "\nFiltr wstępny: m.in. ROA/ROI, dodatnie marże i wzrosty z Finviz.\n"
+                f"Suma punktów: {result['points']:.1f}/{result['coverage']:.0f} dostępnych wag"
+            ).replace(".", ",")
         self.detail_text.configure(state="normal")
         self.detail_text.delete("1.0", "end")
         self.detail_text.insert("1.0", content)
         if row is not None:
             self.detail_text.tag_add("h", "1.0", "1.end")
         self.detail_text.configure(state="disabled")
-
-    def edit_catalyst(self):
-        selected = self.tree.selection()
-        ticker = selected[0] if selected else None
-        if not ticker:
-            messagebox.showinfo("Growth Score", "Najpierw zaznacz spółkę w rankingu.")
-            return
-        saved = (self.app.store.settings.get("growth_catalysts") or {}).get(ticker) or {}
-        score = simpledialog.askinteger(
-            "Ocena katalizatora",
-            f"{ticker}: oceń wiarygodność dalszego wzrostu w skali 0–10.\nUwzględnij popyt, nowe produkty, kontrakty lub ekspansję.",
-            parent=self, minvalue=0, maxvalue=10, initialvalue=saved.get("score")
-        )
-        if score is None:
-            return
-        note = simpledialog.askstring(
-            "Uzasadnienie katalizatora", "Wpisz konkretny powód dalszego wzrostu (produkt, kontrakt, popyt):",
-            parent=self, initialvalue=saved.get("note", "")
-        )
-        if note is None:
-            return
-        all_scores = self.app.store.settings.setdefault("growth_catalysts", {})
-        all_scores[ticker] = {"score": score, "note": note.strip()}
-        self.app.store.save_settings()
-        self.fill()
-        self.update_components()
 
     def on_cell_click(self, event):
         if self.tree.identify_region(event.x, event.y) != "cell":

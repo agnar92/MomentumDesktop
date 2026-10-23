@@ -357,42 +357,64 @@ def test_surprises_known_at_date_and_fresh():
 
 
 
-def test_growth_score_uses_five_weighted_categories_and_missing_data_coverage():
-    strong = {
-        "rev_rr": 35, "accel": 10, "eps_rev": 20, "dopm": 8, "opm": 30, "roic": 25,
-        "surp": 20, "rev_surp": 20, "beat2": True,
-        "eps_q": [["2025-03-31", 1], ["2025-06-30", 1.2], ["2025-09-30", 1.4],
-                  ["2025-12-31", 1.6], ["2026-03-31", 2.0]],
-        "eps_est": [{"period": "+1y", "growth": 0.35}],
-        "qs": [{"rev_rr": 10}, {"rev_rr": 20}, {"rev_rr": 30}, {"rev_rr": 40}],
+def test_growth_score_uses_seven_signals_with_100_point_weights():
+    row = {
+        "sales_qoq": 50, "rev_rr": 50, "accel": 12, "eps_qoq": 50,
+        "eps_rev": 20, "dopm": 8, "surp": 30, "rev_surp": 30,
+        "qs": [{"rev_rr": 12}, {"rev_rr": 20}, {"rev_rr": 30}, {"rev_rr": 45}],
     }
-    scored = calc.growth_score(strong)
-    assert scored["coverage"] == 100.0
-    assert scored["score"] is not None
-    assert set(scored["components"]) == {"acceleration", "surprises", "future", "quality", "durability"}
-
-    partial = calc.growth_score({"rev_rr": 25, "accel": 5, "dopm": 2, "eps_rev": 10})
-    assert partial["coverage"] == 33.0
-    assert partial["score"] is None
-
-    insufficient = calc.growth_score({"rev_rr": 25, "accel": 5})
-    assert insufficient["score"] is None
-    assert insufficient["coverage"] < 70.0
-
-
-def test_growth_score_includes_revenue_surprise_and_roic_inputs():
-    base = {"rev_rr": 20, "accel": 5, "eps_rev": 10, "dopm": 3, "opm": 15,
-            "surp": 5, "rev_surp": 8, "roic": 15}
-    result = calc.growth_score(base)
-    assert result["components"]["surprises"] is not None
-    assert result["components"]["quality"] is not None
-
-
-def test_growth_score_keeps_missing_revenue_surprise_out_of_score_coverage():
-    row = {"rev_rr": 20, "accel": 4, "dopm": 2, "eps_rev": 10, "surp": 5}
     result = calc.growth_score(row)
-    assert result["components"]["surprises"] is not None
-    assert result["coverage"] < 100.0
+    assert sum(calc.GROWTH_SCORE_WEIGHTS.values()) == 100.0
+    assert calc.GROWTH_SCORE_WEIGHTS == {
+        "revenue_growth": 25.0, "revenue_acceleration": 20.0, "eps_growth": 15.0,
+        "eps_revision": 15.0, "op_margin_change": 10.0, "eps_surprise": 5.0,
+        "revenue_surprise": 5.0, "durability": 5.0,
+    }
+    assert result["coverage"] == 100.0
+    assert result["score"] == 100.0
+    assert result["points"] == 100.0
+    assert set(result["components"]) == set(calc.GROWTH_SCORE_GROUPS)
+    assert result["categories"]["growth"]["weight"] == 60.0
+    assert result["categories"]["surprises"]["weight"] == 10.0
+
+
+def test_growth_score_normalizes_available_weights_and_reports_coverage():
+    row = {"sales_qoq": 30, "accel": 5, "eps_qoq": 25, "eps_rev": 10}
+    result = calc.growth_score(row)
+    assert result["coverage"] == 75.0
+    assert result["score"] == pytest.approx(result["points"] / result["coverage"] * 100, abs=0.1)
+    assert result["score"] is not None
+    assert result["categories"]["surprises"]["coverage"] == 0.0
+    assert result["categories"]["surprises"]["points"] is None
+    assert result["details"]["revenue_surprise"]["points"] is None
+
+    too_little_data = calc.growth_score({"sales_qoq": 25, "eps_qoq": 15})
+    assert too_little_data["coverage"] == 40.0
+    assert too_little_data["score"] is None
+
+
+def test_growth_score_scores_revenue_and_eps_surprises_separately():
+    row = {
+        "surp": 5,
+        "rev_surp": 5,
+        "qs": [{"rev_rr": 20}, {"rev_rr": 10}, {"rev_rr": -5}, {"rev_rr": 0}],
+    }
+    result = calc.growth_score(row)
+    assert result["details"]["eps_surprise"]["points"] == pytest.approx(3.0)
+    assert result["details"]["revenue_surprise"]["points"] == pytest.approx(3.0)
+    assert result["details"]["durability"]["value"] == pytest.approx(50.0)
+    assert result["details"]["durability"]["points"] == pytest.approx(2.5)
+    assert result["details"]["durability"]["note"].startswith("2/4")
+    assert result["coverage"] == 15.0
+    assert result["score"] is None
+
+
+def test_growth_score_calculates_eps_yoy_from_quarterly_history_as_fallback():
+    result = calc.growth_score({
+        "eps_q": [["2025-01-31", 2.0], ["2026-01-31", 4.0]],
+    })
+    assert result["details"]["eps_growth"]["value"] == pytest.approx(100.0)
+    assert result["details"]["eps_growth"]["points"] == pytest.approx(15.0)
 
 
 def test_revenue_surprise_requires_actual_and_consensus():
@@ -409,11 +431,6 @@ def test_analyst_estimate_growth_accepts_percent_strings():
                            "yearAgoEps": 2.0, "growth": "+19.0%"}], index=["+1y"])
     assert estimates._estimate_rows(frame)[0]["growth"] == 19.0
 
-
-def test_manual_catalyst_score_overrides_historical_durability_proxy():
-    result = calc.growth_score({"qs": [{"rev_rr": -10}, {"rev_rr": -20}], "catalyst_score": 8})
-    assert result["components"]["durability"] == 8.0
-    assert result["coverage"] == 10.0
 
 
 def test_finviz_all_views_merge_fundamental_fields():
@@ -486,14 +503,15 @@ def test_build_row_prefers_finviz_surprises_and_roi_over_fallbacks():
     assert row["roi"] == pytest.approx(22.4)
 
 
-def test_growth_score_uses_finviz_roi_and_growth_fields():
+def test_growth_score_uses_finviz_growth_and_surprise_fields():
     result = calc.growth_score({
-        "sales_qoq": 30, "eps_qoq": 40, "roi": 20,
-        "opm": 18, "dopm": 4, "eps_next_year": 25,
-        "surp": 8, "rev_surp": 6,
-        "qs": [{"rev_rr": 10}, {"rev_rr": 20}],
+        "sales_qoq": 30, "eps_qoq": 40, "roi": 20, "opm": 18, "dopm": 4,
+        "accel": 5, "eps_rev": 10, "surp": 8, "rev_surp": 6,
+        "qs": [{"rev_rr": 10}, {"rev_rr": 20}, {"rev_rr": 30}, {"rev_rr": 40}],
     })
     assert result["score"] is not None
-    assert result["coverage"] >= 70
-    assert result["components"].get("quality") is not None
-    assert result["component_coverage"]["quality"] == 20
+    assert result["coverage"] == 100.0
+    assert result["details"]["revenue_growth"]["value"] == pytest.approx(30.0)
+    assert result["details"]["eps_growth"]["value"] == pytest.approx(40.0)
+    assert result["details"]["op_margin_change"]["points"] is not None
+    assert result["details"]["eps_revision"]["points"] is not None

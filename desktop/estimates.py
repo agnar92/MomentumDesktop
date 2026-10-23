@@ -56,7 +56,7 @@ def analyst_upside(targets):
 def fetch(t):
     """-> niespodzianki EPS/przychodów, rewizja EPS i upside do średniego celu analityków."""
     tk = _yf().Ticker(t)
-    surp, revenue_surp, earnings_dates = [], [], []
+    surp, revenue_surp, earnings_dates, reported_eps = [], [], [], []
     try:
         # Większy zakres, aby znaczniki E objęły historię widoczną na wykresie tygodniowym.
         d = tk.get_earnings_dates(limit=32)
@@ -67,6 +67,8 @@ def fetch(t):
                 report_date = ts.strftime("%Y-%m-%d")
                 # Datę raportu zapisujemy także wtedy, gdy Yahoo nie podało konsensusu lub niespodzianki EPS.
                 rev_surp = _revenue_surprise(r)
+                if report_date <= today and _number(rep) is not None:
+                    reported_eps.append([report_date, round(float(rep), 4)])
                 if (_number(rep) is not None or _number(r.get("Reported Revenue")) is not None or
                         _number(r.get("Revenue Actual")) is not None or _number(r.get("Actual Revenue")) is not None) and report_date <= today:
                     earnings_dates.append(report_date)
@@ -90,7 +92,7 @@ def fetch(t):
                 rev90 = round((cur / old - 1) * 100, 2)
     except Exception:
         pass
-    return {"surp": surp[-24:], "revenue_surp": revenue_surp[-24:], "rev90": rev90,
+    return {"surp": surp[-24:], "revenue_surp": revenue_surp[-24:], "eps_q": reported_eps[-24:], "rev90": rev90,
             "upside": upside, "earnings_dates": sorted(set(earnings_dates))[-24:]}
 
 
@@ -100,7 +102,7 @@ def update(tickers, cache, log=print, today=None, pause=0.1, progress=None, fetc
     fetch_one = fetch_one or fetch
     # Odśwież również stare wpisy, w których nie zapisywaliśmy jeszcze pola upside.
     todo = [t for t in tickers if not (
-        cache.get(t) and "upside" in cache[t]
+        cache.get(t) and "upside" in cache[t] and "revenue_surp" in cache[t] and "eps_q" in cache[t]
         and (today - dt.date.fromisoformat(cache[t]["at"])).days < FRESH_DAYS
     )]
     done = []

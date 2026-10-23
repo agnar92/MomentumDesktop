@@ -131,7 +131,7 @@ def test_analyst_upside_uses_mean_target_and_current_price():
 def test_estimates_refresh_legacy_cache_without_upside():
     today = dt.date(2026, 10, 22)
     cache = {"A": {"at": today.isoformat(), "surp": [], "rev90": None}}
-    fetched = {"surp": [], "revenue_surp": [], "rev90": None, "upside": 27.5}
+    fetched = {"surp": [], "revenue_surp": [], "eps_q": [], "rev90": None, "upside": 27.5}
     got = estimates.update(["A"], cache, today=today, pause=0, fetch_one=lambda ticker: fetched)
     assert got == ["A"] and cache["A"]["upside"] == 27.5
 
@@ -357,38 +357,74 @@ def test_surprises_known_at_date_and_fresh():
 
 
 
-def test_growth_score_uses_weighted_growth_factors_and_normalizes_known_data():
-    strong = {
-        "rev_rr": 35, "accel": 10, "eps_rev": 20, "dopm": 3,
-        "surp": 5, "surp_prev": 4, "beat2": True,
+def test_growth_score_uses_seven_weighted_signals_and_normalizes_coverage():
+    row = {
+        "rev_rr": 50, "accel": 10, "eps_rev": 20, "dopm": 6, "surp": 30, "rev_surp": 30,
+        "eps_q": [["2025-01-31", 2.0], ["2026-01-31", 4.0]],
+        "qs": [{"rev_rr": 10}, {"rev_rr": 20}, {"rev_rr": 30}, {"rev_rr": 40}],
     }
-    scored = calc.growth_score(strong)
-    assert scored["score"] == 100.0
-    assert scored["coverage"] == 100.0
-    assert scored["components"] == {
-        "revenue": 35.0, "acceleration": 25.0, "eps_revision": 20.0,
-        "op_margin": 10.0, "eps_beats": 10.0,
-    }
+    result = calc.growth_score(row)
+    assert sum(calc.GROWTH_SCORE_WEIGHTS.values()) == 100.0
+    assert result["score"] == 100.0
+    assert result["coverage"] == 100.0
+    assert result["points"] == 100.0
+    assert result["details"]["eps_growth"]["value"] == pytest.approx(100.0)
+    assert set(result["components"]) == set(calc.GROWTH_SCORE_GROUPS)
 
     weak = {
-        "rev_rr": 0, "accel": -10, "eps_rev": -10, "dopm": -3,
-        "surp": -5, "surp_prev": -4, "beat2": False,
+        "rev_rr": 0, "accel": -10, "eps_rev": -20, "dopm": -5, "surp": -20, "rev_surp": -20,
+        "eps_q": [["2025-01-31", 2.0], ["2026-01-31", 1.0]],
+        "qs": [{"rev_rr": -10}, {"rev_rr": -20}],
     }
     assert calc.growth_score(weak)["score"] == 0.0
 
-    # Brak analityków nie oznacza automatycznie zera: składniki fundamentalne ważą 70 pkt.
-    without_estimates = calc.growth_score({"rev_rr": 25, "accel": 5, "dopm": 2})
-    assert without_estimates["coverage"] == 70.0
-    assert without_estimates["score"] is not None and without_estimates["score"] > 0
 
-    # Za mało danych, by stworzyć porównywalny ranking.
+def test_growth_score_skips_missing_data_and_requires_70_points_of_coverage():
+    partial = calc.growth_score({"rev_rr": 25, "accel": 5, "eps_rev": 10, "dopm": 3})
+    assert partial["coverage"] == 70.0
+    assert partial["score"] is not None
+    assert partial["details"]["eps_surprise"]["points"] is None
+    assert partial["details"]["revenue_surprise"]["points"] is None
+
     insufficient = calc.growth_score({"rev_rr": 25, "accel": 5})
-    assert insufficient["coverage"] == 60.0
+    assert insufficient["coverage"] == 45.0
     assert insufficient["score"] is None
 
 
-def test_growth_score_does_not_treat_missing_second_eps_surprise_as_a_failure():
-    row = {"rev_rr": 20, "accel": 4, "dopm": 2, "eps_rev": 10, "beat2": False, "surp": 5}
-    result = calc.growth_score(row)
-    assert result["coverage"] == 90.0
-    assert result["components"]["eps_beats"] is None
+def test_growth_score_scores_surprises_and_quarterly_growth_durability():
+    result = calc.growth_score({
+        "surp": 5,
+        "rev_surp": 5,
+        "qs": [{"rev_rr": 20}, {"rev_rr": 10}, {"rev_rr": -5}, {"rev_rr": 0}],
+    })
+    assert result["details"]["eps_surprise"]["points"] == pytest.approx(3.0)
+    assert result["details"]["revenue_surprise"]["points"] == pytest.approx(3.0)
+    assert result["details"]["durability"]["value"] == pytest.approx(50.0)
+    assert result["details"]["durability"]["points"] == pytest.approx(2.5)
+    assert result["details"]["durability"]["note"].startswith("2/4")
+    assert result["coverage"] == 15.0
+    assert result["score"] is None
+
+
+def test_build_row_exposes_latest_revenue_surprise_and_reported_eps_history():
+    est = {
+        "surp": [["2026-02-09", 6.0]],
+        "revenue_surp": [["2026-02-09", 4.5], ["2026-03-10", 7.0]],
+        "eps_q": [["2025-02-09", 1.0], ["2026-02-09", 2.0]],
+        "rev90": 12.0,
+        "upside": 20.0,
+    }
+    row = calc.build_row(
+        {"ticker": "DATA"},
+        W,
+        [50, 100, 90, 90, 90, 95],
+        {"rev_rr": 25, "accel": 5, "dopm": 2, "qs": [{"rev_rr": 10}, {"rev_rr": 15}]},
+        SPY,
+        est,
+    )
+    # W kończy się przed raportem 2026-03-10; przyszła niespodzianka nie może wejść do score.
+    assert row["rev_surp"] == pytest.approx(4.5)
+    assert row["eps_q"] == est["eps_q"]
+    assert calc.growth_score(row)["details"]["eps_growth"]["value"] == pytest.approx(100.0)
+
+

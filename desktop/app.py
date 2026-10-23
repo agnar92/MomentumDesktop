@@ -1172,8 +1172,8 @@ class GrowthScoreDialog(tk.Toplevel):
         self.descending = True
         self.show_components = False
         self.title("Growth Score — ranking wzrostu")
-        self.geometry("390x650")
-        self.minsize(330, 350)
+        self.geometry("470x720")
+        self.minsize(380, 420)
         self.configure(bg=PANEL)
         apply_dark(self)
         self.transient(app.root)
@@ -1210,7 +1210,7 @@ class GrowthScoreDialog(tk.Toplevel):
         self.detail_heading.pack(fill="x", padx=12, pady=(4, 2))
         self.detail_text = tk.Text(
             self.detail_frame, bg="#151a21", fg="#dde3ea", relief="flat", wrap="word",
-            font=("Segoe UI", 9), padx=10, pady=7, height=8, highlightthickness=0,
+            font=("Segoe UI", 9), padx=10, pady=7, height=12, highlightthickness=0,
             cursor="arrow", state="disabled"
         )
         self.detail_text.tag_configure("h", font=("Segoe UI", 10, "bold"), foreground="#ffffff")
@@ -1220,11 +1220,12 @@ class GrowthScoreDialog(tk.Toplevel):
 
         self.weights_label = tk.Label(
             self,
-            text=("Wagi: przychody r/r 35, przyspieszenie 25, rewizja EPS 90d 20, "
-                  "zmiana marży oper. 10, dwa pozytywne zaskoczenia EPS 10. "
-                  "Brakujące dane pomijamy i normalizujemy wynik do dostępnych wag; "
-                  "pokazujemy score przy pokryciu co najmniej 70/100."),
-            bg=PANEL, fg="#8b95a3", justify="left", wraplength=365, anchor="w"
+            text=("Wagi: przychody r/r 25, przyspieszenie przychodów 20, EPS r/r 15, rewizje EPS 90 dni 15, "
+                  "zmiana marży operacyjnej 10, EPS surprise 5, revenue surprise 5, trwałość wzrostu 5. "
+                  "ROA/ROI pozostają w filtrze wstępnym Finviz, nie punktujemy ich ponownie. "
+                  "Braki pomijamy; wynik pokazujemy od pokrycia 70/100. Trwałość mierzy udział z maksymalnie "
+                  "4 ostatnich kwartałów z dodatnim wzrostem przychodów r/r."),
+            bg=PANEL, fg="#8b95a3", justify="left", wraplength=445, anchor="w"
         )
         self.weights_label.pack(fill="x", padx=12, pady=(8, 4))
         buttons = tk.Frame(self, bg=PANEL)
@@ -1269,6 +1270,7 @@ class GrowthScoreDialog(tk.Toplevel):
                 return (1, 0.0, ticker)
             return (0, -score if self.descending else score, ticker)
         rows.sort(key=key)
+        rows = rows[:10]
         for ticker, score, coverage in rows:
             shown = f"{score:.1f}" if score is not None else "—"
             tags = ("high",) if score is not None and score >= 75 else ()
@@ -1311,28 +1313,26 @@ class GrowthScoreDialog(tk.Toplevel):
             score = "brak (za małe pokrycie)" if result["score"] is None else f"{result['score']:.1f}/100".replace(".", ",")
             content = (
                 f"{ticker} · Growth Score: {score}\n"
-                f"Pokrycie danych: {result['coverage']:.0f}/100 pkt wag; wynik = suma punktów ÷ dostępne wagi × 100\n"
+                f"Pokrycie danych: {result['coverage']:.0f}/100 pkt wag; wynik = zdobyte punkty ÷ dostępne wagi × 100\n"
+                "Brakujące dane są pomijane, nie traktowane jako zero. Wynik liczbowy pokazujemy przy pokryciu ≥70/100.\n\n"
             )
-            components = result["components"]
-            specs = (
-                ("revenue", "Przychody r/r", row.get("rev_rr"), "%", 35),
-                ("acceleration", "Przyspieszenie przychodów", row.get("accel"), " pp", 25),
-                ("eps_revision", "Rewizja EPS 90 dni", row.get("eps_rev"), "%", 20),
-                ("op_margin", "Zmiana marży operacyjnej", row.get("dopm"), " pp", 10),
-            )
-            content += "\n"
-            for key, label, value, suffix, weight in specs:
-                content += f"{label}: {self._fmt_value(value, suffix)} → {self._fmt_points(components.get(key), weight)}\n"
-            points = components.get("eps_beats")
-            if points is None:
-                beats = "brak pełnych danych · pominięte"
-            else:
-                beats = f"{'TAK' if row.get('beat2') else 'NIE'} → {self._fmt_points(points, 10)}"
+            for group_key, (group_label, metric_keys) in calc.GROWTH_SCORE_GROUPS.items():
+                category = result["categories"][group_key]
+                category_points = "brak danych" if category["points"] is None else f"{category['points']:.1f}".replace(".", ",")
+                content += (
+                    f"{group_label}: {category_points}/{category['coverage']:.0f} dostępnych / "
+                    f"{category['weight']:.0f} pkt\n"
+                )
+                for key in metric_keys:
+                    detail = result["details"][key]
+                    value = self._fmt_value(detail["value"], detail["unit"])
+                    shown_points = self._fmt_points(detail["points"], detail["weight"])
+                    note = f" ({detail['note']})" if detail.get("note") else ""
+                    content += f"  {detail['label']}: {value} → {shown_points}{note}\n"
+            total_points = f"{result['points']:.1f}".replace(".", ",")
             content += (
-                f"EPS surprise (najnowszy / poprzedni): "
-                f"{self._fmt_value(row.get('surp'), '%')} / {self._fmt_value(row.get('surp_prev'), '%')}\n"
-                f"Dwa pozytywne zaskoczenia EPS: {beats}\n"
-                f"Suma punktów: {result['points']:.1f}/{result['coverage']:.0f} dostępnych wag".replace(".", ",")
+                "\nFiltr wstępny obejmuje m.in. ROA/ROI, marże i wzrosty z Finviz.\n"
+                f"Suma punktów: {total_points}/{result['coverage']:.0f} dostępnych wag"
             )
         self.detail_text.configure(state="normal")
         self.detail_text.delete("1.0", "end")

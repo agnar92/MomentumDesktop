@@ -256,13 +256,21 @@ def slowdown(row):
     return "HAMUJE+MB" if _ok(g) and g < 0 else "HAMUJE"
 
 
-# Growth Score = dynamika wzrostu i poprawa perspektyw; oddzielny ranking od warunków GLB.
+# Growth Score: siedem sygnałów wzrostu, niezależnych od wstępnego filtra Finviz.
 GROWTH_SCORE_MIN_COVERAGE = 70.0
-GROWTH_SCORE_WEIGHTS = {"revenue": 35.0, "acceleration": 25.0, "eps_revision": 20.0, "op_margin": 10.0, "eps_beats": 10.0}
+GROWTH_SCORE_WEIGHTS = {"revenue_growth": 25.0, "revenue_acceleration": 20.0, "eps_growth": 15.0,
+    "eps_revision": 15.0, "op_margin_change": 10.0, "eps_surprise": 5.0, "revenue_surprise": 5.0, "durability": 5.0}
+GROWTH_SCORE_GROUPS = {
+    "growth": ("Wzrost i przyspieszenie", ("revenue_growth", "revenue_acceleration", "eps_growth")),
+    "revision": ("Rewizje prognoz EPS", ("eps_revision",)),
+    "margin": ("Zmiana marży operacyjnej", ("op_margin_change",)),
+    "surprises": ("Niespodzianki wynikowe", ("eps_surprise", "revenue_surprise")),
+    "durability": ("Trwałość wzrostu", ("durability",)),
+}
 
 
 def _growth_component_points(value, knots):
-    """Liniowo interpoluje punkty między progami (x, punkty); ogranicza wynik do krańców skali."""
+    """Interpoluje punkty między progami; skrajne wartości są ograniczone do końców skali."""
     if not _ok(value):
         return None
     value = float(value)
@@ -274,35 +282,97 @@ def _growth_component_points(value, knots):
     return float(knots[-1][1])
 
 
-def growth_score(row, min_coverage=GROWTH_SCORE_MIN_COVERAGE):
-    """Zwraca Growth Score 0–100, pokrycie wag i składniki.
-    Wagi: przychody r/r 35, przyspieszenie sprzedaży 25, rewizja EPS 90d 20,
-    zmiana marży operacyjnej 10, dwa pozytywne zaskoczenia EPS 10.
-    Brak danych jest pomijany, nie otrzymuje automatycznie zera. Wynik jest normalizowany
-    do dostępnych wag; poniżej min_coverage score=None. EPS beats są znane tylko wtedy,
-    gdy dostępne są oba ostatnie zaskoczenia EPS.
-    """
-    row = row or {}
-    points = {
-        "revenue": _growth_component_points(row.get("rev_rr"), ((0, 0), (5, 7), (10, 14), (15, 22), (25, 29), (35, 35))),
-        "acceleration": _growth_component_points(row.get("accel"), ((-10, 0), (-5, 6), (0, 12), (5, 19), (10, 25))),
-        "eps_revision": _growth_component_points(row.get("eps_rev"), ((-10, 0), (0, 8), (5, 14), (10, 18), (20, 20))),
-        "op_margin": _growth_component_points(row.get("dopm"), ((-3, 0), (0, 5), (3, 10))),
-        "eps_beats": None,
-    }
-    if isinstance(row.get("beat2"), bool) and row.get("surp") is not None and row.get("surp_prev") is not None:
-        points["eps_beats"] = GROWTH_SCORE_WEIGHTS["eps_beats"] if row["beat2"] else 0.0
+def _latest_surprise(history, known_through):
+    """Najnowsza procentowa niespodzianka z datą raportu nie późniejszą niż known_through."""
+    values = [item for item in (history or [])
+              if isinstance(item, (list, tuple)) and len(item) >= 2
+              and isinstance(item[0], str) and item[0] <= known_through and _ok(item[1])]
+    if not values:
+        return None
+    latest = max(values, key=lambda item: item[0])
+    try:
+        age = (dt.date.fromisoformat(known_through) - dt.date.fromisoformat(latest[0])).days
+    except ValueError:
+        return None
+    return latest[1] if 0 <= age <= SURPRISE_DAYS else None
 
-    coverage = sum(GROWTH_SCORE_WEIGHTS[k] for k, value in points.items() if value is not None)
-    earned = sum(value for value in points.values() if value is not None)
-    minimum = float(min_coverage)
-    score = (earned / coverage * 100.0) if coverage >= minimum and coverage > 0 else None
-    return {
-        "score": round(score, 1) if score is not None else None,
-        "coverage": round(coverage, 1),
-        "points": round(earned, 2),
-        "components": points,
+
+def growth_score(row, min_coverage=GROWTH_SCORE_MIN_COVERAGE):
+    """Growth Score 0–100. Brakujące dane są pomijane, nie dostają automatycznie zera."""
+    row = row or {}
+    revenue_growth = row.get("rev_rr")
+    eps_growth = None
+    eps_history = row.get("eps_q") or []
+    try:
+        if eps_history:
+            latest_day = dt.date.fromisoformat(eps_history[-1][0])
+            latest_eps = eps_history[-1][1]
+            prior_eps = next(
+                (item[1] for item in reversed(eps_history[:-1])
+                 if 330 <= (latest_day - dt.date.fromisoformat(item[0])).days <= 400),
+                None,
+            )
+            if _ok(latest_eps) and _ok(prior_eps) and prior_eps > 0:
+                eps_growth = (latest_eps / prior_eps - 1) * 100
+    except (TypeError, ValueError, IndexError):
+        eps_growth = None
+
+    raw = {
+        "revenue_growth": revenue_growth,
+        "revenue_acceleration": row.get("accel"),
+        "eps_growth": eps_growth,
+        "eps_revision": row.get("eps_rev"),
+        "op_margin_change": row.get("dopm"),
+        "eps_surprise": row.get("surp"),
+        "revenue_surprise": row.get("rev_surp"),
     }
+    points = {
+        "revenue_growth": _growth_component_points(raw["revenue_growth"], ((0, 0), (5, 5), (10, 10), (20, 18), (35, 23), (50, 25))),
+        "revenue_acceleration": _growth_component_points(raw["revenue_acceleration"], ((-10, 0), (0, 6), (5, 14), (10, 20))),
+        "eps_growth": _growth_component_points(raw["eps_growth"], ((-10, 0), (0, 2), (10, 6), (25, 12), (50, 15))),
+        "eps_revision": _growth_component_points(raw["eps_revision"], ((-20, 0), (-5, 3), (0, 6), (10, 12), (20, 15))),
+        "op_margin_change": _growth_component_points(raw["op_margin_change"], ((-5, 0), (0, 3), (3, 7), (6, 10))),
+        "eps_surprise": _growth_component_points(raw["eps_surprise"], ((-20, 0), (0, 0), (5, 3), (15, 4.5), (30, 5))),
+        "revenue_surprise": _growth_component_points(raw["revenue_surprise"], ((-20, 0), (0, 0), (5, 3), (15, 4.5), (30, 5))),
+    }
+    quarters = [item["rev_rr"] for item in (row.get("qs") or [])
+                if isinstance(item, dict) and _ok(item.get("rev_rr"))][-4:]
+    durability, durability_note = None, "Potrzeba co najmniej dwóch kwartałów historii."
+    if len(quarters) >= 2:
+        positive = sum(value > 0 for value in quarters)
+        durability = positive / len(quarters) * 100
+        points["durability"] = GROWTH_SCORE_WEIGHTS["durability"] * durability / 100
+        durability_note = f"{positive}/{len(quarters)} dostępnych kwartałów miało dodatni wzrost przychodów r/r."
+    else:
+        points["durability"] = None
+
+    labels = {
+        "revenue_growth": ("Przychody r/r", "%"), "revenue_acceleration": ("Przyspieszenie przychodów", " pp"),
+        "eps_growth": ("EPS r/r", "%"), "eps_revision": ("Rewizja EPS 90 dni", "%"),
+        "op_margin_change": ("Zmiana marży operacyjnej", " pp"),
+        "eps_surprise": ("EPS surprise — ostatni raport", "%"),
+        "revenue_surprise": ("Revenue surprise — ostatni raport", "%"),
+        "durability": ("Kwartały z dodatnim wzrostem przychodów r/r", "%"),
+    }
+    details = {key: {"label": labels[key][0], "unit": labels[key][1],
+                     "value": durability if key == "durability" else raw.get(key),
+                     "points": points.get(key), "weight": weight,
+                     "note": durability_note if key == "durability" else None}
+               for key, weight in GROWTH_SCORE_WEIGHTS.items()}
+    categories, components, component_coverage = {}, {}, {}
+    for group, (label, members) in GROWTH_SCORE_GROUPS.items():
+        available = [key for key in members if points.get(key) is not None]
+        earned = sum(points[key] for key in available) if available else None
+        covered, weight = sum(GROWTH_SCORE_WEIGHTS[key] for key in available), sum(GROWTH_SCORE_WEIGHTS[key] for key in members)
+        categories[group] = {"label": label, "points": round(earned, 2) if earned is not None else None,
+                             "coverage": float(covered), "weight": float(weight)}
+        components[group], component_coverage[group] = categories[group]["points"], float(covered)
+    coverage = sum(GROWTH_SCORE_WEIGHTS[key] for key, value in points.items() if value is not None)
+    earned = sum(value for value in points.values() if value is not None)
+    score = earned / coverage * 100 if coverage >= float(min_coverage) and coverage else None
+    return {"score": round(score, 1) if score is not None else None, "coverage": round(coverage, 1),
+            "points": round(earned, 2), "components": components, "component_coverage": component_coverage,
+            "categories": categories, "details": details}
 
 
 def build_row(base, weekly, months, fund, spy=None, est=None, conditions=None):
@@ -329,7 +399,10 @@ def build_row(base, weekly, months, fund, spy=None, est=None, conditions=None):
     row["rs"] = rel_strength(weekly, spy)
     as_of = (weekly.get("d") or [""])[-1]
     # tydzień z danych zaczyna się w poniedziałek: raport z tego tygodnia (do piątku) też jest znany
-    row["surp"], row["surp_prev"], row["beat2"] = surprises(est, (dt.date.fromisoformat(as_of) + dt.timedelta(days=6)).isoformat()) if as_of else (None, None, None)
+    known_through = (dt.date.fromisoformat(as_of) + dt.timedelta(days=6)).isoformat() if as_of else ""
+    row["surp"], row["surp_prev"], row["beat2"] = surprises(est, known_through) if known_through else (None, None, None)
+    row["rev_surp"] = _latest_surprise((est or {}).get("revenue_surp"), known_through) if known_through else None
+    row["eps_q"] = (est or {}).get("eps_q") or []
     row["eps_rev"] = (est or {}).get("rev90")
     row["upside"] = (est or {}).get("upside")
     row["ok"] = passes(row, conditions)

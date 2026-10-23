@@ -17,11 +17,17 @@ COLUMN_IDS = {
     "company": "company", "sector": "sector", "industry": "industry", "marketCap": "market_cap",
     "pe": "pe", "forwardPE": "forward_pe", "forwardPe": "forward_pe", "fwdPE": "forward_pe",
     "peg": "peg", "dividend": "dividend_yield", "dividendYield": "dividend_yield",
+    "roe": "roe", "sharesOutstanding": "shares_outstanding", "outstanding": "shares_outstanding",
+    "float": "shares_float", "instOwn": "institutional_ownership", "instTrans": "institutional_transactions",
+    "shortFloat": "short_float", "shortRatio": "short_ratio",
 }
 HEADERS_OLD = {
     "Company": "company", "Sector": "sector", "Industry": "industry", "Market Cap": "market_cap",
     "P/E": "pe", "Forward P/E": "forward_pe", "Fwd P/E": "forward_pe", "PEG": "peg",
     "Dividend": "dividend_yield", "Div": "dividend_yield", "Dividend Yield": "dividend_yield",
+    "ROE": "roe", "Outstanding": "shares_outstanding", "Shares Outstanding": "shares_outstanding",
+    "Float": "shares_float", "Inst Own": "institutional_ownership", "Inst Trans": "institutional_transactions",
+    "Short Float": "short_float", "Short Ratio": "short_ratio",
 }
 TEXT = {"company", "sector", "industry"}
 _SUFFIX = {"K": 1e3, "M": 1e6, "B": 1e9, "T": 1e12}
@@ -35,6 +41,11 @@ _COLUMN_ALIASES = {
     "peg": "peg", "pegratio": "peg", "priceearningsgrowth": "peg",
     "dividend": "dividend_yield", "div": "dividend_yield",
     "dividendyield": "dividend_yield", "dividendyieldttm": "dividend_yield",
+    "roe": "roe", "sharesoutstanding": "shares_outstanding", "outstanding": "shares_outstanding",
+    "sharesfloat": "shares_float", "float": "shares_float",
+    "instown": "institutional_ownership", "institutionalownership": "institutional_ownership",
+    "insttrans": "institutional_transactions", "institutionaltransactions": "institutional_transactions",
+    "shortfloat": "short_float", "shortratio": "short_ratio",
 }
 
 
@@ -122,12 +133,11 @@ def fetch(filters, max_tickers=MAX_TICKERS, pause=0.7, log=print, get=None, prog
         if not new:
             break
 
-        # PEG i Forward P/E pochodzą z Valuation (v=121), a Dividend Yield z Financial (v=161).
-        # Pytamy konkretnie o tickery bieżącej strony, zamiast zakładać identyczną kolejność
-        # sortowania i paginacji w trzech widokach Finviz.
+        # PEG/Forward P/E z Valuation (v=121), ROE/Dividend z Financial (v=161),
+        # a ownership/float z Ownership (v=131). Zawsze dopasowujemy po tickerze.
         page_metrics = {}
         page_tickers = [x["ticker"] for x in new]
-        for view in ("121", "161"):
+        for view in ("121", "161", "131"):
             if view in failed_views:
                 continue
             view_rows_by_ticker = {}
@@ -150,14 +160,19 @@ def fetch(filters, max_tickers=MAX_TICKERS, pause=0.7, log=print, get=None, prog
 
                 matched = sum(ticker in view_rows_by_ticker for ticker in page_tickers)
                 if matched == 0:
-                    log(f"⚠ Finviz widok {view}: nie udało się dopasować danych dla {len(page_tickers)} tickerów; PEG/PEGY mogą być puste.")
+                    log(f"⚠ Finviz widok {view}: nie udało się dopasować danych dla {len(page_tickers)} tickerów; metryki tego widoku pozostaną puste.")
                 page_metrics[view] = view_rows_by_ticker
             except Exception as exc:  # brak wskaźników nie może przerwać całego skanu
                 failed_views.add(view)
                 log(f"Finviz widok {view} niedostępny — odpowiednie kolumny pozostaną puste ({exc})")
                 page_metrics[view] = {}
         for x in new:
-            for view, keys in (("121", ("forward_pe", "peg")), ("161", ("dividend_yield",))):
+            for view, keys in (
+                ("121", ("forward_pe", "peg")),
+                ("161", ("dividend_yield", "roe")),
+                ("131", ("shares_outstanding", "shares_float", "institutional_ownership",
+                         "institutional_transactions", "short_float", "short_ratio")),
+            ):
                 metrics = page_metrics.get(view, {}).get(x["ticker"], {})
                 for key in keys:
                     if key in metrics:

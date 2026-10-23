@@ -1371,7 +1371,10 @@ class GrowthScoreDialog(tk.Toplevel):
         self.scores = {}
         source_rows = self.app.store.rows
         if self.mode_var.get() == self.MODE_CANSLIM:
-            self.scores = calc.canslim_glb_scores(source_rows)
+            self.scores = calc.canslim_glb_scores(
+                source_rows,
+                market_series=self.app.store.weekly("SPY"),
+            )
         for row in source_rows:
             ticker = row.get("ticker")
             if not ticker:
@@ -1393,7 +1396,7 @@ class GrowthScoreDialog(tk.Toplevel):
             )
             self.tree.insert("", "end", iid=ticker, values=(ticker, shown, f"{coverage:.0f}/100"), tags=tags)
         scored = sum(1 for _ticker, score, _coverage in rows if score is not None)
-        hint = ("CAN SLIM–GLB · RS jako percentyl w tej liście; wolumen punktowany tylko przy sygnale GLB"
+        hint = ("CAN SLIM–GLB · 6 liter C/A/S/L/I/M, każda z równą wagą"
                 if self.mode_var.get() == self.MODE_CANSLIM else "Growth Score · wzrost i niespodzianki wynikowe")
         self.count_label.config(
             text=f"{len(rows)} spółek · {scored} z wynikiem (pokrycie ≥70/100) · {hint}"
@@ -1560,9 +1563,10 @@ class GrowthScoreDialog(tk.Toplevel):
                     ).pack(fill="x", pady=(0, 2))
 
         footer_text = (
-            "Model eksperymentalny. C = raportowany kwartalny EPS r/r; A = wzrost EPS TTM i powtarzalność dodatniego EPS; "
-            "L = percentyl RS w aktualnej liście; S = bieżący RVol dzienny tylko przy aktywnym sygnale GLB. "
-            "RVol nie jest historycznym wolumenem świecy wybicia — nie używać tego wyniku jako zweryfikowanej strategii bez backtestu."
+            "Model eksperymentalny wg TraderLion: C = kwartalny EPS/sprzedaż; A = EPS roczny przez 3 lata, sprzedaż i ROE; "
+            "S = RVol na rzeczywistym dziennym przejściu ponad Green Line, rozwodnienie i float; "
+            "L = percentyl RS/branży w aktywnym skanerze; I = Inst Own/Trans Finviz (bez oceny jakości funduszy); "
+            "M = trend SPY SMA10/40 tygodni, nie oficjalny IBD Follow-Through Day. Sześć liter ma równą wagę; GLB odpowiada za wybicie Green Line."
             if self.mode_var.get() == self.MODE_CANSLIM else
             "ROA/ROI, marże i część filtrów jakościowych pochodzą z filtrów wstępnych Finviz — nie są punktowane ponownie."
         )

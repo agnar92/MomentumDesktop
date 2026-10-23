@@ -376,26 +376,45 @@ def growth_score(row, min_coverage=GROWTH_SCORE_MIN_COVERAGE):
 
 
 
-# Experimental CAN SLIM–GLB ranking. These are starting weights for comparison/backtesting,
-# not validated optimal parameters. The current scanner provides a point-in-time-incomplete
-# daily relative-volume value, so it is used only as a live setup confirmation.
+# CAN SLIM–GLB proxy model. N is intentionally omitted: the Green Line breakout is handled by GLB.
+# The remaining six letters share the 100-point score equally; component proportions remain relative within each letter.
 CANSLIM_GLB_MIN_COVERAGE = 70.0
-CANSLIM_GLB_WEIGHTS = {
-    "rs_percentile": 30.0,
-    "eps_q_growth": 25.0,
-    "eps_ttm_growth": 15.0,
-    "positive_eps_quarters": 5.0,
-    "volume_rvol": 10.0,
-    "eps_surprise_latest": 5.0,
-    "eps_surprise_previous": 5.0,
-    "revenue_surprise": 5.0,
+CANSLIM_GLB_BASE_WEIGHTS = {
+    # C — Current quarterly earnings (25 base points)
+    "eps_q_growth": 12.0, "sales_q_growth": 5.0, "eps_acceleration": 3.0,
+    "margin_expansion": 2.0, "eps_surprise": 2.0, "revenue_surprise": 1.0,
+    # A — Annual earnings (20 base points)
+    "annual_eps_cagr": 15.0, "annual_eps_consistency": 3.0, "annual_sales_growth": 1.0, "roe": 1.0,
+    # S — Supply and demand (15 base points)
+    "breakout_rvol": 10.0, "dilution": 3.0, "float_scarcity": 2.0,
+    # L — Leader or laggard (15 base points)
+    "rs_percentile": 12.0, "industry_strength": 3.0,
+    # I — Institutional sponsorship (10 base points)
+    "institutional_ownership": 5.0, "institutional_transactions": 5.0,
+    # M — Market direction (5 base points)
+    "market_direction": 5.0,
 }
 CANSLIM_GLB_GROUPS = {
-    "leadership": ("L — Siła względna", ("rs_percentile",)),
-    "current_earnings": ("C — Kwartalny wzrost EPS", ("eps_q_growth",)),
-    "annual_earnings": ("A — Roczne zyski i trwałość", ("eps_ttm_growth", "positive_eps_quarters")),
-    "demand": ("S — Popyt przy sygnale GLB", ("volume_rvol",)),
-    "confirmation": ("Potwierdzenie wynikami", ("eps_surprise_latest", "eps_surprise_previous", "revenue_surprise")),
+    "current_earnings": ("C — Current quarterly earnings", (
+        "eps_q_growth", "sales_q_growth", "eps_acceleration", "margin_expansion", "eps_surprise", "revenue_surprise",
+    )),
+    "annual_earnings": ("A — Annual earnings growth", (
+        "annual_eps_cagr", "annual_eps_consistency", "annual_sales_growth", "roe",
+    )),
+    "supply_demand": ("S — Supply and demand", ("breakout_rvol", "dilution", "float_scarcity")),
+    "leadership": ("L — Leader / laggard", ("rs_percentile", "industry_strength")),
+    "institutional": ("I — Institutional sponsorship", ("institutional_ownership", "institutional_transactions")),
+    "market": ("M — Market direction", ("market_direction",)),
+}
+CANSLIM_GLB_GROUP_WEIGHT = 100.0 / len(CANSLIM_GLB_GROUPS)
+CANSLIM_GLB_WEIGHTS = {}
+for _group_label, _group_members in CANSLIM_GLB_GROUPS.values():
+    _base_group_weight = sum(CANSLIM_GLB_BASE_WEIGHTS[key] for key in _group_members)
+    for _key in _group_members:
+        CANSLIM_GLB_WEIGHTS[_key] = CANSLIM_GLB_BASE_WEIGHTS[_key] * CANSLIM_GLB_GROUP_WEIGHT / _base_group_weight
+CANSLIM_GLB_POINT_SCALES = {
+    key: CANSLIM_GLB_WEIGHTS[key] / CANSLIM_GLB_BASE_WEIGHTS[key]
+    for key in CANSLIM_GLB_BASE_WEIGHTS
 }
 
 
@@ -413,42 +432,166 @@ def _eps_observations(row):
     return sorted(out, key=lambda item: item[0])
 
 
-def _eps_quarter_yoy(history):
-    if not history:
+def _eps_growth_at(history, index):
+    """Quarterly EPS YoY from the nearest reported quarter 330–400 days earlier."""
+    if not history or index < 0 or index >= len(history):
         return None
-    latest_day, latest_eps = history[-1]
-    prior = next((value for day, value in reversed(history[:-1])
-                  if 330 <= (latest_day - day).days <= 400), None)
+    day, value = history[index]
+    prior = next((previous for old_day, previous in reversed(history[:index])
+                  if 330 <= (day - old_day).days <= 400), None)
     if prior is None or prior <= 0:
         return None
-    return (latest_eps / prior - 1) * 100
+    return (value / prior - 1) * 100
 
 
-def _eps_ttm_yoy(history):
-    if len(history) < 8:
+def _eps_quarter_yoy(history):
+    return _eps_growth_at(history, len(history) - 1)
+
+
+def _eps_acceleration(history):
+    if len(history) < 2:
         return None
-    current = sum(value for _, value in history[-4:])
-    previous = sum(value for _, value in history[-8:-4])
-    if previous <= 0:
+    latest = _eps_growth_at(history, len(history) - 1)
+    previous = _eps_growth_at(history, len(history) - 2)
+    return latest - previous if latest is not None and previous is not None else None
+
+
+def _annual_eps_stats(history):
+    """Approximate yearly EPS from four reported quarters; requires 16 reasonably spaced reports."""
+    if len(history) < 16:
+        return None, None, None
+    recent = history[-16:]
+    gaps = [(recent[i][0] - recent[i - 1][0]).days for i in range(1, len(recent))]
+    if any(gap < 45 or gap > 150 for gap in gaps):
+        return None, None, None
+    annuals = [
+        sum(value for _, value in recent[-4:]),
+        sum(value for _, value in recent[-8:-4]),
+        sum(value for _, value in recent[-12:-8]),
+        sum(value for _, value in recent[-16:-12]),
+    ]
+    if any(value <= 0 for value in annuals):
+        return None, None, None
+    cagr = ((annuals[0] / annuals[3]) ** (1 / 3) - 1) * 100
+    yearly_growth = [(annuals[i] / annuals[i + 1] - 1) * 100 for i in range(3)]
+    return cagr, sum(value >= 25 for value in yearly_growth), yearly_growth
+
+
+def _annual_sales_growth(row):
+    quarters = [q for q in (row or {}).get("qs") or [] if isinstance(q, dict) and _ok(q.get("rev"))]
+    if len(quarters) < 8:
         return None
-    return (current / previous - 1) * 100
+    current = sum(q["rev"] for q in quarters[-4:])
+    previous = sum(q["rev"] for q in quarters[-8:-4])
+    return (current / previous - 1) * 100 if previous > 0 else None
+
+
+def _rank_percentiles(values):
+    ordered = sorted((float(value), key) for key, value in values.items() if _ok(value))
+    result, n, index = {}, len(ordered), 0
+    while index < n:
+        end = index + 1
+        while end < n and ordered[end][0] == ordered[index][0]:
+            end += 1
+        percentile = 50.0 if n == 1 else ((index + end - 1) / 2) / (n - 1) * 100
+        for _, key in ordered[index:end]:
+            result[key] = percentile
+        index = end
+    return result
+
+
+def _industry_percentiles(rows):
+    """Industry strength proxy ranked only among industries/sectors represented by this scanner."""
+    groups = {}
+    for row in rows:
+        group = (row.get("industry") or row.get("sector") or "").strip()
+        if group and _ok(row.get("rs")):
+            groups.setdefault(group, []).append(float(row["rs"]))
+    medians = {}
+    for group, values in groups.items():
+        ordered = sorted(values)
+        middle = len(ordered) // 2
+        medians[group] = ordered[middle] if len(ordered) % 2 else (ordered[middle - 1] + ordered[middle]) / 2
+    ranked = _rank_percentiles(medians)
+    return {
+        row["ticker"]: ranked.get((row.get("industry") or row.get("sector") or "").strip())
+        for row in rows if row.get("ticker")
+    }
+
+
+def breakout_rel_volume(daily, level, max_age=10, lookback=50):
+    """RVol on a recent daily close-cross above Green Line, compared with the prior 50 sessions."""
+    closes = (daily or {}).get("c") or []
+    volumes = (daily or {}).get("v") or []
+    if not _ok(level) or level <= 0 or len(closes) != len(volumes) or len(closes) < lookback + 2:
+        return None
+    first = max(1, len(closes) - max(1, int(max_age)))
+    for index in range(len(closes) - 1, first - 1, -1):
+        if not (_ok(closes[index - 1]) and _ok(closes[index]) and _ok(volumes[index])):
+            continue
+        if closes[index - 1] < level <= closes[index]:
+            prior = [value for value in volumes[index - lookback:index] if _ok(value)]
+            if len(prior) < lookback * 0.8:
+                return None
+            average = sum(prior) / len(prior)
+            return volumes[index] / average if average > 0 else None
+    return None
+
+
+def _market_direction(market_series, as_of):
+    """Closed-week SPY trend proxy; it does not identify an official IBD Follow-Through Day."""
+    dates = (market_series or {}).get("d") or []
+    closes = (market_series or {}).get("c") or []
+    if len(dates) != len(closes):
+        return None, None, "Brak zgodnej historii tygodniowej indeksu."
+    try:
+        as_of_day = dt.date.fromisoformat(as_of)
+    except (TypeError, ValueError):
+        as_of_day = dt.date.today()
+    known = []
+    for date_text, close in zip(dates, closes):
+        if not _ok(close):
+            continue
+        try:
+            day = dt.date.fromisoformat(str(date_text)[:10])
+        except ValueError:
+            continue
+        # Weekly bars are timestamped Monday; include only weeks that ended by as_of.
+        if day + dt.timedelta(days=6) <= as_of_day:
+            known.append((day, float(close)))
+    if len(known) < 40:
+        return None, None, "Potrzeba co najmniej 40 zamkniętych tygodni SPY."
+    values = [value for _, value in known]
+    close, sma10, sma40 = values[-1], sum(values[-10:]) / 10, sum(values[-40:]) / 40
+    if close > sma10 > sma40:
+        return 5.0, "WZROSTOWY", f"SPY powyżej SMA10 i SMA40 tygodniowej (close {close:.2f}, SMA10 {sma10:.2f}, SMA40 {sma40:.2f}); to proxy, nie oficjalny FTD."
+    if close > sma40 and sma10 > sma40:
+        return 3.5, "MIESZANY", f"SPY nad SMA40, ale nie pełny trend wzrostowy (SMA10 {sma10:.2f}, SMA40 {sma40:.2f})."
+    if close > sma40:
+        return 2.0, "MIESZANY", f"SPY nad SMA40, lecz SMA10 nie przewyższa SMA40 (SMA10 {sma10:.2f}, SMA40 {sma40:.2f})."
+    return 0.0, "SPADKOWY", f"SPY pod SMA40 tygodniową ({close:.2f} vs SMA40 {sma40:.2f}); klasyczny CAN SLIM ogranicza nowe zakupy w słabym rynku."
 
 
 def _score_result(raw, points, notes, weights, groups, min_coverage):
+    """Aggregate available component points and return category-level coverage/details."""
     details = {
         key: {
-            "label": raw[key]["label"], "unit": raw[key]["unit"], "value": raw[key]["value"],
-            "points": points.get(key), "weight": weights[key], "note": notes.get(key),
+            "label": raw[key]["label"],
+            "unit": raw[key]["unit"],
+            "value": raw[key]["value"],
+            "points": points.get(key),
+            "weight": weights[key],
+            "note": notes.get(key),
         }
         for key in weights
     }
     categories = {}
-    for group, (label, members) in groups.items():
+    for group_key, (label, members) in groups.items():
         available = [key for key in members if points.get(key) is not None]
         earned = sum(points[key] for key in available) if available else None
         covered = sum(weights[key] for key in available)
         category_weight = sum(weights[key] for key in members)
-        categories[group] = {
+        categories[group_key] = {
             "label": label,
             "points": round(earned, 2) if earned is not None else None,
             "coverage": float(covered),
@@ -467,113 +610,124 @@ def _score_result(raw, points, notes, weights, groups, min_coverage):
     }
 
 
-def canslim_glb_scores(rows, min_coverage=CANSLIM_GLB_MIN_COVERAGE):
-    """Return experimental CAN SLIM–GLB score results keyed by ticker for the current scanner list.
+def canslim_glb_scores(rows, market_series=None,
+                       min_coverage=CANSLIM_GLB_MIN_COVERAGE, as_of=None):
+    """CAN SLIM–GLB proxy score for six letters with equal letter weights.
 
-    L uses the percentile rank of the existing 52-week excess relative strength in this scanner's
-    universe. C uses reported quarterly EPS YoY growth. A uses trailing-four-quarter EPS growth
-    and the share of the last four reported EPS values that were positive. S only scores daily
-    relative volume when a GLB entry state is active. Missing inputs are omitted from coverage.
+    N is omitted because the Green Line breakout is evaluated by GLB itself.
+    C/A use reported quarterly and annual fundamentals; S uses RVol at a genuine recent GLB cross,
+    dilution and float; L/I use Finviz/scanner proxies; M uses closed-week SPY trend and explicitly
+    is not an official IBD Follow-Through Day calculation.
     """
     rows = [row for row in (rows or []) if row.get("ticker")]
-    valid_rs = sorted((float(row["rs"]), row["ticker"]) for row in rows if _ok(row.get("rs")))
-    percentiles = {}
-    n_rs = len(valid_rs)
-    pos = 0
-    while pos < n_rs:
-        end = pos + 1
-        while end < n_rs and valid_rs[end][0] == valid_rs[pos][0]:
-            end += 1
-        # Average rank percentile: ties stay tied; a one-symbol universe is neutral at 50.
-        pct = 50.0 if n_rs == 1 else ((pos + end - 1) / 2) / (n_rs - 1) * 100
-        for _, ticker in valid_rs[pos:end]:
-            percentiles[ticker] = pct
-        pos = end
+    as_of = as_of or dt.date.today().isoformat()
+    rs_percentiles = _rank_percentiles({row["ticker"]: row.get("rs") for row in rows})
+    industry_percentiles = _industry_percentiles(rows)
+    market_points, market_state, market_note = _market_direction(market_series, as_of)
 
     out = {}
     for row in rows:
         ticker = row["ticker"]
         history = _eps_observations(row)
         q_growth = _eps_quarter_yoy(history)
-        ttm_growth = _eps_ttm_yoy(history)
-        last_four = [value for _, value in history[-4:]]
-        positive_pct = (sum(value > 0 for value in last_four) / 4 * 100) if len(last_four) == 4 else None
-        rs_pct = percentiles.get(ticker)
+        q_acceleration = _eps_acceleration(history)
+        annual_cagr, years_25, _yearly_growth = _annual_eps_stats(history)
+        sales_growth = row.get("rev_rr")
+        annual_sales = _annual_sales_growth(row)
+        op_margin_change = row.get("dopm")
+        roe = row.get("roe")
+        eps_surprise, revenue_surprise = row.get("surp"), row.get("rev_surp")
         signal_active = row.get("glb_state") in ("WYBICIE", "SYGNAŁ", "BLUE DOT")
-        rvol = row.get("rvol_d")
+        breakout_rvol = row.get("glb_rvol") if signal_active else None
+        dilution = row.get("dil")
+        float_shares = row.get("shares_float")
+        rs_percentile = rs_percentiles.get(ticker)
+        industry_percentile = industry_percentiles.get(ticker)
+        institutional_ownership = row.get("institutional_ownership")
+        institutional_transactions = row.get("institutional_transactions")
 
-        raw_values = {
-            "rs_percentile": row.get("rs"),
-            "eps_q_growth": q_growth,
-            "eps_ttm_growth": ttm_growth,
-            "positive_eps_quarters": positive_pct,
-            "volume_rvol": rvol,
-            "eps_surprise_latest": row.get("surp"),
-            "eps_surprise_previous": row.get("surp_prev"),
-            "revenue_surprise": row.get("rev_surp"),
-        }
+        breakout_note = (
+            "RVol na dziennej świecy zamknięcia ponad bieżącą Green Line, jeśli przejście nastąpiło w ostatnich 10 sesjach; porównanie z 50 poprzednimi sesjami."
+            if _ok(breakout_rvol) else
+            "Brak przejścia dziennego close ponad bieżącą Green Line w ostatnich 10 sesjach lub brak 50 wcześniejszych sesji. Nie podstawiam dzisiejszego wolumenu jako wolumenu wybicia."
+        )
         raw = {
-            "rs_percentile": {"label": "RS vs SPY", "unit": " pp", "value": raw_values["rs_percentile"]},
             "eps_q_growth": {"label": "EPS kwartalny r/r", "unit": "%", "value": q_growth},
-            "eps_ttm_growth": {"label": "EPS TTM r/r", "unit": "%", "value": ttm_growth},
-            "positive_eps_quarters": {"label": "Raporty z dodatnim EPS (ostatnie 4)", "unit": "%", "value": positive_pct},
-            "volume_rvol": {"label": "Relatywny wolumen dzienny", "unit": "x", "value": rvol},
-            "eps_surprise_latest": {"label": "EPS surprise — najnowszy raport", "unit": "%", "value": row.get("surp")},
-            "eps_surprise_previous": {"label": "EPS surprise — poprzedni raport", "unit": "%", "value": row.get("surp_prev")},
-            "revenue_surprise": {"label": "Revenue surprise — najnowszy raport", "unit": "%", "value": row.get("rev_surp")},
+            "sales_q_growth": {"label": "Przychody kwartalne r/r", "unit": "%", "value": sales_growth},
+            "eps_acceleration": {"label": "Przyspieszenie wzrostu EPS r/r", "unit": " pp", "value": q_acceleration},
+            "margin_expansion": {"label": "Zmiana marży operacyjnej r/r", "unit": " pp", "value": op_margin_change},
+            "eps_surprise": {"label": "Niespodzianka EPS", "unit": "%", "value": eps_surprise},
+            "revenue_surprise": {"label": "Niespodzianka przychodów", "unit": "%", "value": revenue_surprise},
+            "annual_eps_cagr": {"label": "EPS TTM CAGR (3 lata)", "unit": "%", "value": annual_cagr},
+            "annual_eps_consistency": {"label": "Lata z wzrostem EPS ≥25%", "unit": " z 3 lat", "value": years_25},
+            "annual_sales_growth": {"label": "Przychody TTM r/r", "unit": "%", "value": annual_sales},
+            "roe": {"label": "ROE", "unit": "%", "value": roe},
+            "breakout_rvol": {"label": "RVol na świecy wybicia GLB", "unit": "x", "value": breakout_rvol, "note": breakout_note},
+            "dilution": {"label": "Zmiana rozwodnionej liczby akcji r/r", "unit": "%", "value": dilution},
+            "float_scarcity": {"label": "Free float", "unit": " akcji", "value": float_shares},
+            "rs_percentile": {"label": "RS percentyl aktywnego skanera", "unit": "/100", "value": rs_percentile},
+            "industry_strength": {"label": "Siła grupy branżowej", "unit": "/100", "value": industry_percentile},
+            "institutional_ownership": {"label": "Własność instytucji (Finviz)", "unit": "%", "value": institutional_ownership},
+            "institutional_transactions": {"label": "Zmiana własności instytucji (Finviz)", "unit": "%", "value": institutional_transactions},
+            "market_direction": {"label": "Kierunek rynku — SPY SMA10/40 tyg.", "unit": " pkt", "value": market_points},
         }
         notes = {
-            "rs_percentile": (f"Percentyl {rs_pct:.0f}/100 wśród {n_rs} spółek z dostępnym RS; punkty bazują na rankingu, nie bezpośrednio na pp."
-                              if rs_pct is not None else "Brak 52-tygodniowej siły względnej albo zbyt krótka historia."),
-            "eps_q_growth": "Z raportowanego EPS: ostatni kwartał wobec kwartału sprzed około roku; wymagana dodatnia baza EPS.",
-            "eps_ttm_growth": "Suma ostatnich 4 raportowanych EPS wobec poprzednich 4; wymaga 8 raportów i dodatniej poprzedniej sumy.",
-            "positive_eps_quarters": (f"{sum(value > 0 for value in last_four)}/4 ostatnich raportów miało dodatni EPS."
-                                      if positive_pct is not None else "Potrzebne 4 raporty EPS."),
-            "volume_rvol": (
-                "RVol dzienny względem średniej 50 poprzednich sesji; bieżące potwierdzenie popytu, nie odtworzony wolumen historycznej świecy wybicia."
-                if signal_active and _ok(rvol) else
-                "Punktowany wyłącznie przy aktywnym stanie GLB (WYBICIE, SYGNAŁ lub BLUE DOT); w pozostałych sytuacjach pomijany."
-            ),
-            "eps_surprise_latest": "Procentowa niespodzianka EPS z najnowszego raportu dostępnego w aktualnym cache.",
-            "eps_surprise_previous": "Procentowa niespodzianka EPS z poprzedniego raportu; dostępność zależy od źródła.",
-            "revenue_surprise": "Procentowa niespodzianka przychodów z najnowszego raportu, jeśli dostawca ją udostępnia.",
+            "eps_q_growth": "TraderLion podaje ≥25% wzrostu kwartalnego EPS r/r jako guidepost; wyższa dynamika dostaje więcej punktów.",
+            "sales_q_growth": "Przychody kwartalne r/r: artykuł wskazuje około 20%+ jako potwierdzenie popytu.",
+            "eps_acceleration": "Zmiana tempa wzrostu EPS r/r względem poprzedniego raportu.",
+            "margin_expansion": "Pomocniczy sygnał jakości wzrostu z części C, nie osobna litera CAN SLIM.",
+            "eps_surprise": "Raportowany EPS względem konsensusu: historyczne potwierdzenie, nie sama prognoza.",
+            "revenue_surprise": "Raportowane przychody względem konsensusu.",
+            "annual_eps_cagr": "CAGR z sum czterech raportowanych EPS w czterech blokach rocznych; wymaga 16 raportów i dodatniej rocznej sumy.",
+            "annual_eps_consistency": ("Liczba z trzech porównań rocznych, w których EPS wzrósł ≥25%."
+                                      if years_25 is not None else "Potrzeba 16 raportowanych kwartałów i dodatnich rocznych sum."),
+            "annual_sales_growth": "Wzrost przychodów TTM r/r z ostatnich ośmiu raportów kwartalnych.",
+            "roe": "ROE ≥15% jest pomocniczym guidepostem z części A; bieżąca metryka Finviz.",
+            "breakout_rvol": breakout_note,
+            "dilution": ("Spadek liczby rozwodnionych akcji (wartość ujemna) wspiera kryterium podaży; silne rozwodnienie obniża punkty."
+                         if _ok(dilution) else "Brak danych SEC o zmianie rozwodnionej liczby akcji."),
+            "float_scarcity": "Mniejszy float może wzmacniać ruch przy popycie; to prosta heurystyka, nie samodzielna rekomendacja.",
+            "rs_percentile": (f"Percentyl {rs_percentile:.0f}/100 wśród {len(rs_percentiles)} spółek aktywnego skanera; proxy, nie oficjalny IBD RS Rating względem całego rynku."
+                              if rs_percentile is not None else "Brak 52-tygodniowego RS albo za krótka historia."),
+            "industry_strength": (f"Percentyl mediany RS branży/sektora wśród {len(set((x.get('industry') or x.get('sector') or '').strip() for x in rows if (x.get('industry') or x.get('sector'))))} grup aktywnego skanera; proxy, nie oficjalny ranking grup IBD."
+                                 if industry_percentile is not None else "Brak branży/sektora albo brak wartości RS."),
+            "institutional_ownership": "Inst Own: premiowany umiarkowany udział; bardzo wysoka własność ma mniej punktów. To nie ocenia jakości konkretnych funduszy.",
+            "institutional_transactions": "Inst Trans: dodatnia zmiana udziałów instytucji jest premiowana. To bieżący snapshot Finviz, nie historyczna seria.",
+            "market_direction": market_note,
         }
-
-        points = {}
-        points["rs_percentile"] = (
-            CANSLIM_GLB_WEIGHTS["rs_percentile"] * rs_pct / 100 if rs_pct is not None else None
-        )
-        points["eps_q_growth"] = (
-            _growth_component_points(q_growth, ((-100, 0), (0, 0), (10, 5), (25, 15), (50, 22), (100, 25)))
-            if q_growth is not None else None
-        )
-        points["eps_ttm_growth"] = (
-            _growth_component_points(ttm_growth, ((-100, 0), (0, 0), (10, 4), (25, 8), (50, 12), (100, 15)))
-            if ttm_growth is not None else None
-        )
-        points["positive_eps_quarters"] = (
-            CANSLIM_GLB_WEIGHTS["positive_eps_quarters"] * positive_pct / 100
-            if positive_pct is not None else None
-        )
-        points["volume_rvol"] = (
-            _growth_component_points(rvol, ((0, 0), (1, 0), (1.5, 4), (2, 7), (3, 10)))
-            if signal_active and _ok(rvol) else None
-        )
-        points["eps_surprise_latest"] = (
-            _growth_component_points(row.get("surp"), ((-20, 0), (0, 0), (5, 3), (15, 4), (30, 5)))
-            if _ok(row.get("surp")) else None
-        )
-        points["eps_surprise_previous"] = (
-            _growth_component_points(row.get("surp_prev"), ((-20, 0), (0, 0), (5, 3), (15, 4), (30, 5)))
-            if _ok(row.get("surp_prev")) else None
-        )
-        points["revenue_surprise"] = (
-            _growth_component_points(row.get("rev_surp"), ((-20, 0), (0, 0), (5, 3), (15, 4), (30, 5)))
-            if _ok(row.get("rev_surp")) else None
-        )
-
-        out[ticker] = _score_result(raw, points, notes, CANSLIM_GLB_WEIGHTS, CANSLIM_GLB_GROUPS, min_coverage)
+        points = {
+            "eps_q_growth": _growth_component_points(q_growth, ((-100, 0), (0, 0), (10, 4), (25, 9), (50, 11), (100, 12))) if q_growth is not None else None,
+            "sales_q_growth": _growth_component_points(sales_growth, ((0, 0), (10, 2), (20, 4), (40, 5))) if _ok(sales_growth) else None,
+            "eps_acceleration": _growth_component_points(q_acceleration, ((-20, 0), (0, 1), (10, 2), (25, 3))) if q_acceleration is not None else None,
+            "margin_expansion": _growth_component_points(op_margin_change, ((-5, 0), (0, 0.5), (2, 1.5), (5, 2))) if _ok(op_margin_change) else None,
+            "eps_surprise": _growth_component_points(eps_surprise, ((-20, 0), (0, 0), (5, 1), (20, 2))) if _ok(eps_surprise) else None,
+            "revenue_surprise": _growth_component_points(revenue_surprise, ((-20, 0), (0, 0), (5, 0.5), (20, 1))) if _ok(revenue_surprise) else None,
+            "annual_eps_cagr": _growth_component_points(annual_cagr, ((-100, 0), (0, 0), (10, 5), (25, 11), (40, 14), (60, 15))) if annual_cagr is not None else None,
+            "annual_eps_consistency": float(years_25) if years_25 is not None else None,
+            "annual_sales_growth": _growth_component_points(annual_sales, ((0, 0), (10, 0.5), (20, 0.9), (40, 1))) if annual_sales is not None else None,
+            "roe": _growth_component_points(roe, ((0, 0), (7.5, 0.5), (15, 1))) if _ok(roe) else None,
+            "breakout_rvol": _growth_component_points(breakout_rvol, ((0, 0), (1, 0), (1.2, 5), (1.4, 8), (1.5, 10))) if _ok(breakout_rvol) else None,
+            "dilution": _growth_component_points(dilution, ((-10, 3), (0, 3), (2, 2), (5, 0), (15, 0))) if _ok(dilution) else None,
+            "float_scarcity": (
+                2.0 if float_shares <= 50e6 else 1.5 if float_shares <= 100e6 else
+                1.0 if float_shares <= 250e6 else 0.5 if float_shares <= 500e6 else 0.0
+            ) if _ok(float_shares) and float_shares > 0 else None,
+            "rs_percentile": CANSLIM_GLB_BASE_WEIGHTS["rs_percentile"] * rs_percentile / 100 if rs_percentile is not None else None,
+            "industry_strength": CANSLIM_GLB_BASE_WEIGHTS["industry_strength"] * industry_percentile / 100 if industry_percentile is not None else None,
+            "institutional_ownership": _growth_component_points(institutional_ownership, ((0, 0), (10, 1), (20, 3), (35, 5), (65, 5), (80, 4), (90, 2), (100, 0))) if _ok(institutional_ownership) else None,
+            "institutional_transactions": _growth_component_points(institutional_transactions, ((-20, 0), (0, 0), (5, 3), (10, 4), (20, 5))) if _ok(institutional_transactions) else None,
+            "market_direction": market_points,
+        }
+        points = {
+            key: value * CANSLIM_GLB_POINT_SCALES[key] if value is not None else None
+            for key, value in points.items()
+        }
+        result = _score_result(raw, points, notes, CANSLIM_GLB_WEIGHTS, CANSLIM_GLB_GROUPS, min_coverage)
+        result["market_state"] = market_state
+        result["market_note"] = market_note
+        out[ticker] = result
     return out
+
 
 
 def pegy_ratio(peg, forward_pe, dividend_yield_pct):

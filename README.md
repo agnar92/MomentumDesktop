@@ -59,7 +59,7 @@ Heurystyka z backtestu (spółki z dzisiejszej listy, bez spółek wycofanych z 
 - **M — miesięczny** (przycisk M na wykresie albo klawisz m): wykres miesięczny z pełnej historii (yfinance, ceny bez korekty, pobierany raz na spółkę)
   do sprawdzenia Green Line — schodki = linia w czasie, kółko = miesiąc obecnego rekordu („stoi N mies.”), porównanie z linią z listy (⚠ przy różnicy).
   Linie trendu można rysować na wykresie tygodniowym i dziennym; linie dla obu interwałów są przechowywane osobno.
-- **Ctrl+K**: dowolny symbol (np. SPY, ^GSPC, NVDA) — te same obliczenia i wykres; ostatnie symbole są zapamiętane.
+- **Ticker na pasku wykresu**: wpisz symbol w lewym górnym polu i naciśnij Enter. Jeśli dane są w cache, wykres otworzy je od razu; w przeciwnym razie pobieranie odbędzie się w tle. Ostatnie symbole są zapamiętywane. **Ctrl+Space** na liście otwiera okno dowolnego symbolu; w oknie wykresu ten skrót przenosi kursor do pola tickera.
 
 ## Dane (darmowe źródła, jak najmniej zapytań)
 

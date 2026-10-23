@@ -465,7 +465,7 @@ class App:
                     self.remember_symbol(ticker)
                     chart = self.chart if self.chart is not None and self.chart.winfo_exists() else None
                     if chart is not None and chart.ticker == ticker:
-                        chart.load_period()
+                        chart.set_ticker(ticker)  # odświeża także nazwę spółki w nagłówku po pobraniu
                         chart.render_panel()
                     self.refresh()
                     self.status.config(text=f"  ✓ Wczytano dane {ticker}.")

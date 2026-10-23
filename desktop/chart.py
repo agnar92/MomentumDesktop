@@ -10,6 +10,7 @@ import math
 import threading
 import time
 import tkinter as tk
+from tkinter import messagebox, simpledialog
 
 from . import calc, lines as L, prices
 from .theme import BG, FG, PANEL, apply_dark
@@ -611,7 +612,19 @@ def scoring_panel_lines(growth_result=None, canslim_result=None, canslim_in_univ
     else:
         add_model("CAN SLIM–GLB", None, calc.CANSLIM_GLB_GROUPS,
                   "ticker poza aktywną listą skanera; percentyl RS nie jest porównywalny")
-    out.append(("Modele są niezależne; CAN SLIM–GLB jest eksperymentalny.", "dim"))
+    if canslim_in_universe and canslim_result:
+        n_detail = (canslim_result.get("details") or {}).get("new_catalyst") or {}
+        n_confirmed = n_detail.get("points") is not None
+        out.append((
+            "  N: katalizator potwierdzony" if n_confirmed else "  N: wymaga ręcznego potwierdzenia",
+            "ok" if n_confirmed else "warn",
+        ))
+        market_state = canslim_result.get("market_state")
+        market_note = canslim_result.get("market_note")
+        if market_state:
+            out.append((f"  M: SPY {market_state.lower()} — {market_note}",
+                        "ok" if market_state == "WZROSTOWY" else "warn"))
+    out.append(("CAN SLIM–GLB używa jawnie opisanych proxy, gdy brak oficjalnych ratingów/danych IBD.", "dim"))
     return out
 
 
@@ -750,6 +763,11 @@ class ChartWindow(tk.Toplevel):
             self.ptext.tag_configure(tag, **kw)
         self.ptext.configure(tabs=("175",))
         self.ptext.pack(fill="both", expand=True)
+        self.canslim_n_btn = tk.Button(
+            self.panel, text="N · potwierdź nowy katalizator",
+            command=self.edit_canslim_catalyst, relief="flat"
+        )
+        self.canslim_n_btn.pack(fill="x", padx=8, pady=(8, 2))
         tk.Button(self.panel, text="📖 Poradnik", command=self.guide, relief="flat").pack(fill="x", padx=8, pady=8)
         self.fund_btn = tk.Button(body, text="", command=self.toggle_panel, relief="flat", width=2, bg="#1b2129", fg="#c9d1d9",
                                   activebackground="#263040", font=("Segoe UI", 10))
@@ -1139,8 +1157,55 @@ class ChartWindow(tk.Toplevel):
         self.app.store.save_settings()
         self.render_panel()
 
+    def edit_canslim_catalyst(self):
+        """Ręczne potwierdzenie litery N: nowy katalizator z datą i opisem."""
+        registry = self.app.store.alerts.setdefault("canslim_n", {})
+        saved = registry.get(self.ticker) or {}
+        event_date = simpledialog.askstring(
+            "CAN SLIM — N: nowy katalizator",
+            "Data ogłoszenia (YYYY-MM-DD); wydarzenie musi być z ostatnich 180 dni:",
+            initialvalue=saved.get("date", dt.date.today().isoformat()),
+            parent=self,
+        )
+        if event_date is None:
+            return
+        try:
+            parsed_date = dt.date.fromisoformat(event_date.strip())
+            age = (dt.date.today() - parsed_date).days
+        except ValueError:
+            messagebox.showerror("Nieprawidłowa data", "Użyj formatu YYYY-MM-DD.", parent=self)
+            return
+        if age < 0 or age > 180:
+            messagebox.showerror(
+                "Data poza zakresem",
+                "N wymaga nowego produktu/usługi, rynku, istotnej zmiany kierownictwa, partnerstwa/akwizycji lub ulepszenia ogłoszonego w ostatnich 180 dniach.",
+                parent=self,
+            )
+            return
+        description = simpledialog.askstring(
+            "CAN SLIM — N: opis wydarzenia",
+            "Opisz wydarzenie i wiarygodny wpływ na przyszłe przychody/zyski. Puste pole usuwa potwierdzenie:",
+            initialvalue=saved.get("note", ""),
+            parent=self,
+        )
+        if description is None:
+            return
+        if not description.strip():
+            registry.pop(self.ticker, None)
+        else:
+            registry[self.ticker] = {"date": parsed_date.isoformat(), "note": description.strip()}
+        self.app.store.save_alerts()
+        self.render_panel()
+        dialog = getattr(self.app, "growth_dialog", None)
+        if dialog is not None:
+            try:
+                if dialog.winfo_exists():
+                    dialog.fill()
+            except tk.TclError:
+                pass
+
     def render_panel(self):
-        """Panel fundamentów: warunki, wartości z ostatnich raportów, lista kontrolna, ostrzeżenie dla pozycji."""
+        """Panel fundamentów: warunki, oba score, wartości raportowe i lista kontrolna."""
         r = self.app.store.row(self.ticker) or {}
         arrow = "▶" if self.show_panel else "◀"
         self.fund_btn.config(text="\n".join([arrow, ""] + list("FUNDAMENTY") + ["", arrow]), fg="#ffb020" if r.get("slow") else "#c9d1d9")
@@ -1150,7 +1215,24 @@ class ChartWindow(tk.Toplevel):
         scanner_rows = self.app.store.rows
         in_scanner = any(item.get("ticker") == self.ticker for item in scanner_rows)
         growth_result = calc.growth_score(r) if r else None
-        canslim_result = calc.canslim_glb_scores(scanner_rows).get(self.ticker) if in_scanner else None
+        canslim_results = calc.canslim_glb_scores(
+            scanner_rows,
+            market_series=self.app.store.weekly("SPY"),
+            n_confirmations=self.app.store.alerts.get("canslim_n"),
+        )
+        canslim_result = canslim_results.get(self.ticker) if in_scanner else None
+        catalyst = (self.app.store.alerts.get("canslim_n") or {}).get(self.ticker) or {}
+        catalyst_valid = False
+        if catalyst.get("date") and str(catalyst.get("note") or "").strip():
+            try:
+                catalyst_age = (dt.date.today() - dt.date.fromisoformat(catalyst["date"])).days
+                catalyst_valid = 0 <= catalyst_age <= 180
+            except ValueError:
+                catalyst_valid = False
+        self.canslim_n_btn.config(
+            text=("N ✓ katalizator potwierdzony" if catalyst_valid else "N · potwierdź nowy katalizator"),
+            fg="#3ddc84" if catalyst_valid else "#c9d1d9",
+        )
         for txt, tag in fund_panel_lines(
             r, self.app.store.alerts["pos"].get(self.ticker), self.plan(),
             self.app.store.settings.get("exit", "MACD"), self.app.store.settings.get("strategy_conditions"),

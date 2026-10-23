@@ -26,6 +26,31 @@ HEADERS_OLD = {
 TEXT = {"company", "sector", "industry"}
 _SUFFIX = {"K": 1e3, "M": 1e6, "B": 1e9, "T": 1e12}
 
+# Finviz column IDs vary in capitalization and naming between table views and UI versions.
+_COLUMN_ALIASES = {
+    "company": "company", "sector": "sector", "industry": "industry",
+    "marketcap": "market_cap", "mktcap": "market_cap",
+    "pe": "pe", "forwardpe": "forward_pe", "fwdpe": "forward_pe",
+    "forwardperatio": "forward_pe", "fwdperatio": "forward_pe",
+    "peg": "peg", "pegratio": "peg", "priceearningsgrowth": "peg",
+    "dividend": "dividend_yield", "div": "dividend_yield",
+    "dividendyield": "dividend_yield", "dividendyieldttm": "dividend_yield",
+}
+
+
+def _normalised_name(value):
+    return re.sub(r"[^a-z0-9]", "", str(value or "").lower())
+
+
+def _column_key(value):
+    """Map current Finviz data-column-id variants to stable internal fields."""
+    return _COLUMN_ALIASES.get(_normalised_name(value)) or COLUMN_IDS.get(value)
+
+
+def _header_key(value):
+    """Map old table headers (including abbreviated Finviz labels) to fields."""
+    return HEADERS_OLD.get(value) or _COLUMN_ALIASES.get(_normalised_name(value))
+
 
 def parse_number(text):
     """'47.26B' -> 47.26e9, '10.9%' -> 10.9, '-' -> None."""
@@ -50,7 +75,7 @@ def parse_page(page):
     for tr in tree.xpath("//div[contains(@class, 'fv-table_row') and @data-row-key]"):
         row = {"ticker": tr.get("data-row-key").strip()}
         for cell in tr.xpath(".//div[@data-column-id]"):
-            key = COLUMN_IDS.get(cell.get("data-column-id"))
+            key = _column_key(cell.get("data-column-id"))
             if key:
                 txt = cell.text_content().strip()
                 if key in TEXT:
@@ -70,7 +95,7 @@ def parse_page(page):
             continue
         row = {"ticker": (tds[1].get("data-boxover-ticker") or tds[1].text_content()).strip()}
         for h, td in zip(heads, tds):
-            key = HEADERS_OLD.get(h)
+            key = _header_key(h)
             if key:
                 txt = td.text_content().strip()
                 if key in TEXT:
@@ -97,17 +122,36 @@ def fetch(filters, max_tickers=MAX_TICKERS, pause=0.7, log=print, get=None, prog
         if not new:
             break
 
-        # PEG i Forward P/E pochodzą z widoku Valuation (v=121), a stopa dywidendy
-        # z Financial (v=161). Dopasowujemy po tickerze, nie po pozycji w tabeli.
+        # PEG i Forward P/E pochodzą z Valuation (v=121), a Dividend Yield z Financial (v=161).
+        # Pytamy konkretnie o tickery bieżącej strony, zamiast zakładać identyczną kolejność
+        # sortowania i paginacji w trzech widokach Finviz.
         page_metrics = {}
+        page_tickers = [x["ticker"] for x in new]
         for view in ("121", "161"):
             if view in failed_views:
                 continue
+            view_rows_by_ticker = {}
             try:
-                vr = get(URL, params={"v": view, "f": filters, "r": offset}, headers=HEADERS, timeout=30)
+                vr = get(URL, params={"v": view, "t": ",".join(page_tickers)}, headers=HEADERS, timeout=30)
                 vr.raise_for_status()
                 view_rows, _ = parse_page(vr.text)
-                page_metrics[view] = {item["ticker"]: item for item in view_rows}
+                view_rows_by_ticker = {item["ticker"]: item for item in view_rows}
+
+                # Fallback dla Finviz, który może zignorować listę tickerów lub zwrócić tylko część.
+                missing = [ticker for ticker in page_tickers if ticker not in view_rows_by_ticker]
+                if missing:
+                    fr = get(URL, params={"v": view, "f": filters, "r": offset}, headers=HEADERS, timeout=30)
+                    fr.raise_for_status()
+                    fallback_rows, _ = parse_page(fr.text)
+                    fallback_by_ticker = {item["ticker"]: item for item in fallback_rows}
+                    for ticker in missing:
+                        if ticker in fallback_by_ticker:
+                            view_rows_by_ticker[ticker] = fallback_by_ticker[ticker]
+
+                matched = sum(ticker in view_rows_by_ticker for ticker in page_tickers)
+                if matched == 0:
+                    log(f"⚠ Finviz widok {view}: nie udało się dopasować danych dla {len(page_tickers)} tickerów; PEG/PEGY mogą być puste.")
+                page_metrics[view] = view_rows_by_ticker
             except Exception as exc:  # brak wskaźników nie może przerwać całego skanu
                 failed_views.add(view)
                 log(f"Finviz widok {view} niedostępny — odpowiednie kolumny pozostaną puste ({exc})")

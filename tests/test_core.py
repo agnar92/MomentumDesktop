@@ -208,6 +208,26 @@ FINANCIAL_LAYOUT = """<div>#1 / 2 Total</div>
 <div class="fv-table_row" data-row-key="MU"><div data-column-id="dividend">-</div></div>"""
 
 
+def test_finviz_parser_normalizes_valuation_and_dividend_column_id_aliases():
+    page = """<div>#1 / 1 Total</div>
+    <div class="fv-table_row" data-row-key="NVDA">
+      <div data-column-id="forwardpe">30.0</div>
+      <div data-column-id="pegRatio">2.0</div>
+    </div>
+    <div class="fv-table_row" data-row-key="KO">
+      <div data-column-id="fwdPe">24.0</div>
+      <div data-column-id="PEG">1.2</div>
+      <div data-column-id="dividendYield">2.00%</div>
+    </div>"""
+    rows, total = finviz.parse_page(page)
+    assert total == 1
+    assert rows[0]["forward_pe"] == pytest.approx(30.0)
+    assert rows[0]["peg"] == pytest.approx(2.0)
+    assert rows[1]["forward_pe"] == pytest.approx(24.0)
+    assert rows[1]["peg"] == pytest.approx(1.2)
+    assert rows[1]["dividend_yield"] == pytest.approx(2.0)
+
+
 def test_finviz_fetch_merges_peg_and_dividend_yield_by_ticker():
     class R:
         def __init__(self, text):
@@ -217,7 +237,9 @@ def test_finviz_fetch_merges_peg_and_dividend_yield_by_ticker():
             pass
 
     pages = {"111": NEW_LAYOUT, "121": VALUATION_LAYOUT, "161": FINANCIAL_LAYOUT}
+    requests_seen = []
     def get(_url, params, **_kwargs):
+        requests_seen.append(dict(params))
         return R(pages[params["v"]])
 
     rows, total = finviz.fetch("x", max_tickers=20, pause=0, log=lambda _s: None, get=get)
@@ -228,6 +250,8 @@ def test_finviz_fetch_merges_peg_and_dividend_yield_by_ticker():
     assert calc.pegy_ratio(nvda["peg"], nvda["forward_pe"], nvda["dividend_yield"]) == pytest.approx(1.76)
     assert mu["peg"] == pytest.approx(1.2) and mu["dividend_yield"] == 0.0
     assert calc.pegy_ratio(mu["peg"], mu["forward_pe"], mu["dividend_yield"]) == pytest.approx(1.2)
+    assert any(request.get("v") == "121" and request.get("t") == "NVDA,MU" for request in requests_seen)
+    assert any(request.get("v") == "161" and request.get("t") == "NVDA,MU" for request in requests_seen)
 
 
 def _q(start, end, val):

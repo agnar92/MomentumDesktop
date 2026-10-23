@@ -123,6 +123,49 @@ def test_build_row():
 
 
 
+
+def test_canslim_glb_scores_use_rs_percentiles_and_only_score_volume_at_glb():
+    history_good = [
+        ["2024-01-31", 0.5], ["2024-04-30", 0.6], ["2024-07-31", 0.7], ["2024-10-31", 0.8],
+        ["2025-01-31", 0.6], ["2025-04-30", 0.8], ["2025-07-31", 0.9], ["2025-10-31", 1.0],
+        ["2026-01-31", 1.2],
+    ]
+    history_weak = [
+        ["2024-01-31", 0.5], ["2024-04-30", 0.5], ["2024-07-31", 0.5], ["2024-10-31", 0.5],
+        ["2025-01-31", 0.5], ["2025-04-30", 0.4], ["2025-07-31", 0.4], ["2025-10-31", 0.3],
+        ["2026-01-31", 0.3],
+    ]
+    rows = [
+        {"ticker": "LEADER", "rs": 60, "glb_state": "WYBICIE", "rvol_d": 2.5,
+         "surp": 20, "surp_prev": 10, "rev_surp": 15, "eps_q": history_good},
+        {"ticker": "LAGGARD", "rs": -20, "glb_state": "BRAK", "rvol_d": 3.0,
+         "surp": -5, "surp_prev": -2, "rev_surp": -4, "eps_q": history_weak},
+        {"ticker": "MID", "rs": 10, "glb_state": "NAD", "rvol_d": 2.8,
+         "surp": None, "surp_prev": None, "rev_surp": None, "eps_q": []},
+    ]
+    scored = calc.canslim_glb_scores(rows)
+    assert scored["LEADER"]["score"] is not None
+    assert scored["LEADER"]["coverage"] == pytest.approx(100)
+    assert scored["LAGGARD"]["score"] < scored["LEADER"]["score"]
+    assert scored["LAGGARD"]["coverage"] == pytest.approx(90)
+    assert scored["LEADER"]["details"]["rs_percentile"]["points"] > scored["LAGGARD"]["details"]["rs_percentile"]["points"]
+    assert scored["LEADER"]["details"]["volume_rvol"]["points"] == pytest.approx(8.5)
+    assert scored["LAGGARD"]["details"]["volume_rvol"]["points"] is None
+    assert scored["MID"]["details"]["volume_rvol"]["points"] is None
+    assert scored["LEADER"]["categories"]["leadership"]["weight"] == 30
+    assert scored["LEADER"]["categories"]["annual_earnings"]["weight"] == 20
+
+
+def test_canslim_glb_score_handles_missing_data_without_zero_filling():
+    result = calc.canslim_glb_scores([
+        {"ticker": "NEWIPO", "rs": None, "eps_q": [], "glb_state": "BRAK",
+         "rvol_d": None, "surp": None, "surp_prev": None, "rev_surp": None}
+    ])["NEWIPO"]
+    assert result["coverage"] == 0
+    assert result["score"] is None
+    assert result["details"]["eps_q_growth"]["points"] is None
+
+
 def test_pegy_ratio_adds_dividend_yield_to_implied_growth():
     # Forward P/E 30 / PEG 2 = implied EPS growth 15%; dividend yield 2% => 30 / 17.
     assert calc.pegy_ratio(2.0, 30.0, 2.0) == pytest.approx(1.76)

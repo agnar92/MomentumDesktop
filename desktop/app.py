@@ -120,7 +120,7 @@ class App:
         self.scanner_box.pack(side="left", padx=2)
         self.scanner_box.bind("<<ComboboxSelected>>", lambda e: self.select_scanner(self.scanner.get()))
         tk.Button(bar, text="Skanery / ustawienia…", command=self.open_settings, relief="flat").pack(side="left", padx=4)
-        tk.Button(bar, text="Growth Score", command=self.open_growth_score, relief="flat").pack(side="left", padx=4)
+        tk.Button(bar, text="Scoring", command=self.open_growth_score, relief="flat").pack(side="left", padx=4)
         self.only_ok = tk.BooleanVar(value=False)
         tk.Checkbutton(bar, text="tylko spełniające warunki", variable=self.only_ok, command=self.refresh, bg=PANEL).pack(side="left", padx=8)
         tk.Button(bar, text="Warunki…", command=lambda: StrategyConditionsDialog(self), relief="flat").pack(side="left", padx=2)
@@ -1198,11 +1198,17 @@ class GrowthScoreDialog(tk.Toplevel):
         self.app = app
         self.descending = True
         self.show_components = False
+        self.MODE_GROWTH = "Growth Score"
+        self.MODE_CANSLIM = "CAN SLIM–GLB"
+        saved_mode = app.store.settings.get("scoring_mode", self.MODE_GROWTH)
+        if saved_mode not in (self.MODE_GROWTH, self.MODE_CANSLIM):
+            saved_mode = self.MODE_GROWTH
+        self.mode_var = tk.StringVar(value=saved_mode)
         self.scores = {}
         self.metric_value_labels = {}
         self.metric_points_labels = {}
         self.category_score_labels = {}
-        self.title("Growth Score — ranking wzrostu")
+        self.title(f"Scoring — {self.mode_var.get()}")
         self.geometry(f"{self.BASE_WIDTH}x{self.WINDOW_HEIGHT}")
         self.minsize(650, 420)
         self.configure(bg=PANEL)
@@ -1212,10 +1218,20 @@ class GrowthScoreDialog(tk.Toplevel):
         header.pack(fill="x", padx=12, pady=(10, 8))
         title_box = tk.Frame(header, bg=PANEL)
         title_box.pack(side="left", fill="x", expand=True)
-        tk.Label(title_box, text="Growth Score", bg=PANEL, fg=FG,
-                 font=("Segoe UI", 13, "bold")).pack(anchor="w")
+        self.mode_title = tk.Label(title_box, text=self.mode_var.get(), bg=PANEL, fg=FG,
+                                   font=("Segoe UI", 13, "bold"))
+        self.mode_title.pack(anchor="w")
         self.count_label = tk.Label(title_box, text="", bg=PANEL, fg="#8b95a3", anchor="w")
         self.count_label.pack(anchor="w", pady=(2, 0))
+        mode_frame = tk.Frame(header, bg=PANEL)
+        mode_frame.pack(side="right", padx=(8, 4))
+        tk.Label(mode_frame, text="Model:", bg=PANEL, fg=FG).pack(side="left", padx=(0, 5))
+        self.mode_box = ttk.Combobox(
+            mode_frame, textvariable=self.mode_var,
+            values=(self.MODE_GROWTH, self.MODE_CANSLIM), state="readonly", width=17
+        )
+        self.mode_box.pack(side="left")
+        self.mode_box.bind("<<ComboboxSelected>>", self.change_mode)
         tk.Button(header, text="⟳ Odśwież", command=self.fill, relief="flat").pack(side="right", padx=(4, 0))
         tk.Button(header, text="Zamknij", command=self.close, relief="flat").pack(side="right", padx=(4, 0))
 
@@ -1337,17 +1353,30 @@ class GrowthScoreDialog(tk.Toplevel):
         height = min(self.WINDOW_HEIGHT, max(420, self.winfo_screenheight() - 80))
         self.geometry(f"{width}x{height}")
 
+    def change_mode(self, _event=None):
+        """Przełącza model rankingu, zachowując listę tickerów i panel boczny."""
+        self.app.store.settings["scoring_mode"] = self.mode_var.get()
+        self.app.store.save_settings()
+        self.mode_title.config(text=self.mode_var.get())
+        self.title(f"Scoring — {self.mode_var.get()}")
+        self.descending = True
+        self.tree.heading("score", text="Score ↓", command=self.toggle_sort)
+        self.fill()
+
     def fill(self):
         selected = self.tree.selection()
         selected_ticker = selected[0] if selected else None
         self.tree.delete(*self.tree.get_children())
         rows = []
         self.scores = {}
-        for row in self.app.store.rows:
+        source_rows = self.app.store.rows
+        if self.mode_var.get() == self.MODE_CANSLIM:
+            self.scores = calc.canslim_glb_scores(source_rows)
+        for row in source_rows:
             ticker = row.get("ticker")
             if not ticker:
                 continue
-            result = calc.growth_score(row)
+            result = self.scores.get(ticker) if self.mode_var.get() == self.MODE_CANSLIM else calc.growth_score(row)
             self.scores[ticker] = result
             rows.append((ticker, result["score"], result["coverage"]))
         def key(item):
@@ -1364,8 +1393,10 @@ class GrowthScoreDialog(tk.Toplevel):
             )
             self.tree.insert("", "end", iid=ticker, values=(ticker, shown, f"{coverage:.0f}/100"), tags=tags)
         scored = sum(1 for _ticker, score, _coverage in rows if score is not None)
+        hint = ("CAN SLIM–GLB · RS jako percentyl w tej liście; wolumen punktowany tylko przy sygnale GLB"
+                if self.mode_var.get() == self.MODE_CANSLIM else "Growth Score · wzrost i niespodzianki wynikowe")
         self.count_label.config(
-            text=f"{len(rows)} spółek z listy · {scored} z wynikiem (pokrycie ≥70/100) · kliknij ticker, aby otworzyć wykres"
+            text=f"{len(rows)} spółek · {scored} z wynikiem (pokrycie ≥70/100) · {hint}"
         )
         if selected_ticker in self.tree.get_children():
             self.tree.selection_set(selected_ticker)
@@ -1420,7 +1451,7 @@ class GrowthScoreDialog(tk.Toplevel):
         )
         summary.pack(fill="x", padx=9, pady=(10, 8))
         tk.Label(
-            summary, text=f"{ticker}  ·  GROWTH SCORE", bg="#1c2632", fg="#c9d1d9",
+            summary, text=f"{ticker}  ·  {self.mode_var.get().upper()}", bg="#1c2632", fg="#c9d1d9",
             font=("Segoe UI", 10, "bold"), anchor="w"
         ).pack(fill="x", padx=11, pady=(9, 0))
         score_row = tk.Frame(summary, bg="#1c2632")
@@ -1455,7 +1486,8 @@ class GrowthScoreDialog(tk.Toplevel):
             font=("Segoe UI", 8)
         ).pack(fill="x", padx=11, pady=(1, 9))
 
-        for group_key, (group_label, metric_keys) in calc.GROWTH_SCORE_GROUPS.items():
+        group_defs = result.get("groups", calc.GROWTH_SCORE_GROUPS)
+        for group_key, (group_label, metric_keys) in group_defs.items():
             category = result["categories"][group_key]
             card = tk.Frame(
                 self.detail_content, bg="#171e27", highlightbackground="#303b49",
@@ -1527,9 +1559,16 @@ class GrowthScoreDialog(tk.Toplevel):
                         font=("Segoe UI", 8), justify="left", wraplength=300, anchor="w"
                     ).pack(fill="x", pady=(0, 2))
 
+        footer_text = (
+            "Model eksperymentalny. C = raportowany kwartalny EPS r/r; A = wzrost EPS TTM i powtarzalność dodatniego EPS; "
+            "L = percentyl RS w aktualnej liście; S = bieżący RVol dzienny tylko przy aktywnym sygnale GLB. "
+            "RVol nie jest historycznym wolumenem świecy wybicia — nie używać tego wyniku jako zweryfikowanej strategii bez backtestu."
+            if self.mode_var.get() == self.MODE_CANSLIM else
+            "ROA/ROI, marże i część filtrów jakościowych pochodzą z filtrów wstępnych Finviz — nie są punktowane ponownie."
+        )
         footer = tk.Label(
             self.detail_content,
-            text="ROA/ROI, marże i część filtrów jakościowych pochodzą z filtrów wstępnych Finviz — nie są punktowane ponownie.",
+            text=footer_text,
             bg=PANEL, fg="#8b95a3", justify="left", wraplength=320,
             font=("Segoe UI", 8)
         )

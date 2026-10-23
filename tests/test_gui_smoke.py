@@ -549,6 +549,50 @@ def test_ctrl_k_fetches_symbol_that_has_only_candles(app, monkeypatch):
 
 
 
+
+def test_scoring_dialog_switches_between_growth_and_canslim_glb_modes(app):
+    from desktop import app as A
+
+    def history(q1, q2, q3, q4):
+        return [
+            ["2024-01-31", q1], ["2024-04-30", q1], ["2024-07-31", q1], ["2024-10-31", q1],
+            ["2025-01-31", q1], ["2025-04-30", q2], ["2025-07-31", q3], ["2025-10-31", q3],
+            ["2026-01-31", q4],
+        ]
+
+    app.store.row("AAA").update(
+        rs=60, glb_state="WYBICIE", rvol_d=2.2, surp=15, surp_prev=8, rev_surp=12,
+        eps_q=history(0.5, 0.7, 0.9, 1.2),
+    )
+    app.store.row("BBB").update(
+        rs=-10, glb_state="BRAK", rvol_d=3.0, surp=-5, surp_prev=-3, rev_surp=-4,
+        eps_q=history(0.5, 0.4, 0.35, 0.3),
+    )
+    dialog = A.GrowthScoreDialog(app)
+    dialog.update()
+    assert dialog.mode_box.cget("values") == ("Growth Score", "CAN SLIM–GLB")
+    assert dialog.mode_var.get() == "Growth Score"
+
+    dialog.mode_box.set("CAN SLIM–GLB")
+    dialog.change_mode()
+    dialog.update()
+    assert app.store.settings["scoring_mode"] == "CAN SLIM–GLB"
+    assert dialog.title() == "Scoring — CAN SLIM–GLB"
+    assert dialog.tree.get_children()[0] == "AAA"
+    assert dialog.scores["AAA"]["groups"] is calc.CANSLIM_GLB_GROUPS
+
+    dialog.toggle_components()
+    dialog.update()
+    assert dialog.category_score_labels["leadership"].winfo_exists()
+    assert dialog.metric_value_labels["eps_q_growth"].cget("text") != "Brak danych"
+    footer_labels = [
+        child.cget("text") for child in dialog.detail_content.winfo_children()
+        if isinstance(child, tk.Label)
+    ]
+    assert any("Model eksperymentalny" in text for text in footer_labels)
+    dialog.close()
+
+
 def test_growth_score_dialog_uses_a_visible_side_panel_with_visual_component_breakdown(app):
     from desktop import app as A
     app.store.row("AAA").update(

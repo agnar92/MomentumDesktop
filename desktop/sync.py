@@ -25,8 +25,42 @@ def stage_progress(progress, k):
     return f
 
 
+def cached_symbol(sym, store):
+    """Buduje wiersz dla tickera, którego świece są już w lokalnym cache; nie wykonuje zapytań sieciowych."""
+    w = store.weekly(sym)
+    if not w or not w.get("c"):
+        return None
+
+    mcache, scache, ecache = store.cache("monthly"), store.cache("sec"), store.cache("estimates")
+    spy = w if sym == BENCH else (store.series.get(BENCH) or (store.extra.get(BENCH) or (None, None))[1])
+    existing = store.row(sym) or {}
+    base = {k: existing[k] for k in ("ticker", "company", "sector", "market_cap", "peg", "forward_pe", "dividend_yield") if k in existing}
+    base["ticker"] = sym
+    row = calc.build_row(base, w, prices.monthly_highs(mcache.get(sym)), scache.get(sym), spy, ecache.get(sym),
+                         conditions=store.settings.get("strategy_conditions"))
+
+    for key in ("rvol_d", "cc250", "bdot", "glb_rvol"):
+        if key in existing:
+            row[key] = existing[key]
+    daily = store.daily(sym)
+    if daily and daily.get("c"):
+        row["rvol_d"] = calc.rel_volume(daily.get("v") or [], calc.RVOL_D)
+        closes = daily["c"]
+        base_i = max(0, len(closes) - 251)
+        row["cc250"] = closes[-1] / closes[base_i] if len(closes) >= 2 and closes[base_i] else None
+        row["glb_rvol"] = calc.breakout_rel_volume(daily, row.get("glb"), max_age=10)
+        blue_dot = calc.fresh_blue_dot(daily, row.get("glb")) if row.get("glb_state") == "NAD" else None
+        if blue_dot:
+            row["glb_state"], row["bdot"] = "BLUE DOT", blue_dot
+        else:
+            row.pop("bdot", None)
+
+    store.extra[sym] = (row, w)
+    return row, w
+
+
 def symbol(sym, store, log=print, weekly=prices.weekly, monthly=prices.monthly, fund=sec.update, est=estimates.update):
-    """Dane jednej dowolnej spółki (Ctrl+K): te same obliczenia co w skanie. -> (wiersz, świece) albo wyjątek."""
+    """Dane jednej dowolnej spółki (Ctrl+Space): te same obliczenia co w skanie. -> (wiersz, świece) albo wyjątek."""
     w = weekly([sym], log=log).get(sym)
     if not w:
         raise ValueError(f"Brak danych tygodniowych dla {sym} w yfinance.")
@@ -50,7 +84,7 @@ def symbol(sym, store, log=print, weekly=prices.weekly, monthly=prices.monthly, 
     base["ticker"] = sym
     row = calc.build_row(base, w, prices.monthly_highs(mcache.get(sym)), scache.get(sym), spy, ecache.get(sym),
                          conditions=store.settings.get("strategy_conditions"))
-    # W przypadku symbolu otwartego przez Ctrl+K zachowaj pola wyliczane ze świec dziennych,
+    # W przypadku symbolu otwartego przez Ctrl+Space zachowaj pola wyliczane ze świec dziennych,
     # dopóki odświeżenie dzienne nie dostarczy nowej serii.
     for key in ("rvol_d", "cc250", "bdot", "glb_rvol"):
         if key in existing:

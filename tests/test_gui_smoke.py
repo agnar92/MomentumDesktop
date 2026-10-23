@@ -750,3 +750,18 @@ def test_growth_score_dialog_lists_every_scanner_ticker_and_opens_chart_on_ticke
     assert dialog.tree.get_children()[0] == "BBB"
     dialog.close()
 
+
+
+
+def test_fundamentals_panel_layout_is_wider_styled_and_scrollable(app):
+    app.open_chart("AAA")
+    ch = app.chart
+    ch.update()
+
+    assert int(ch.panel.cget("width")) >= 360
+    assert ch.p_scrollbar.winfo_manager() == "pack"
+    assert ch.ptext.cget("yscrollcommand")
+    assert ch.ptext.cget("wrap") == "word"
+    assert ch.ptext.tag_cget("sec", "foreground") == "#7cc4ff"
+    assert ch.ptext.tag_cget("score_ok", "font")
+    assert ch.ptext.tag_cget("status_ok", "background") == "#13271f"

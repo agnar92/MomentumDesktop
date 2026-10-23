@@ -10,6 +10,7 @@ import math
 import threading
 import time
 import tkinter as tk
+from tkinter import ttk
 
 from . import calc, lines as L, prices
 from .theme import BG, FG, PANEL, apply_dark
@@ -608,7 +609,7 @@ def scoring_panel_lines(growth_result=None, canslim_result=None, canslim_in_univ
             out.append((f"  {missing_note or 'brak wyniku'}", "dim"))
             return
         score, coverage = result.get("score"), float(result.get("coverage") or 0)
-        tag = "na" if score is None else "ok" if score >= 75 else "warn" if score >= 50 else "no"
+        tag = "score_na" if score is None else "score_ok" if score >= 75 else "score_warn" if score >= 50 else "score_no"
         out.append((f"{name}\t{score:.1f}/100" if score is not None else f"{name}\t—", tag))
         out.append((f"  pokrycie danych\t{coverage:.0f}/100" + (" · wymagane ≥70" if score is None else ""), "dim"))
         categories = result.get("categories") or {}
@@ -647,7 +648,8 @@ def fund_panel_lines(r, pos=None, plan=None, exit_method="MACD", conditions=None
     if not r:
         return [("Brak danych spółki.", "dim")]
     out = [(r["ticker"], "h"), (r.get("company") or "", "dim"),
-           (("✓ spełnia warunki" if r.get("ok") else "✗ nie spełnia warunków") + ("   ·   📌 masz pozycję" if pos else ""), "")]
+           (("✓ spełnia warunki" if r.get("ok") else "✗ nie spełnia warunków") + ("   ·   📌 masz pozycję" if pos else ""),
+            "status_ok" if r.get("ok") else "status_no")]
     if r.get("slow"):
         out.append(("⚠⚠ hamuje + marża brutto spada" if r["slow"] == "HAMUJE+MB" else "⚠ hamuje (tempo przychodów −10 pp lub więcej)", "warn"))
     out += [(f"OSTATNI RAPORT · kwartał {r.get('quarter') or '—'}", "sec"),
@@ -761,18 +763,60 @@ class ChartWindow(tk.Toplevel):
         body = tk.Frame(self, bg=BG)
         body.pack(fill="both", expand=True)
         # panel fundamentów po prawej (rozwijany paskiem ze strzałką na całej wysokości wykresu)
-        self.panel = tk.Frame(body, bg=PANEL, width=300)
+        # Szerszy panel z wyraźną typografią i przewijaniem — metryki nie powinny
+        # zawijać się przez zbyt wąską kolumnę ani ukrywać dalszej listy kontrolnej.
+        self.panel = tk.Frame(body, bg=PANEL, width=380)
         self.panel.pack_propagate(False)
-        self.ptext = tk.Text(self.panel, bg=PANEL, fg="#dde3ea", relief="flat", wrap="word", font=("Segoe UI", 11), padx=14, pady=10,
-                             spacing1=3, spacing3=3, cursor="arrow", highlightthickness=0)
-        for tag, kw in (("h", {"font": ("Segoe UI", 13, "bold"), "foreground": "#ffffff"}),
-                        ("sec", {"font": ("Segoe UI", 11, "bold"), "foreground": "#8b95a3", "spacing1": 12}), ("ok", {"foreground": "#3ddc84"}),
-                        ("no", {"foreground": "#ff6b6b"}), ("na", {"foreground": "#8b95a3"}), ("warn", {"foreground": "#ffb020", "spacing1": 10}),
-                        ("val", {"font": ("Consolas", 11), "foreground": "#ffffff"}), ("dim", {"foreground": "#8b95a3", "font": ("Segoe UI", 10)}),
-                        ("component", {"foreground": "#aeb8c4", "font": ("Segoe UI", 9)})):
+        self.ptext_frame = tk.Frame(self.panel, bg=PANEL)
+        self.ptext_frame.pack(fill="both", expand=True)
+        self.ptext = tk.Text(
+            self.ptext_frame, bg="#10151c", fg="#e5ebf2", relief="flat", wrap="word",
+            font=("Segoe UI", 12), padx=16, pady=14, spacing1=3, spacing3=4,
+            cursor="arrow", highlightthickness=0, selectbackground="#29445f",
+            selectforeground="#ffffff", borderwidth=0,
+        )
+        tag_styles = (
+            ("h", {"font": ("Segoe UI", 16, "bold"), "foreground": "#f8fafc",
+                   "spacing1": 2, "spacing3": 2}),
+            ("sec", {"font": ("Segoe UI", 11, "bold"), "foreground": "#7cc4ff",
+                     "background": "#1b2836", "spacing1": 14, "spacing3": 7,
+                     "lmargin1": 6, "lmargin2": 6, "rmargin": 6}),
+            ("status_ok", {"font": ("Segoe UI", 11, "bold"), "foreground": "#48e09b",
+                           "background": "#13271f", "spacing1": 3, "spacing3": 6,
+                           "lmargin1": 5, "rmargin": 5}),
+            ("status_no", {"font": ("Segoe UI", 11, "bold"), "foreground": "#ff858b",
+                           "background": "#2b1b20", "spacing1": 3, "spacing3": 6,
+                           "lmargin1": 5, "rmargin": 5}),
+            ("ok", {"foreground": "#48e09b", "font": ("Segoe UI", 11)}),
+            ("no", {"foreground": "#ff777e", "font": ("Segoe UI", 11)}),
+            ("na", {"foreground": "#a4afbc", "font": ("Segoe UI", 11)}),
+            ("warn", {"foreground": "#ffc15a", "background": "#2a2418",
+                      "font": ("Segoe UI", 11, "bold"), "spacing1": 10, "spacing3": 5,
+                      "lmargin1": 5, "rmargin": 5}),
+            ("val", {"font": ("Consolas", 12), "foreground": "#f3f6fa",
+                     "spacing1": 1, "spacing3": 2}),
+            ("dim", {"foreground": "#a1adbb", "font": ("Segoe UI", 10), "spacing3": 3}),
+            ("component", {"foreground": "#c0cad6", "font": ("Segoe UI", 10),
+                           "spacing1": 1, "spacing3": 4, "lmargin1": 12,
+                           "lmargin2": 20, "rmargin": 7}),
+            ("score_ok", {"font": ("Segoe UI", 12, "bold"), "foreground": "#48e09b",
+                          "spacing1": 7, "spacing3": 3}),
+            ("score_warn", {"font": ("Segoe UI", 12, "bold"), "foreground": "#ffc15a",
+                            "spacing1": 7, "spacing3": 3}),
+            ("score_no", {"font": ("Segoe UI", 12, "bold"), "foreground": "#ff858b",
+                          "spacing1": 7, "spacing3": 3}),
+            ("score_na", {"font": ("Segoe UI", 12, "bold"), "foreground": "#a4afbc",
+                          "spacing1": 7, "spacing3": 3}),
+        )
+        for tag, kw in tag_styles:
             self.ptext.tag_configure(tag, **kw)
-        self.ptext.configure(tabs=("175",))
-        self.ptext.pack(fill="both", expand=True)
+        self.p_scrollbar = ttk.Scrollbar(self.ptext_frame, orient="vertical", command=self.ptext.yview)
+        self.ptext.configure(tabs=("205",), yscrollcommand=self.p_scrollbar.set)
+        self.p_scrollbar.pack(side="right", fill="y")
+        self.ptext.pack(side="left", fill="both", expand=True)
+        self.ptext.bind("<MouseWheel>", lambda e: self.ptext.yview_scroll(-1 if e.delta > 0 else 1, "units"))
+        self.ptext.bind("<Button-4>", lambda e: self.ptext.yview_scroll(-1, "units"))
+        self.ptext.bind("<Button-5>", lambda e: self.ptext.yview_scroll(1, "units"))
         tk.Button(self.panel, text="📖 Poradnik", command=self.guide, relief="flat").pack(fill="x", padx=8, pady=8)
         self.fund_btn = tk.Button(body, text="", command=self.toggle_panel, relief="flat", width=2, bg="#1b2129", fg="#c9d1d9",
                                   activebackground="#263040", font=("Segoe UI", 10))

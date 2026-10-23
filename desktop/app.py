@@ -1,4 +1,4 @@
-"""Główne okno: jedna lista (skan Finviz + warunki strategii), Sync, ustawienia filtra i wykres tygodniowy. Ctrl+K = dowolny symbol."""
+"""Główne okno Momentum Desktop; Ctrl+Space otwiera dowolny symbol."""
 import queue
 import threading
 import time
@@ -109,6 +109,7 @@ class App:
         self.growth_dialog = None
         self._daily_alert_refreshing = False
         self._symbol_syncs = set()
+        self._symbol_openings = set()
         self._last_follow_ticker = None
         bar = tk.Frame(self.root, bg=PANEL)
         bar.pack(fill="x")
@@ -135,7 +136,7 @@ class App:
         self.alert_btn.pack(side="left", padx=4)
         tk.Button(bar, text="📌 Pozycje", command=lambda: PositionsDialog(self), relief="flat").pack(side="left", padx=4)
         tk.Button(bar, text="Kolumny…", command=lambda: ColumnsDialog(self), relief="flat").pack(side="left", padx=4)
-        tk.Label(bar, text="Ctrl+K — dowolny symbol (np. SPY, NVDA)", bg=PANEL, fg="#8b95a3").pack(side="left", padx=12)
+        tk.Label(bar, text="Ctrl+Space — dowolny symbol (np. SPY, NVDA)", bg=PANEL, fg="#8b95a3").pack(side="left", padx=12)
         frame = tk.Frame(self.root, bg=BG)
         frame.pack(fill="both", expand=True)
         self.tree = ttk.Treeview(frame, columns=[c[0] for c in COLUMNS], show="headings", selectmode="browse")
@@ -188,7 +189,7 @@ class App:
         self.plabel.pack(side="left", padx=(0, 8))
         self.t0 = None
         self.root.bind("<F5>", lambda e: self.start_sync())
-        self.root.bind("<Control-k>", lambda e: self.open_symbol())
+        self.root.bind("<Control-space>", lambda e: self.open_symbol())
         self.root.bind("<slash>", lambda e: self.open_symbol() if e.widget is self.tree else None)
         self.root.after(150, self._poll)
         self.fill_scanners()
@@ -312,7 +313,7 @@ class App:
     def _follow(self):
         ticker = self.current()
         # The main table selection may be restored programmatically after a refresh.
-        # Only follow a genuinely changed selection, not the stale selection behind a Ctrl+K chart.
+        # Only follow a genuinely changed selection, not the stale selection behind a Ctrl+Space chart.
         if ticker == self._last_follow_ticker:
             return
         self._last_follow_ticker = ticker
@@ -371,8 +372,59 @@ class App:
 
         threading.Thread(target=work, daemon=True).start()
 
-    def open_symbol(self):
-        SymbolDialog(self)
+    def open_symbol(self, ticker=None):
+        """Otwiera ticker z cache albo pobiera brakujące dane w tle. Bez argumentu pokazuje okno wyboru."""
+        if ticker is None:
+            SymbolDialog(self)
+            return
+
+        sym = str(ticker).strip().upper()
+        if not sym:
+            return
+
+        row, weekly = self.store.row(sym), self.store.weekly(sym)
+        if row and weekly and weekly.get("c"):
+            self.remember_symbol(sym)
+            self.open_chart(sym)
+            self.status.config(text=f"  ✓ Wczytano zapisane dane {sym}.")
+            return
+
+        # Ticker może mieć zapisane świece, ale nie mieć wiersza w aktywnym skanerze.
+        # Odbuduj wiersz z lokalnych cache'y, bez zapytań sieciowych.
+        if weekly and weekly.get("c"):
+            cached = sync.cached_symbol(sym, self.store)
+            if cached:
+                row, weekly = cached
+                self.store.save_symbol(sym, row, weekly)
+                self.remember_symbol(sym)
+                self.open_chart(sym)
+                self.status.config(text=f"  ✓ Wczytano zapisane dane {sym} bez ponownego pobierania.")
+                return
+
+        if sym in self._symbol_openings:
+            self.open_chart(sym)
+            return
+
+        self._symbol_openings.add(sym)
+        self.open_chart(sym)
+        self.status.config(text=f"  Pobieram dane {sym}…")
+
+        def work():
+            try:
+                row, weekly = sync.symbol(sym, self.store, log=lambda _msg: None)
+                if not row or not weekly or not weekly.get("c"):
+                    raise ValueError(f"Brak danych tygodniowych dla {sym}.")
+                self.q.put(("symbol_opened", (sym, row, weekly)))
+            except Exception as exc:
+                self.q.put(("symbol_open_error", (sym, str(exc))))
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def remember_symbol(self, sym):
+        """Dodaje ticker do listy ostatnio używanych symboli."""
+        settings = self.store.settings
+        settings["symbols"] = [sym] + [x for x in settings.get("symbols", []) if x != sym][:14]
+        self.store.save_settings()
 
     def open_growth_score(self):
         if self.growth_dialog is not None:
@@ -406,6 +458,25 @@ class App:
                     frac, stage = val
                     self.pbar["value"] = frac * 1000
                     self.plabel.config(text=progress_text(frac, stage, time.monotonic() - (self.t0 or time.monotonic())))
+                elif kind == "symbol_opened":
+                    ticker, row, weekly = val
+                    self._symbol_openings.discard(ticker)
+                    self.store.save_symbol(ticker, row, weekly)
+                    self.remember_symbol(ticker)
+                    chart = self.chart if self.chart is not None and self.chart.winfo_exists() else None
+                    if chart is not None and chart.ticker == ticker:
+                        chart.set_ticker(ticker)  # odświeża także nazwę spółki w nagłówku po pobraniu
+                        chart.render_panel()
+                    self.refresh()
+                    self.status.config(text=f"  ✓ Wczytano dane {ticker}.")
+                elif kind == "symbol_open_error":
+                    ticker, error = val
+                    self._symbol_openings.discard(ticker)
+                    chart = self.chart if self.chart is not None and self.chart.winfo_exists() else None
+                    if chart is not None and chart.ticker == ticker:
+                        chart.redraw()
+                        chart.render_panel()
+                    self.status.config(text=f"  ❌ Nie udało się pobrać {ticker}: {error}")
                 elif kind == "symbol_synced":
                     ticker, row, weekly, daily, monthly = val
                     self._symbol_syncs.discard(ticker)
@@ -429,6 +500,9 @@ class App:
                     if monthly:
                         monthly["period"] = "M"
                         monthly["open_last"] = monthly["d"][-1][:7] == dt.date.today().strftime("%Y-%m")
+                        monthly_cache = self.store.cache("monthly_ohlc")
+                        monthly_cache[ticker] = monthly
+                        self.store.save_cache("monthly_ohlc", monthly_cache)
                     self.store.save_symbol(ticker, row, weekly)
                     chart = self.chart if self.chart is not None and self.chart.winfo_exists() else None
                     if chart is not None:
@@ -1637,7 +1711,7 @@ class GuideDialog(tk.Toplevel):
 
 
 class SymbolDialog(tk.Toplevel):
-    """Ctrl+K: spółka z listy otwiera się od razu, każda inna (np. SPY, ^GSPC) jest pobierana z yfinance (i SEC, jeśli to spółka z USA)."""
+    """Ctrl+Space: spółka z listy otwiera się od razu, każda inna (np. SPY, ^GSPC) jest pobierana z yfinance (i SEC, jeśli to spółka z USA)."""
 
     def __init__(self, app):
         super().__init__(app.root)
@@ -1659,15 +1733,18 @@ class SymbolDialog(tk.Toplevel):
         sym = self.var.get().strip().upper()
         if not sym:
             return
-        if self.app.store.row(sym):   # policzona spółka (lista skanera albo wcześniejszy Ctrl+K) — od razu; same świece z innego skanera to za mało
+        if self.app.store.row(sym) and self.app.store.weekly(sym):   # pełne dane z dowolnego skanera — od razu
             self.done(sym)
             return
         self.msg.config(text=f"Pobieram {sym}…")
 
         def work():
             try:
-                sync.symbol(sym, self.app.store, log=lambda s: None)
-                self.q.put(("ok", sym))
+                result = sync.symbol(sym, self.app.store, log=lambda _msg: None)
+                if isinstance(result, tuple) and len(result) == 2:
+                    self.q.put(("ok", (sym, result[0], result[1])))
+                else:  # toleruje też uproszczone podmiany sync.symbol w testach
+                    self.q.put(("ok", sym))
             except Exception as e:
                 self.q.put(("err", str(e)))
         threading.Thread(target=work, daemon=True).start()
@@ -1680,7 +1757,12 @@ class SymbolDialog(tk.Toplevel):
             self.after(150, self.poll)
             return
         if kind == "ok":
-            self.done(val)
+            if isinstance(val, tuple):
+                sym, row, weekly = val
+                self.app.store.save_symbol(sym, row, weekly)
+            else:
+                sym = val
+            self.done(sym)
         else:
             self.msg.config(text=val, fg="#ff5c5c")
 

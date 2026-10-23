@@ -66,12 +66,12 @@ def test_list_chart_and_navigation(app):
     assert app.tree.get_children()[0] == "AAA"
 
 
-def test_ctrl_k_ticker_stays_open_after_chart_sync_refreshes_table(app, monkeypatch):
+def test_ctrl_space_ticker_stays_open_after_chart_sync_refreshes_table(app, monkeypatch):
     import datetime as dt
     import time
     from desktop import prices, sync
 
-    # Simulate a previously selected list stock, then open another symbol using Ctrl+K.
+    # Simulate a previously selected list stock, then open another symbol using Ctrl+Space.
     app.tree.selection_set("AAA")
     app.root.update()
     app.open_chart("ZZZ")
@@ -605,7 +605,7 @@ def test_axis_labels_do_not_overlap():
     assert last == 200 and stop == 116
 
 
-def test_ctrl_k_fetches_symbol_that_has_only_candles(app, monkeypatch):
+def test_ctrl_space_fetches_symbol_that_has_only_candles(app, monkeypatch):
     from desktop import app as A, sync
     app.store.series["ZZZ"] = app.store.weekly("AAA")          # świece z innego skanera, ale bez policzonego wiersza
     called = []
@@ -765,3 +765,72 @@ def test_fundamentals_panel_layout_is_wider_styled_and_scrollable(app):
     assert ch.ptext.tag_cget("sec", "foreground") == "#7cc4ff"
     assert ch.ptext.tag_cget("score_ok", "font")
     assert ch.ptext.tag_cget("status_ok", "background") == "#13271f"
+
+
+def test_chart_ticker_entry_uses_cached_symbol_without_network(app, monkeypatch):
+    from desktop import sync
+
+    monkeypatch.setattr(sync, "symbol", lambda *args, **kwargs: pytest.fail("cached ticker should not trigger a download"))
+    daily_close = [10 + i * 0.1 for i in range(80)]
+    daily_dates = [f"2026-01-{(i % 28) + 1:02d}" for i in range(80)]
+    daily = {
+        "d": daily_dates, "o": daily_close,
+        "h": [v + 1 for v in daily_close], "l": [v - 1 for v in daily_close],
+        "c": daily_close, "v": [1e6] * len(daily_close),
+    }
+    app.store.save_daily_series("BBB", daily)
+    monthly_close = [10, 11, 12, 13]
+    monthly = {
+        "d": ["2025-01-01", "2025-04-01", "2025-07-01", "2025-10-01"],
+        "o": monthly_close, "h": [v + 1 for v in monthly_close],
+        "l": [v - 1 for v in monthly_close], "c": monthly_close, "v": [1e6] * len(monthly_close),
+    }
+    app.store.save_cache("monthly_ohlc", {"BBB": monthly})
+
+    app.open_chart("AAA")
+    chart = app.chart
+    chart.symbol_var.set("bbb")
+    chart.submit_ticker()
+    app.root.update()
+
+    assert chart.ticker == "BBB"
+    assert chart.symbol_entry.get() == "BBB"
+    assert chart.head.cget("text") == "  ·  BBB Inc"
+    chart.toggle_period("D")
+    assert chart.other["D"]["BBB"] == daily
+    chart.toggle_period("M")
+    assert chart.other["M"]["BBB"] == monthly
+    assert app.root.bind("<Control-space>")
+    assert not app.root.bind("<Control-k>")
+
+
+def test_chart_ticker_entry_fetches_and_saves_missing_symbol(app, monkeypatch):
+    import time
+    from desktop import sync
+
+    weekly = app.store.weekly("AAA")
+    row = calc.build_row({"ticker": "ZZZ", "company": "ZZZ Corp"}, weekly, [40, 120, 110, 110, 110], None, weekly, None)
+    called = []
+
+    def fake_symbol(sym, store, log=None):
+        called.append(sym)
+        return row, weekly
+
+    monkeypatch.setattr(sync, "symbol", fake_symbol)
+    app.open_chart("AAA")
+    chart = app.chart
+    chart.symbol_var.set("zzz")
+    chart.submit_ticker()
+
+    for _ in range(50):
+        app.root.update()
+        if app.store.weekly("ZZZ") is not None:
+            break
+        time.sleep(0.02)
+
+    assert called == ["ZZZ"]
+    assert chart.ticker == "ZZZ"
+    assert chart.head.cget("text") == "  ·  ZZZ Corp"
+    assert app.store.weekly("ZZZ") is not None
+    assert app.store.row("ZZZ")["company"] == "ZZZ Corp"
+    assert app.store.settings["symbols"][0] == "ZZZ"

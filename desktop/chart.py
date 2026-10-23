@@ -752,7 +752,17 @@ class ChartWindow(tk.Toplevel):
         self.exit_btn.pack(side="right", padx=2, pady=2)
         self.del_btn = tk.Button(top, text="🗑 linia", command=self.delete_selected, relief="flat")
         self.alert_btn = tk.Button(top, text="🔔 alert linii", command=self.toggle_line_alert, relief="flat")
-        self.head = tk.Label(top, text="", bg=PANEL, anchor="w", padx=8)
+        self.symbol_var = tk.StringVar(value=ticker)
+        self.symbol_entry = tk.Entry(
+            top, textvariable=self.symbol_var, width=8, relief="flat",
+            bg="#0f1318", fg="#f0f4f8", insertbackground="#f0f4f8",
+            font=("Consolas", 11, "bold"), highlightthickness=1,
+            highlightbackground="#303a46", highlightcolor="#4da3ff",
+        )
+        self.symbol_entry.pack(side="left", padx=(7, 0), pady=2)
+        self.symbol_entry.bind("<Return>", self.submit_ticker)
+        self.symbol_entry.bind("<Escape>", self.cancel_ticker_edit)
+        self.head = tk.Label(top, text="", bg=PANEL, anchor="w", padx=5)
         self.head.pack(side="left", fill="x", expand=True)
         self.slider = tk.Canvas(self, height=46, bg=BG, highlightthickness=0, cursor="sb_h_double_arrow")
         self.slider.pack(fill="x", padx=2, pady=(2, 0))
@@ -833,6 +843,7 @@ class ChartWindow(tk.Toplevel):
         self.cv.bind("<ButtonRelease-1>", self.release)
         self.cv.bind("<Button-3>", self.right_click)
         self.bind("<Delete>", lambda e: self.delete_selected())
+        self.bind("<Control-space>", self.focus_ticker_entry)
         self.bind("m", lambda e: self.toggle_period("M"))
         self.bind("d", lambda e: self.toggle_period("D"))
         self.bind("w", lambda e: self.toggle_period("W"))
@@ -851,6 +862,24 @@ class ChartWindow(tk.Toplevel):
         self.bind("<minus>", lambda e: self.zoom(1.18))
         self.bind("<Escape>", lambda e: self.unselect() if self.sel else self.destroy())
         self.set_ticker(ticker)
+
+    def submit_ticker(self, event=None):
+        """Przełącza wykres na ticker wpisany bezpośrednio w nagłówku."""
+        ticker = self.symbol_var.get().strip().upper()
+        if ticker:
+            self.app.open_symbol(ticker)
+        else:
+            self.symbol_var.set(self.ticker)
+        return "break"
+
+    def cancel_ticker_edit(self, event=None):
+        self.symbol_var.set(self.ticker)
+        return "break"
+
+    def focus_ticker_entry(self, event=None):
+        self.symbol_entry.focus_set()
+        self.symbol_entry.selection_range(0, tk.END)
+        return "break"
 
     def data(self):
         if self.period in ("M", "D"):
@@ -897,28 +926,34 @@ class ChartWindow(tk.Toplevel):
         t, per = self.ticker, self.period
         self.refresh_earnings_dates(t)
         if per in ("M", "D") and t not in self.other[per]:
-            self.cv.delete("all")
-            self.cv.create_text(20, 20, text=f"Pobieram {'historię miesięczną' if per == 'M' else 'świece dzienne'} {t}…", anchor="w", fill=FG)
+            # Dane dzienne są zapisywane do daily.json. Pełne OHLC miesięczne
+            # przechowujemy osobno, bo monthly.json zawiera tylko High do Green Line.
+            cached = self.app.store.daily(t) if per == "D" else self.app.store.cache("monthly_ohlc").get(t)
+            if cached and cached.get("d"):
+                self.other[per][t] = cached
+            else:
+                self.cv.delete("all")
+                self.cv.create_text(20, 20, text=f"Pobieram {'historię miesięczną' if per == 'M' else 'świece dzienne'} {t}…", anchor="w", fill=FG)
 
-            def work():
-                try:
-                    m = prices.monthly_ohlc(t) if per == "M" else prices.daily_ohlc(t)
-                except Exception:   # brak sieci: komunikat na wykresie
-                    m = None
-                if m:
-                    m["period"] = per
-                    m["open_last"] = per == "M" and m["d"][-1][:7] == dt.date.today().strftime("%Y-%m")
-                box.append(m)
-            box = []   # wynik z wątku odbieramy w pętli Tk (Tk nie jest wielowątkowy)
-            threading.Thread(target=work, daemon=True).start()
+                def work():
+                    try:
+                        m = prices.monthly_ohlc(t) if per == "M" else prices.daily_ohlc(t)
+                    except Exception:   # brak sieci: komunikat na wykresie
+                        m = None
+                    if m:
+                        m["period"] = per
+                        m["open_last"] = per == "M" and m["d"][-1][:7] == dt.date.today().strftime("%Y-%m")
+                    box.append(m)
+                box = []   # wynik z wątku odbieramy w pętli Tk (Tk nie jest wielowątkowy)
+                threading.Thread(target=work, daemon=True).start()
 
-            def poll():
-                if box:
-                    self._got(t, box[0], per)
-                elif self.winfo_exists():
-                    self.after(100, poll)
-            self.after(100, poll)
-            return
+                def poll():
+                    if box:
+                        self._got(t, box[0], per)
+                    elif self.winfo_exists():
+                        self.after(100, poll)
+                self.after(100, poll)
+                return
         name = {"M": "miesięczny", "D": "dzienny"}.get(per, "tygodniowy")
         self.title(f"{t} — {name}")
         self.redraw()
@@ -933,15 +968,21 @@ class ChartWindow(tk.Toplevel):
         if per == "D":
             self.app.store.save_daily_series(t, m)
             self.app.check_alerts(refresh_daily=False)
+        elif per == "M":
+            monthly_cache = self.app.store.cache("monthly_ohlc")
+            monthly_cache[t] = m
+            self.app.store.save_cache("monthly_ohlc", monthly_cache)
         if t == self.ticker and self.winfo_exists():
             self.load_period()
 
     def set_ticker(self, ticker):
         self.ticker, self.end, self.sel, self.gest = ticker, None, None, None
+        self.symbol_var.set(ticker)
         if self.period != "W":
             self.n_show = 260 if self.period == "D" else None
         r = self.app.store.row(ticker) or {}
-        self.head.config(text="  ·  ".join(x for x in (ticker, r.get("company")) if x))
+        company = r.get("company") or ""
+        self.head.config(text=f"  ·  {company}" if company else "")
         self.tools()
         self.load_period()
 
@@ -955,7 +996,9 @@ class ChartWindow(tk.Toplevel):
         self.draw_slider()
         if not data:
             self.cv.delete("all")
-            self.cv.create_text(20, 20, text="Brak danych — zrób Sync albo Ctrl+K.", anchor="w", fill=FG)
+            message = (f"Pobieram dane {self.ticker}…" if self.ticker in getattr(self.app, "_symbol_openings", set())
+                       else f"Brak danych dla {self.ticker} — wpisz ticker powyżej lub użyj Ctrl+Space.")
+            self.cv.create_text(20, 20, text=message, anchor="w", fill=FG)
             return
         self.daily_style_btn.config(state="normal" if self.period == "D" else "disabled",
                                     text="D: RWB" if self.daily_style == "bars" else "D: słupki")

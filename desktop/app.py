@@ -106,6 +106,7 @@ class App:
         self.growth_dialog = None
         self._daily_alert_refreshing = False
         self._symbol_syncs = set()
+        self._last_follow_ticker = None
         bar = tk.Frame(self.root, bg=PANEL)
         bar.pack(fill="x")
         self.sync_btn = tk.Button(bar, text="⟳ Sync (F5)", command=self.start_sync, relief="flat")
@@ -242,6 +243,9 @@ class App:
             self.tree.insert("", "end", iid=r["ticker"], values=vals, tags=(tag,))
         if sel and self.tree.exists(sel):
             self.tree.selection_set(sel)
+        # Refresh can restore an existing selection and emit <<TreeviewSelect>>.
+        # Track it so _follow won't mistake that programmatic event for user navigation.
+        self._last_follow_ticker = self.current()
         nf = active_filters(self.store.settings.get("list_filters"))
         self.flt_btn.config(text=f"Filtry ({nf})…" if nf else "Filtry…")
         n_ok = sum(1 for r in self.store.rows if r.get("ok"))
@@ -293,8 +297,14 @@ class App:
             self.chart.lift()
 
     def _follow(self):
-        if self.chart is not None and self.chart.winfo_exists() and self.current() and self.current() != self.chart.ticker:
-            self.chart.set_ticker(self.current())
+        ticker = self.current()
+        # The main table selection may be restored programmatically after a refresh.
+        # Only follow a genuinely changed selection, not the stale selection behind a Ctrl+K chart.
+        if ticker == self._last_follow_ticker:
+            return
+        self._last_follow_ticker = ticker
+        if self.chart is not None and self.chart.winfo_exists() and ticker and ticker != self.chart.ticker:
+            self.chart.set_ticker(ticker)
 
     # --- Sync i symbole (w wątkach; komunikaty przez kolejkę do pętli Tk)
     def start_sync(self):

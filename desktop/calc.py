@@ -375,6 +375,207 @@ def growth_score(row, min_coverage=GROWTH_SCORE_MIN_COVERAGE):
             "categories": categories, "details": details}
 
 
+
+# Experimental CAN SLIM–GLB ranking. These are starting weights for comparison/backtesting,
+# not validated optimal parameters. The current scanner provides a point-in-time-incomplete
+# daily relative-volume value, so it is used only as a live setup confirmation.
+CANSLIM_GLB_MIN_COVERAGE = 70.0
+CANSLIM_GLB_WEIGHTS = {
+    "rs_percentile": 30.0,
+    "eps_q_growth": 25.0,
+    "eps_ttm_growth": 15.0,
+    "positive_eps_quarters": 5.0,
+    "volume_rvol": 10.0,
+    "eps_surprise_latest": 5.0,
+    "eps_surprise_previous": 5.0,
+    "revenue_surprise": 5.0,
+}
+CANSLIM_GLB_GROUPS = {
+    "leadership": ("L — Siła względna", ("rs_percentile",)),
+    "current_earnings": ("C — Kwartalny wzrost EPS", ("eps_q_growth",)),
+    "annual_earnings": ("A — Roczne zyski i trwałość", ("eps_ttm_growth", "positive_eps_quarters")),
+    "demand": ("S — Popyt przy sygnale GLB", ("volume_rvol",)),
+    "confirmation": ("Potwierdzenie wynikami", ("eps_surprise_latest", "eps_surprise_previous", "revenue_surprise")),
+}
+
+
+def _eps_observations(row):
+    """Reported EPS history from estimates cache; only dated, finite values are kept."""
+    out = []
+    for item in (row or {}).get("eps_q") or []:
+        if not isinstance(item, (list, tuple)) or len(item) < 2 or not isinstance(item[0], str) or not _ok(item[1]):
+            continue
+        try:
+            day = dt.date.fromisoformat(item[0])
+        except ValueError:
+            continue
+        out.append((day, float(item[1])))
+    return sorted(out, key=lambda item: item[0])
+
+
+def _eps_quarter_yoy(history):
+    if not history:
+        return None
+    latest_day, latest_eps = history[-1]
+    prior = next((value for day, value in reversed(history[:-1])
+                  if 330 <= (latest_day - day).days <= 400), None)
+    if prior is None or prior <= 0:
+        return None
+    return (latest_eps / prior - 1) * 100
+
+
+def _eps_ttm_yoy(history):
+    if len(history) < 8:
+        return None
+    current = sum(value for _, value in history[-4:])
+    previous = sum(value for _, value in history[-8:-4])
+    if previous <= 0:
+        return None
+    return (current / previous - 1) * 100
+
+
+def _score_result(raw, points, notes, weights, groups, min_coverage):
+    details = {
+        key: {
+            "label": raw[key]["label"], "unit": raw[key]["unit"], "value": raw[key]["value"],
+            "points": points.get(key), "weight": weights[key], "note": notes.get(key),
+        }
+        for key in weights
+    }
+    categories = {}
+    for group, (label, members) in groups.items():
+        available = [key for key in members if points.get(key) is not None]
+        earned = sum(points[key] for key in available) if available else None
+        covered = sum(weights[key] for key in available)
+        category_weight = sum(weights[key] for key in members)
+        categories[group] = {
+            "label": label,
+            "points": round(earned, 2) if earned is not None else None,
+            "coverage": float(covered),
+            "weight": float(category_weight),
+        }
+    coverage = sum(weights[key] for key in weights if points.get(key) is not None)
+    earned_total = sum(points[key] for key in weights if points.get(key) is not None)
+    score = earned_total / coverage * 100 if coverage >= float(min_coverage) and coverage else None
+    return {
+        "score": round(score, 1) if score is not None else None,
+        "coverage": round(coverage, 1),
+        "points": round(earned_total, 2),
+        "categories": categories,
+        "details": details,
+        "groups": groups,
+    }
+
+
+def canslim_glb_scores(rows, min_coverage=CANSLIM_GLB_MIN_COVERAGE):
+    """Return experimental CAN SLIM–GLB score results keyed by ticker for the current scanner list.
+
+    L uses the percentile rank of the existing 52-week excess relative strength in this scanner's
+    universe. C uses reported quarterly EPS YoY growth. A uses trailing-four-quarter EPS growth
+    and the share of the last four reported EPS values that were positive. S only scores daily
+    relative volume when a GLB entry state is active. Missing inputs are omitted from coverage.
+    """
+    rows = [row for row in (rows or []) if row.get("ticker")]
+    valid_rs = sorted((float(row["rs"]), row["ticker"]) for row in rows if _ok(row.get("rs")))
+    percentiles = {}
+    n_rs = len(valid_rs)
+    pos = 0
+    while pos < n_rs:
+        end = pos + 1
+        while end < n_rs and valid_rs[end][0] == valid_rs[pos][0]:
+            end += 1
+        # Average rank percentile: ties stay tied; a one-symbol universe is neutral at 50.
+        pct = 50.0 if n_rs == 1 else ((pos + end - 1) / 2) / (n_rs - 1) * 100
+        for _, ticker in valid_rs[pos:end]:
+            percentiles[ticker] = pct
+        pos = end
+
+    out = {}
+    for row in rows:
+        ticker = row["ticker"]
+        history = _eps_observations(row)
+        q_growth = _eps_quarter_yoy(history)
+        ttm_growth = _eps_ttm_yoy(history)
+        last_four = [value for _, value in history[-4:]]
+        positive_pct = (sum(value > 0 for value in last_four) / 4 * 100) if len(last_four) == 4 else None
+        rs_pct = percentiles.get(ticker)
+        signal_active = row.get("glb_state") in ("WYBICIE", "SYGNAŁ", "BLUE DOT")
+        rvol = row.get("rvol_d")
+
+        raw_values = {
+            "rs_percentile": row.get("rs"),
+            "eps_q_growth": q_growth,
+            "eps_ttm_growth": ttm_growth,
+            "positive_eps_quarters": positive_pct,
+            "volume_rvol": rvol,
+            "eps_surprise_latest": row.get("surp"),
+            "eps_surprise_previous": row.get("surp_prev"),
+            "revenue_surprise": row.get("rev_surp"),
+        }
+        raw = {
+            "rs_percentile": {"label": "RS vs SPY", "unit": " pp", "value": raw_values["rs_percentile"]},
+            "eps_q_growth": {"label": "EPS kwartalny r/r", "unit": "%", "value": q_growth},
+            "eps_ttm_growth": {"label": "EPS TTM r/r", "unit": "%", "value": ttm_growth},
+            "positive_eps_quarters": {"label": "Raporty z dodatnim EPS (ostatnie 4)", "unit": "%", "value": positive_pct},
+            "volume_rvol": {"label": "Relatywny wolumen dzienny", "unit": "x", "value": rvol},
+            "eps_surprise_latest": {"label": "EPS surprise — najnowszy raport", "unit": "%", "value": row.get("surp")},
+            "eps_surprise_previous": {"label": "EPS surprise — poprzedni raport", "unit": "%", "value": row.get("surp_prev")},
+            "revenue_surprise": {"label": "Revenue surprise — najnowszy raport", "unit": "%", "value": row.get("rev_surp")},
+        }
+        notes = {
+            "rs_percentile": (f"Percentyl {rs_pct:.0f}/100 wśród {n_rs} spółek z dostępnym RS; punkty bazują na rankingu, nie bezpośrednio na pp."
+                              if rs_pct is not None else "Brak 52-tygodniowej siły względnej albo zbyt krótka historia."),
+            "eps_q_growth": "Z raportowanego EPS: ostatni kwartał wobec kwartału sprzed około roku; wymagana dodatnia baza EPS.",
+            "eps_ttm_growth": "Suma ostatnich 4 raportowanych EPS wobec poprzednich 4; wymaga 8 raportów i dodatniej poprzedniej sumy.",
+            "positive_eps_quarters": (f"{sum(value > 0 for value in last_four)}/4 ostatnich raportów miało dodatni EPS."
+                                      if positive_pct is not None else "Potrzebne 4 raporty EPS."),
+            "volume_rvol": (
+                "RVol dzienny względem średniej 50 poprzednich sesji; bieżące potwierdzenie popytu, nie odtworzony wolumen historycznej świecy wybicia."
+                if signal_active and _ok(rvol) else
+                "Punktowany wyłącznie przy aktywnym stanie GLB (WYBICIE, SYGNAŁ lub BLUE DOT); w pozostałych sytuacjach pomijany."
+            ),
+            "eps_surprise_latest": "Procentowa niespodzianka EPS z najnowszego raportu dostępnego w aktualnym cache.",
+            "eps_surprise_previous": "Procentowa niespodzianka EPS z poprzedniego raportu; dostępność zależy od źródła.",
+            "revenue_surprise": "Procentowa niespodzianka przychodów z najnowszego raportu, jeśli dostawca ją udostępnia.",
+        }
+
+        points = {}
+        points["rs_percentile"] = (
+            CANSLIM_GLB_WEIGHTS["rs_percentile"] * rs_pct / 100 if rs_pct is not None else None
+        )
+        points["eps_q_growth"] = (
+            _growth_component_points(q_growth, ((-100, 0), (0, 0), (10, 5), (25, 15), (50, 22), (100, 25)))
+            if q_growth is not None else None
+        )
+        points["eps_ttm_growth"] = (
+            _growth_component_points(ttm_growth, ((-100, 0), (0, 0), (10, 4), (25, 8), (50, 12), (100, 15)))
+            if ttm_growth is not None else None
+        )
+        points["positive_eps_quarters"] = (
+            CANSLIM_GLB_WEIGHTS["positive_eps_quarters"] * positive_pct / 100
+            if positive_pct is not None else None
+        )
+        points["volume_rvol"] = (
+            _growth_component_points(rvol, ((0, 0), (1, 0), (1.5, 4), (2, 7), (3, 10)))
+            if signal_active and _ok(rvol) else None
+        )
+        points["eps_surprise_latest"] = (
+            _growth_component_points(row.get("surp"), ((-20, 0), (0, 0), (5, 3), (15, 4), (30, 5)))
+            if _ok(row.get("surp")) else None
+        )
+        points["eps_surprise_previous"] = (
+            _growth_component_points(row.get("surp_prev"), ((-20, 0), (0, 0), (5, 3), (15, 4), (30, 5)))
+            if _ok(row.get("surp_prev")) else None
+        )
+        points["revenue_surprise"] = (
+            _growth_component_points(row.get("rev_surp"), ((-20, 0), (0, 0), (5, 3), (15, 4), (30, 5)))
+            if _ok(row.get("rev_surp")) else None
+        )
+
+        out[ticker] = _score_result(raw, points, notes, CANSLIM_GLB_WEIGHTS, CANSLIM_GLB_GROUPS, min_coverage)
+    return out
+
+
 def pegy_ratio(peg, forward_pe, dividend_yield_pct):
     """PEGY = Forward P/E / (EPS growth % + dividend yield %).
 

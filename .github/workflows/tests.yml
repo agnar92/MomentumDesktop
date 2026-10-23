@@ -1,7 +1,9 @@
 name: Tests
 
 on:
+  # Feature branches are tested by pull_request. Restrict push runs to main to avoid duplicate CI per PR update.
   push:
+    branches: [main]
   pull_request:
 
 jobs:

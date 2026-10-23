@@ -85,7 +85,7 @@ class Store:
         if self.series is None:   # dane sprzed skanerów: świece ze starego scan.json
             self.series = read(self.dir / "scan.json", {}).get("series", {})
         self.daily_series = read(self.dir / "daily.json", {})
-        self.extra = {}   # symbole otwarte przez Ctrl+K (tylko w pamięci): {ticker: (wiersz, świece)}
+        self.extra = {}   # symbole otwarte poza listą skanera: {ticker: (wiersz, świece)}
         a = read(self.dir / "alerts.json", {})
         self.alerts = {
             "lines": a.get("lines") or {},
@@ -108,6 +108,16 @@ class Store:
         if not scan and self.settings["scanner"] == self.settings["scanners"][0]["name"]:
             scan = read(self.dir / "scan.json", {})   # stara lista (jeden skaner) jako pierwszy skaner
         self.rows, self.at = scan.get("rows", []), scan.get("at")
+        # Indeks pozostałych skanerów pozwala otworzyć ticker z już zapisanymi danymi
+        # bez ponownego pobierania tylko dlatego, że zmienił się aktywny skaner.
+        self._other_rows = {}
+        for scanner in self.settings["scanners"]:
+            if scanner["name"] == self.settings["scanner"]:
+                continue
+            for row in read(self.scan_path(scanner["name"]), {}).get("rows", []):
+                ticker = row.get("ticker")
+                if ticker:
+                    self._other_rows.setdefault(ticker, row)
         for row in self.rows:
             row["ok"] = calc.passes(row, self.settings.get("strategy_conditions"))
 
@@ -149,6 +159,8 @@ class Store:
                 saved["rows"] = [row if r.get("ticker") == ticker else r for r in rows]
                 write(path, saved)
         self.extra[ticker] = (row, series)
+        if ticker in self._other_rows:
+            self._other_rows[ticker] = row
 
 
     def daily(self, ticker):
@@ -173,7 +185,9 @@ class Store:
         write(self.dir / f"{name}.json", data)
 
     def row(self, ticker):
-        return next((r for r in self.rows if r["ticker"] == ticker), None) or (self.extra.get(ticker) or (None,))[0]
+        return (next((r for r in self.rows if r["ticker"] == ticker), None)
+                or (self.extra.get(ticker) or (None,))[0]
+                or self._other_rows.get(ticker))
 
     def weekly(self, ticker):
         return self.series.get(ticker) or (self.extra.get(ticker) or (None, None))[1]

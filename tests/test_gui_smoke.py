@@ -830,6 +830,7 @@ def test_chart_ticker_entry_fetches_and_saves_missing_symbol(app, monkeypatch):
 
     assert called == ["ZZZ"]
     assert chart.ticker == "ZZZ"
+    assert chart.head.cget("text") == "  ·  ZZZ Corp"
     assert app.store.weekly("ZZZ") is not None
     assert app.store.row("ZZZ")["company"] == "ZZZ Corp"
     assert app.store.settings["symbols"][0] == "ZZZ"

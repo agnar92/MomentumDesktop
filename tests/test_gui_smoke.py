@@ -549,7 +549,7 @@ def test_ctrl_k_fetches_symbol_that_has_only_candles(app, monkeypatch):
 
 
 
-def test_growth_score_dialog_can_expand_component_breakdown(app):
+def test_growth_score_dialog_uses_a_visible_side_panel_with_visual_component_breakdown(app):
     from desktop import app as A
     app.store.row("AAA").update(
         rev_rr=50, accel=10, eps_rev=20, dopm=6, surp=30, rev_surp=30,
@@ -559,31 +559,36 @@ def test_growth_score_dialog_can_expand_component_breakdown(app):
     dialog = A.GrowthScoreDialog(app)
     dialog.update()
     assert dialog.show_components is False
+    assert dialog.panel_toggle.winfo_manager() == "pack"
+    assert dialog.detail_frame.winfo_manager() == ""
+
     dialog.toggle_components()
     dialog.update()
     assert dialog.show_components is True
-    details = dialog.detail_text.get("1.0", "end")
-    assert "AAA · Growth Score: 100,0/100" in details
-    assert "Pokrycie danych: 100/100" in details
-    assert "Przychody r/r: +50,0%" in details
-    assert "EPS r/r: +100,0%" in details
-    assert "EPS surprise — ostatni raport: +30,0%" in details
-    assert "Revenue surprise — ostatni raport: +30,0%" in details
-    assert "Trwałość wzrostu" in details
+    assert dialog.detail_frame.master is dialog.body
+    assert dialog.detail_frame.winfo_manager() == "pack"
+    assert dialog.panel_toggle.winfo_manager() == "pack"
+    assert dialog.score_label.cget("text") == "100,0"
+    assert dialog.coverage_label.cget("text") == "Pokrycie danych: 100/100"
+    assert dialog.metric_value_labels["revenue_growth"].cget("text") == "+50,0%"
+    assert dialog.metric_value_labels["eps_growth"].cget("text") == "+100,0%"
+    assert dialog.metric_points_labels["eps_surprise"].cget("text") == "5,0/5 pkt"
+    assert dialog.category_score_labels["growth"].winfo_exists()
+
     app.store.row("BBB").update(
         rev_rr=None, accel=None, eps_rev=None, dopm=None, surp=None, rev_surp=None, eps_q=[], qs=[],
     )
+    dialog.fill()
     dialog.tree.selection_set("BBB")
     dialog.update_components()
-    details = dialog.detail_text.get("1.0", "end")
-    assert "BBB · Growth Score: brak (za małe pokrycie)" in details
-    assert "brak danych · pominięte" in details
-    dialog.toggle_components()
+    assert dialog.score_label.cget("text") == "—"
+    assert "Za mało danych" in dialog.score_status.cget("text")
+    assert dialog.metric_value_labels["revenue_growth"].cget("text") == "Brak danych"
+    assert dialog.metric_points_labels["eps_surprise"].cget("text") == "pominięte"
     dialog.close()
 
 
-
-def test_growth_score_dialog_lists_top_ten_ranked_tickers_and_opens_chart_on_ticker_click(app, monkeypatch):
+def test_growth_score_dialog_lists_every_scanner_ticker_and_opens_chart_on_ticker_click(app, monkeypatch):
     from desktop import app as A
     app.store.row("AAA").update(
         rev_rr=50, accel=10, eps_rev=20, dopm=6, surp=15, rev_surp=15,
@@ -603,10 +608,14 @@ def test_growth_score_dialog_lists_top_ten_ranked_tickers_and_opens_chart_on_tic
         })
     dialog = A.GrowthScoreDialog(app)
     dialog.update()
-    assert len(dialog.tree.get_children()) == 10
-    assert dialog.tree.get_children()[0] == "AAA"
-    assert "BBB" in dialog.tree.get_children()
-    assert float(dialog.tree.set("AAA", "score")) > float(dialog.tree.set("BBB", "score"))
+    tickers = dialog.tree.get_children()
+    assert len(tickers) == len(app.store.rows) == 14
+    assert tickers[0] == "AAA"
+    assert "BBB" in tickers and "T11" in tickers
+    assert dialog.tree.set("AAA", "coverage") == "100/100"
+    assert float(dialog.tree.set("AAA", "score").replace(",", ".")) > float(
+        dialog.tree.set("BBB", "score").replace(",", ".")
+    )
     opened = []
     monkeypatch.setattr(app, "open_chart", lambda ticker: opened.append(ticker))
     box = dialog.tree.bbox("AAA", column="#1")
@@ -614,12 +623,14 @@ def test_growth_score_dialog_lists_top_ten_ranked_tickers_and_opens_chart_on_tic
     event = type("E", (), {"x": box[0] + 8, "y": box[1] + box[3] // 2})()
     dialog.on_cell_click(event)
     assert opened == ["AAA"]
+
     app.store.row("BBB").update(
         rev_rr=50, accel=10, eps_rev=20, dopm=6, surp=30, rev_surp=30,
         eps_q=[["2025-01-31", 2.0], ["2026-01-31", 5.0]],
         qs=[{"rev_rr": 15}, {"rev_rr": 25}, {"rev_rr": 35}, {"rev_rr": 40}],
     )
     app.refresh()
+    assert len(dialog.tree.get_children()) == len(app.store.rows) == 14
     assert dialog.tree.get_children()[0] == "BBB"
     dialog.close()
 

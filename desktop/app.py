@@ -3,7 +3,7 @@ import queue
 import threading
 import time
 import tkinter as tk
-from tkinter import messagebox, simpledialog, ttk
+from tkinter import messagebox, ttk
 
 import datetime as dt
 import math

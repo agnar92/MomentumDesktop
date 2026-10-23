@@ -512,13 +512,14 @@ def test_growth_score_dialog_can_expand_component_breakdown(app):
     details = dialog.detail_text.get("1.0", "end")
     assert "AAA · Growth Score:" in details
     assert "Pokrycie danych: 100/100" in details
-    assert "Zaskoczenia EPS + przychodów" in details
-    assert "Revenue surprise (ostatni raport):" in details
-    assert "ROI (Finviz; SEC fallback):" in details
+    assert "Niespodzianki wynikowe" in details
+    assert "Revenue surprise — najnowszy raport:" in details
+    assert "Filtr wstępny: m.in. ROA/ROI" in details
 
     app.store.row("BBB").update(
-        rev_rr=None, accel=None, eps_rev=None, dopm=None, opm=None, roic=None,
-        surp=None, rev_surp=None, surp_prev=None, beat2=None, eps_q=[], eps_est=[], qs=[],
+        rev_rr=None, sales_qoq=None, accel=None, eps_qoq=None, eps_growth_q=None,
+        eps_rev=None, dopm=None, opm=None, roic=None, surp=None, rev_surp=None,
+        surp_prev=None, beat2=None, eps_q=[], eps_est=[], qs=[],
     )
     dialog.tree.selection_set("BBB")
     dialog.update_components()

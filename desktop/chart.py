@@ -792,6 +792,9 @@ class ChartWindow(tk.Toplevel):
         self.bind("m", lambda e: self.toggle_period("M"))
         self.bind("d", lambda e: self.toggle_period("D"))
         self.bind("w", lambda e: self.toggle_period("W"))
+        # R przełącza RWB/słupki tylko na wykresie dziennym.
+        self.bind("r", lambda e: self.toggle_daily_style() if self.period == "D" else None)
+        self.bind("R", lambda e: self.toggle_daily_style() if self.period == "D" else None)
         for w in (self.cv, self.slider):
             w.bind("<MouseWheel>", lambda e: self.zoom(0.85 if e.delta > 0 else 1.18))
             w.bind("<Button-4>", lambda e: self.zoom(0.85))

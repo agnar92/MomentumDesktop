@@ -581,7 +581,42 @@ def draw_glb_history(cv, data, i0, i1, xf, yf, g, pmin, pmax, level):
                    anchor="w", fill=GLB_COLOR, font=FONT)
 
 
-def fund_panel_lines(r, pos=None, plan=None, exit_method="MACD", conditions=None):
+def scoring_panel_lines(growth_result=None, canslim_result=None, canslim_in_universe=True):
+    """Czytelne wyniki obu rankingów i dostępność danych dla panelu fundamentów."""
+    out = [("SCORING · PORÓWNANIE MODELI", "sec")]
+
+    def add_model(name, result, groups, missing_note=None):
+        if result is None:
+            out.append((f"{name}\t—", "na"))
+            out.append((f"  {missing_note or 'brak wyniku'}", "dim"))
+            return
+        score, coverage = result.get("score"), float(result.get("coverage") or 0)
+        tag = "na" if score is None else "ok" if score >= 75 else "warn" if score >= 50 else "no"
+        out.append((f"{name}\t{score:.1f}/100" if score is not None else f"{name}\t—", tag))
+        out.append((f"  pokrycie danych\t{coverage:.0f}/100" + (" · wymagane ≥70" if score is None else ""), "dim"))
+        categories = result.get("categories") or {}
+        for group_key, (group_label, _metric_keys) in groups.items():
+            category = categories.get(group_key)
+            if not category or category.get("points") is None:
+                out.append((f"  {group_label}: — (brak danych)", "dim"))
+                continue
+            points = float(category["points"])
+            available = float(category.get("coverage") or 0)
+            weight = float(category.get("weight") or 0)
+            out.append((f"  {group_label}: {points:.1f} pkt · dostępne wagi {available:.0f}/{weight:.0f}", "component"))
+
+    add_model("Growth Score", growth_result, calc.GROWTH_SCORE_GROUPS)
+    if canslim_in_universe:
+        add_model("CAN SLIM–GLB", canslim_result, calc.CANSLIM_GLB_GROUPS)
+    else:
+        add_model("CAN SLIM–GLB", None, calc.CANSLIM_GLB_GROUPS,
+                  "ticker poza aktywną listą skanera; percentyl RS nie jest porównywalny")
+    out.append(("Modele są niezależne; CAN SLIM–GLB jest eksperymentalny.", "dim"))
+    return out
+
+
+def fund_panel_lines(r, pos=None, plan=None, exit_method="MACD", conditions=None,
+                     growth_score_result=None, canslim_glb_result=None, canslim_in_universe=True):
     """Treść panelu fundamentów -> [(tekst, tag)]; pokazuje progi strategii i warunki aktualnie włączone."""
     cfg = calc.normalize_conditions(conditions)
     def v(x, u, d=1):
@@ -601,7 +636,9 @@ def fund_panel_lines(r, pos=None, plan=None, exit_method="MACD", conditions=None
             (f"RS 52 tyg. vs S&P\t{v(r.get('rs'), ' pp')}", "val"),
             (f"Niespodzianka EPS\t{v(r.get('surp'), ' %')}", "val"), (f"Rewizja EPS 90 dni\t{v(r.get('eps_rev'), ' %')}", "val"),
             (f"Obrót dzienny\t{r['turnover'] / 1e6:.0f} mln $" if r.get("turnover") else "Obrót dzienny\t—", "val"),
-            (f"Do Green Line\t{v(r.get('glb_pct'), ' %')}", "val"), ("LISTA KONTROLNA", "sec")]
+            (f"Do Green Line\t{v(r.get('glb_pct'), ' %')}", "val")]
+    out.extend(scoring_panel_lines(growth_score_result, canslim_glb_result, canslim_in_universe))
+    out.append(("LISTA KONTROLNA", "sec"))
 
     def item(ok, txt):
         out.append((("✓ " if ok is True else "✗ " if ok is False else "— ") + txt, "ok" if ok is True else "no" if ok is False else "na"))
@@ -708,7 +745,8 @@ class ChartWindow(tk.Toplevel):
         for tag, kw in (("h", {"font": ("Segoe UI", 13, "bold"), "foreground": "#ffffff"}),
                         ("sec", {"font": ("Segoe UI", 11, "bold"), "foreground": "#8b95a3", "spacing1": 12}), ("ok", {"foreground": "#3ddc84"}),
                         ("no", {"foreground": "#ff6b6b"}), ("na", {"foreground": "#8b95a3"}), ("warn", {"foreground": "#ffb020", "spacing1": 10}),
-                        ("val", {"font": ("Consolas", 11), "foreground": "#ffffff"}), ("dim", {"foreground": "#8b95a3", "font": ("Segoe UI", 10)})):
+                        ("val", {"font": ("Consolas", 11), "foreground": "#ffffff"}), ("dim", {"foreground": "#8b95a3", "font": ("Segoe UI", 10)}),
+                        ("component", {"foreground": "#aeb8c4", "font": ("Segoe UI", 9)})):
             self.ptext.tag_configure(tag, **kw)
         self.ptext.configure(tabs=("175",))
         self.ptext.pack(fill="both", expand=True)
@@ -1109,9 +1147,14 @@ class ChartWindow(tk.Toplevel):
         t = self.ptext
         t.config(state="normal")
         t.delete("1.0", "end")
+        scanner_rows = self.app.store.rows
+        in_scanner = any(item.get("ticker") == self.ticker for item in scanner_rows)
+        growth_result = calc.growth_score(r) if r else None
+        canslim_result = calc.canslim_glb_scores(scanner_rows).get(self.ticker) if in_scanner else None
         for txt, tag in fund_panel_lines(
             r, self.app.store.alerts["pos"].get(self.ticker), self.plan(),
             self.app.store.settings.get("exit", "MACD"), self.app.store.settings.get("strategy_conditions"),
+            growth_result, canslim_result, in_scanner,
         ):
             t.insert("end", txt + "\n", tag)
         t.config(state="disabled")

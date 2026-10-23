@@ -115,9 +115,33 @@ def test_build_row():
     r = calc.build_row({"ticker": "Y"}, W, [50, 100, 90, 90, 90, 95], {"rev_rr": 30, "dopm": 5}, SPY, EST)
     assert r["rs"] == pytest.approx(108) and r["ok"] and r["glb_state"] == "SYGNAŁ"
     assert r["surp"] == 8.0 and r["surp_prev"] == 4.0 and r["beat2"] and r["eps_rev"] == 12.0
+    valued = calc.build_row({"ticker": "Z", "peg": 2.0, "forward_pe": 30.0, "dividend_yield": 2.0},
+                            W, [50, 100, 90, 90, 90, 95], {"rev_rr": 30, "dopm": 5}, SPY, EST)
+    assert valued["peg"] == 2.0 and valued["pegy"] == pytest.approx(1.76)
     assert calc.build_row({"ticker": "UP"}, W, [50, 100, 90, 90, 90], {"rev_rr": 30, "dopm": 5},
                           SPY, {**EST, "upside": 34.6})["upside"] == 34.6
 
+
+
+def test_pegy_ratio_adds_dividend_yield_to_implied_growth():
+    # Forward P/E 30 / PEG 2 = implied EPS growth 15%; dividend yield 2% => 30 / 17.
+    assert calc.pegy_ratio(2.0, 30.0, 2.0) == pytest.approx(1.76)
+    assert calc.pegy_ratio(1.2, 24.0, 0.0) == pytest.approx(1.2)
+    assert calc.pegy_ratio(None, 24.0, 2.0) is None
+    assert calc.pegy_ratio(0.0, 24.0, 2.0) is None
+    assert calc.pegy_ratio(1.2, None, 2.0) is None
+    assert calc.pegy_ratio(1.2, 24.0, None) is None
+
+
+def test_peg_and_pegy_are_visible_scanner_columns():
+    from desktop.app import COLUMNS, cell, pass_filters
+
+    by_key = {column[0]: column for column in COLUMNS}
+    assert by_key["peg"][1] == "PEG" and by_key["pegy"][1] == "PEGY"
+    assert cell(1.236, by_key["peg"][3]) == "1.24"
+    assert cell(0.987, by_key["pegy"][3]) == "0.99"
+    assert pass_filters({"peg": 1.2}, {"peg": {"max": 1.5}})
+    assert not pass_filters({"pegy": None}, {"pegy": {"max": 1.5}})
 
 
 def test_analyst_upside_uses_mean_target_and_current_price():
@@ -171,6 +195,39 @@ def test_finviz_parse_and_fetch_pages():
             pass
     out, total = finviz.fetch("x", pause=0, log=lambda s: None, get=lambda *a, **k: R())
     assert [r["ticker"] for r in out] == ["NVDA", "MU"] and total == 2
+
+
+
+
+VALUATION_LAYOUT = """<div>#1 / 2 Total</div>
+<div class="fv-table_row" data-row-key="NVDA"><div data-column-id="forwardPE">30.0</div><div data-column-id="peg">2.0</div></div>
+<div class="fv-table_row" data-row-key="MU"><div data-column-id="forwardPE">24.0</div><div data-column-id="peg">1.2</div></div>"""
+
+FINANCIAL_LAYOUT = """<div>#1 / 2 Total</div>
+<div class="fv-table_row" data-row-key="NVDA"><div data-column-id="dividend">2.00%</div></div>
+<div class="fv-table_row" data-row-key="MU"><div data-column-id="dividend">-</div></div>"""
+
+
+def test_finviz_fetch_merges_peg_and_dividend_yield_by_ticker():
+    class R:
+        def __init__(self, text):
+            self.text = text
+
+        def raise_for_status(self):
+            pass
+
+    pages = {"111": NEW_LAYOUT, "121": VALUATION_LAYOUT, "161": FINANCIAL_LAYOUT}
+    def get(_url, params, **_kwargs):
+        return R(pages[params["v"]])
+
+    rows, total = finviz.fetch("x", max_tickers=20, pause=0, log=lambda _s: None, get=get)
+    assert total == 2 and [row["ticker"] for row in rows] == ["NVDA", "MU"]
+    nvda, mu = rows
+    assert nvda["peg"] == pytest.approx(2.0) and nvda["forward_pe"] == pytest.approx(30.0)
+    assert nvda["dividend_yield"] == pytest.approx(2.0)
+    assert calc.pegy_ratio(nvda["peg"], nvda["forward_pe"], nvda["dividend_yield"]) == pytest.approx(1.76)
+    assert mu["peg"] == pytest.approx(1.2) and mu["dividend_yield"] == 0.0
+    assert calc.pegy_ratio(mu["peg"], mu["forward_pe"], mu["dividend_yield"]) == pytest.approx(1.2)
 
 
 def _q(start, end, val):

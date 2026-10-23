@@ -18,7 +18,8 @@ COLUMNS = [  # (klucz, nagłówek, szerokość, format)
     ("upside", "Upside 12M %", 110, "%"), ("glb", "Green Line", 90, "p"), ("glb_pct", "Do linii %", 85, "%"), ("glb_state", "GLB", 85, "s"), ("macd", "MACD", 60, "s"), ("trend", "SMA 10>30", 85, "b"),
     ("macd_stop", "Stop MACD", 85, "p"), ("dopm", "Δ marża oper. pp", 120, "%"), ("rev_rr", "Przychody r/r %", 115, "%"),
     ("dgm", "Δ marża brutto pp", 125, "%"), ("quarter", "Kwartał", 105, "s"), ("turnover", "Obrót mln $", 95, "m"),
-    ("ps", "P/S", 60, "x"), ("rs", "RS 52 tyg. pp", 105, "%"), ("surp", "Niesp. EPS %", 95, "%"), ("beat2", "2× nad konsensus", 115, "b"), ("eps_rev", "Rewizja EPS 90 dni %", 140, "%"), ("rvol_w", "RVol tyg.", 80, "x"), ("rvol_d", "RVol dz.", 75, "x"), ("cc250", "C/C250", 85, "r"), ("ok", "Warunki", 75, "b"), ("slow", "Hamuje", 95, "w"),
+    ("ps", "P/S", 60, "x"), ("peg", "PEG", 70, "x2"), ("pegy", "PEGY", 75, "x2"),
+    ("rs", "RS 52 tyg. pp", 105, "%"), ("surp", "Niesp. EPS %", 95, "%"), ("beat2", "2× nad konsensus", 115, "b"), ("eps_rev", "Rewizja EPS 90 dni %", 140, "%"), ("rvol_w", "RVol tyg.", 80, "x"), ("rvol_d", "RVol dz.", 75, "x"), ("cc250", "C/C250", 85, "r"), ("ok", "Warunki", 75, "b"), ("slow", "Hamuje", 95, "w"),
 ]
 SIGNAL = ("WYBICIE", "SYGNAŁ", "BLUE DOT")
 # filtry listy (wszystkie naraz, ORAZ): {kolumna: {"in": [wartości]} | {"min", "max"}}; liczby w jednostkach tabeli (obrót w mln $)
@@ -68,6 +69,8 @@ def cell(v, f):
         return f"{v / 1e6:,.0f}"
     if f == "b":
         return "✓" if v else ""
+    if f == "x2":
+        return f"{v:.2f}"
     if f == "x":
         return f"{v:.1f}"
     if f == "r":
@@ -151,9 +154,19 @@ class App:
         display_columns = self.store.settings.get("main_columns")
         if display_columns:
             display_columns = [k for k in display_columns if k in all_columns]
-            # Dodaj nową kolumnę do wcześniej zapisanych układów, aby Upside było od razu widoczne.
-            if "upside" not in display_columns:
-                display_columns.append("upside")
+            # Nowe kolumny dodajemy też do zapisanych wcześniej układów.
+            changed = False
+            for key in ("upside", "peg", "pegy"):
+                if key not in display_columns:
+                    if key in ("peg", "pegy") and "ps" in display_columns:
+                        index = display_columns.index("ps") + 1
+                        while index < len(display_columns) and display_columns[index] in ("peg", "pegy"):
+                            index += 1
+                        display_columns.insert(index, key)
+                    else:
+                        display_columns.append(key)
+                    changed = True
+            if changed:
                 self.store.settings["main_columns"] = display_columns
                 self.store.save_settings()
             self.tree["displaycolumns"] = display_columns or all_columns

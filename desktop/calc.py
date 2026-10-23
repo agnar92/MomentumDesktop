@@ -375,6 +375,24 @@ def growth_score(row, min_coverage=GROWTH_SCORE_MIN_COVERAGE):
             "categories": categories, "details": details}
 
 
+def pegy_ratio(peg, forward_pe, dividend_yield_pct):
+    """PEGY = Forward P/E / (EPS growth % + dividend yield %).
+
+    Finviz defines PEG as Forward P/E / annual EPS growth. We infer the growth
+    rate from these two Finviz valuation fields and add the Finviz dividend yield.
+    Dividend yield is in percentage points (e.g. 2.0 means 2%).
+    """
+    if not (_ok(peg) and _ok(forward_pe) and _ok(dividend_yield_pct)):
+        return None
+    if peg <= 0 or forward_pe <= 0 or dividend_yield_pct < 0:
+        return None
+    growth_pct = float(forward_pe) / float(peg)
+    denominator = growth_pct + float(dividend_yield_pct)
+    if not math.isfinite(denominator) or denominator <= 0:
+        return None
+    return round(float(forward_pe) / denominator, 2)
+
+
 def build_row(base, weekly, months, fund, spy=None, est=None, conditions=None):
     """Wiersz listy: base (z Finviz), weekly {d, o, h, l, c, v}, months (High zamkniętych miesięcy), fund (z SEC albo None), spy (tygodniowe {d, c}),
     est (prognozy z yfinance: niespodzianki EPS i rewizja 90 dni)."""
@@ -396,6 +414,7 @@ def build_row(base, weekly, months, fund, spy=None, est=None, conditions=None):
     f = fund or {}
     mcap = row.get("market_cap") or (price * f["shares"] if _ok(price) and _ok(f.get("shares")) else None)
     row["ps"] = mcap / f["ttm_rev"] if _ok(mcap) and _ok(f.get("ttm_rev")) and f["ttm_rev"] > 0 else None
+    row["pegy"] = pegy_ratio(row.get("peg"), row.get("forward_pe"), row.get("dividend_yield"))
     row["rs"] = rel_strength(weekly, spy)
     as_of = (weekly.get("d") or [""])[-1]
     # tydzień z danych zaczyna się w poniedziałek: raport z tego tygodnia (do piątku) też jest znany

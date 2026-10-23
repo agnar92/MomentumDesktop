@@ -66,6 +66,63 @@ def test_list_chart_and_navigation(app):
     assert app.tree.get_children()[0] == "AAA"
 
 
+def test_ctrl_k_ticker_stays_open_after_chart_sync_refreshes_table(app, monkeypatch):
+    import datetime as dt
+    import time
+    from desktop import prices, sync
+
+    # Simulate a previously selected list stock, then open another symbol using Ctrl+K.
+    app.tree.selection_set("AAA")
+    app.root.update()
+    app.open_chart("ZZZ")
+    ch = app.chart
+    ch.update()
+    assert ch.ticker == "ZZZ"
+
+    previous_row = dict(app.store.row("AAA"))
+    old_weekly = app.store.weekly("AAA")
+    refreshed_weekly = {k: list(v) if isinstance(v, list) else v for k, v in old_weekly.items()}
+    refreshed_weekly["c"][-1] += 1
+    refreshed_row = {**previous_row, "ticker": "ZZZ", "company": "ZZZ Inc", "price": 123.45}
+    refreshed_row["glb_state"] = "SYGNAŁ"
+
+    daily_closes = [20 + i * 0.2 for i in range(160)]
+    daily_dates = [(dt.date(2026, 1, 1) + dt.timedelta(days=i)).isoformat() for i in range(160)]
+    daily = {
+        "d": daily_dates, "o": daily_closes,
+        "h": [v + 1 for v in daily_closes], "l": [v - 1 for v in daily_closes],
+        "c": daily_closes, "v": [1e6] * len(daily_closes),
+    }
+    monthly_closes = [20, 22, 21, 24, 23, 25]
+    monthly = {
+        "d": [f"2026-{i:02d}-01" for i in range(1, 7)],
+        "o": monthly_closes, "h": [v + 1 for v in monthly_closes],
+        "l": [v - 1 for v in monthly_closes], "c": monthly_closes, "v": [1e6] * len(monthly_closes),
+    }
+    calls = []
+
+    def fake_symbol(ticker, store, log=print):
+        calls.append(ticker)
+        return dict(refreshed_row), dict(refreshed_weekly)
+
+    monkeypatch.setattr(sync, "symbol", fake_symbol)
+    monkeypatch.setattr(prices, "daily_ohlc", lambda ticker: dict(daily))
+    monkeypatch.setattr(prices, "monthly_ohlc", lambda ticker: dict(monthly))
+
+    ch.sync_btn.invoke()
+    for _ in range(100):
+        app.root.update()
+        if app.store.row("ZZZ") and app.store.row("ZZZ").get("price") == 123.45 and ch.sync_btn["state"] == "normal":
+            break
+        time.sleep(0.02)
+    app.root.update()
+
+    assert calls == ["ZZZ"]
+    assert app.store.row("ZZZ")["price"] == 123.45
+    assert ch.ticker == "ZZZ"
+    assert "Odświeżono ZZZ" in app.status.cget("text")
+
+
 def test_chart_sync_button_refreshes_only_the_open_ticker(app, monkeypatch):
     import datetime as dt
     import time

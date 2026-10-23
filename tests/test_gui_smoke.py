@@ -268,6 +268,51 @@ def test_trend_line_draw_move_delete_and_filters(app):
     A.AlertsDialog(app).destroy()
 
 
+def test_fundamentals_panel_displays_both_scores_and_category_breakdown():
+    from desktop import calc as C
+    from desktop import chart as C_chart
+
+    eps_history = [
+        ["2024-01-31", 0.5], ["2024-04-30", 0.6], ["2024-07-31", 0.7], ["2024-10-31", 0.8],
+        ["2025-01-31", 0.6], ["2025-04-30", 0.8], ["2025-07-31", 0.9], ["2025-10-31", 1.0],
+        ["2026-01-31", 1.2],
+    ]
+    row = {
+        "ticker": "AAA", "company": "AAA Corp", "rev_rr": 35, "accel": 8, "eps_rev": 15, "dopm": 4,
+        "surp": 20, "surp_prev": 10, "rev_surp": 12, "eps_q": eps_history,
+        "qs": [{"rev_rr": 10}, {"rev_rr": 20}, {"rev_rr": 30}, {"rev_rr": 35}],
+        "rs": 60, "glb_state": "SYGNAŁ", "rvol_d": 2.2, "price": 120, "glb": 118, "glb_pct": 1.7,
+    }
+    other = {
+        "ticker": "BBB", "rs": -20, "glb_state": "BRAK", "rvol_d": 1.0, "surp": -5, "surp_prev": -2,
+        "rev_surp": -4, "eps_q": [["2025-01-31", 0.5], ["2026-01-31", 0.4]],
+    }
+    growth = C.growth_score(row)
+    canslim = C.canslim_glb_scores([row, other])["AAA"]
+    lines = C_chart.fund_panel_lines(
+        row, growth_score_result=growth, canslim_glb_result=canslim, canslim_in_universe=True
+    )
+    text = "\n".join(line for line, _tag in lines)
+    assert "SCORING · PORÓWNANIE MODELI" in text
+    assert "Growth Score" in text and "CAN SLIM–GLB" in text
+    assert f"{growth['score']:.1f}/100" in text
+    assert f"{canslim['score']:.1f}/100" in text
+    assert "Wzrost i przyspieszenie" in text
+    assert "L — Siła względna" in text
+    assert "Modele są niezależne" in text
+
+
+def test_fundamentals_panel_explains_canslim_when_ticker_is_outside_scanner():
+    from desktop import calc as C
+    from desktop import chart as C_chart
+
+    lines = C_chart.scoring_panel_lines(C.growth_score({"rev_rr": 10}), None, canslim_in_universe=False)
+    text = "\n".join(line for line, _tag in lines)
+    assert "Growth Score" in text
+    assert "CAN SLIM–GLB" in text
+    assert "poza aktywną listą skanera" in text
+
+
 def test_guide_position_and_ibd_panels(app):
     from desktop import app as A
     st = app.store
@@ -283,6 +328,8 @@ def test_guide_position_and_ibd_panels(app):
     assert any(t.startswith("S&P 500 (SPY)") for t in texts) and any(t.startswith("Przychody kw.") and "1.2 mld" in t for t in texts)
     g = ch.geom["g"]
     assert g["spx"][1] < g["price"][0] and g["vol"][1] < g["rev"][0] < g["rev"][1] < g["macd"][0]
+    panel_text = ch.ptext.get("1.0", "end")
+    assert "Growth Score" in panel_text and "CAN SLIM–GLB" in panel_text
     ch.toggle_pos()
     assert "AAA" in st.alerts["pos"] and "AAA" in st.alerts["watch"] and "⚠" in ch.ptext.get("1.0", "end") and "spełnia warunki" in ch.ptext.get("1.0", "end")
     assert app.tree.item("AAA")["values"][0].startswith("📌") and "poswarn" in app.tree.item("AAA")["tags"]

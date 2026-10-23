@@ -124,46 +124,84 @@ def test_build_row():
 
 
 
-def test_canslim_glb_scores_use_rs_percentiles_and_only_score_volume_at_glb():
-    history_good = [
-        ["2024-01-31", 0.5], ["2024-04-30", 0.6], ["2024-07-31", 0.7], ["2024-10-31", 0.8],
-        ["2025-01-31", 0.6], ["2025-04-30", 0.8], ["2025-07-31", 0.9], ["2025-10-31", 1.0],
-        ["2026-01-31", 1.2],
+def _canslim_eps_history():
+    return [
+        ["2022-01-31", 0.50], ["2022-04-30", 0.60], ["2022-07-31", 0.70], ["2022-10-31", 0.80],
+        ["2023-01-31", 0.65], ["2023-04-30", 0.78], ["2023-07-31", 0.91], ["2023-10-31", 1.04],
+        ["2024-01-31", 0.845], ["2024-04-30", 1.014], ["2024-07-31", 1.183], ["2024-10-31", 1.352],
+        ["2025-01-31", 1.0985], ["2025-04-30", 1.3182], ["2025-07-31", 1.5379], ["2025-10-31", 1.7576],
     ]
-    history_weak = [
-        ["2024-01-31", 0.5], ["2024-04-30", 0.5], ["2024-07-31", 0.5], ["2024-10-31", 0.5],
-        ["2025-01-31", 0.5], ["2025-04-30", 0.4], ["2025-07-31", 0.4], ["2025-10-31", 0.3],
-        ["2026-01-31", 0.3],
-    ]
-    rows = [
-        {"ticker": "LEADER", "rs": 60, "glb_state": "WYBICIE", "rvol_d": 2.5,
-         "surp": 20, "surp_prev": 10, "rev_surp": 15, "eps_q": history_good},
-        {"ticker": "LAGGARD", "rs": -20, "glb_state": "BRAK", "rvol_d": 3.0,
-         "surp": -5, "surp_prev": -2, "rev_surp": -4, "eps_q": history_weak},
-        {"ticker": "MID", "rs": 10, "glb_state": "NAD", "rvol_d": 2.8,
-         "surp": None, "surp_prev": None, "rev_surp": None, "eps_q": []},
-    ]
-    scored = calc.canslim_glb_scores(rows)
-    assert scored["LEADER"]["score"] is not None
-    assert scored["LEADER"]["coverage"] == pytest.approx(100)
-    assert scored["LAGGARD"]["score"] < scored["LEADER"]["score"]
-    assert scored["LAGGARD"]["coverage"] == pytest.approx(90)
-    assert scored["LEADER"]["details"]["rs_percentile"]["points"] > scored["LAGGARD"]["details"]["rs_percentile"]["points"]
-    assert scored["LEADER"]["details"]["volume_rvol"]["points"] == pytest.approx(8.5)
-    assert scored["LAGGARD"]["details"]["volume_rvol"]["points"] is None
-    assert scored["MID"]["details"]["volume_rvol"]["points"] is None
-    assert scored["LEADER"]["categories"]["leadership"]["weight"] == 30
-    assert scored["LEADER"]["categories"]["annual_earnings"]["weight"] == 20
 
 
-def test_canslim_glb_score_handles_missing_data_without_zero_filling():
-    result = calc.canslim_glb_scores([
-        {"ticker": "NEWIPO", "rs": None, "eps_q": [], "glb_state": "BRAK",
-         "rvol_d": None, "surp": None, "surp_prev": None, "rev_surp": None}
-    ])["NEWIPO"]
-    assert result["coverage"] == 0
+def _canslim_spy(as_of="2026-10-23"):
+    today = dt.date.fromisoformat(as_of)
+    last_monday = today - dt.timedelta(days=today.weekday())
+    dates = [(last_monday - dt.timedelta(weeks=60 - i)).isoformat() for i in range(60)]
+    return {"d": dates, "c": [300.0 + i * 2.0 for i in range(60)]}
+
+
+def test_canslim_glb_score_uses_equal_weights_for_six_letters_without_n_confirmation():
+    leader = {
+        "ticker": "LEADER", "sector": "Technology", "industry": "Semiconductors", "rs": 60,
+        "glb_state": "WYBICIE", "glb_rvol": 1.6, "dil": -1.0, "shares_float": 45e6,
+        "institutional_ownership": 50.0, "institutional_transactions": 8.0, "roe": 20.0,
+        "rev_rr": 30.0, "accel": 10.0, "dopm": 3.0, "surp": 15.0, "rev_surp": 8.0,
+        "eps_q": _canslim_eps_history(),
+        "qs": [{"rev": x, "rev_rr": 30.0} for x in [80, 85, 90, 95, 100, 110, 120, 130]],
+    }
+    laggard = {
+        "ticker": "LAGGARD", "sector": "Energy", "industry": "Oil & Gas", "rs": -20,
+        "glb_state": "BRAK", "glb_rvol": None, "dil": 5.0, "shares_float": 900e6,
+        "institutional_ownership": 8.0, "institutional_transactions": -5.0, "roe": 4.0,
+        "rev_rr": 5.0, "accel": -5.0, "dopm": -2.0, "surp": -5.0, "rev_surp": -3.0,
+        "eps_q": [[day, value * 0.5] for day, value in _canslim_eps_history()],
+        "qs": [{"rev": x, "rev_rr": 5.0} for x in [80, 85, 90, 95, 100, 102, 104, 106]],
+    }
+    mid = {
+        "ticker": "MID", "sector": "Industrials", "industry": "Tools", "rs": 10,
+        "glb_state": "NAD", "glb_rvol": None, "dil": None, "shares_float": None,
+        "institutional_ownership": None, "institutional_transactions": None, "roe": None,
+        "rev_rr": None, "accel": None, "dopm": None, "surp": None, "rev_surp": None,
+        "eps_q": [], "qs": [],
+    }
+    scored = calc.canslim_glb_scores(
+        [leader, laggard, mid], market_series=_canslim_spy(), as_of="2026-10-23",
+    )
+    result = scored["LEADER"]
+    assert result["score"] is not None and result["coverage"] == pytest.approx(100)
+    assert result["details"]["eps_q_growth"]["value"] == pytest.approx(30.0, abs=0.5)
+    assert result["details"]["annual_eps_cagr"]["value"] == pytest.approx(30.0, abs=1.0)
+    assert result["details"]["annual_eps_consistency"]["value"] == 3
+    assert "new_catalyst" not in result["details"]
+    assert result["details"]["breakout_rvol"]["points"] == pytest.approx(result["details"]["breakout_rvol"]["weight"])
+    assert result["details"]["institutional_transactions"]["points"] > scored["LAGGARD"]["details"]["institutional_transactions"]["points"]
+    assert result["details"]["rs_percentile"]["points"] > scored["LAGGARD"]["details"]["rs_percentile"]["points"]
+    assert result["details"]["market_direction"]["points"] == pytest.approx(result["details"]["market_direction"]["weight"])
+    assert set(result["categories"]) == {
+        "current_earnings", "annual_earnings", "supply_demand", "leadership", "institutional", "market",
+    }
+    weights = [category["weight"] for category in result["categories"].values()]
+    assert all(weight == pytest.approx(100 / 6) for weight in weights)
+    assert sum(calc.CANSLIM_GLB_WEIGHTS.values()) == pytest.approx(100)
+    assert scored["LAGGARD"]["details"]["breakout_rvol"]["points"] is None
+    assert scored["LAGGARD"]["score"] < result["score"]
+
+
+def test_canslim_market_direction_is_missing_without_weekly_spy_data():
+    result = calc.canslim_glb_scores([{"ticker": "A"}], as_of="2026-10-23")["A"]
+    assert result["details"]["market_direction"]["points"] is None
+    assert "new_catalyst" not in result["details"]
     assert result["score"] is None
-    assert result["details"]["eps_q_growth"]["points"] is None
+
+
+def test_breakout_relative_volume_uses_the_actual_daily_close_cross():
+    level = 100.0
+    closes = [95.0] * 55 + [99.0, 100.5, 101.0]
+    volumes = [1_000_000.0] * 56 + [1_500_000.0, 1_100_000.0]
+    assert calc.breakout_rel_volume(
+        {"d": [str(i) for i in range(len(closes))], "c": closes, "v": volumes}, level, max_age=10
+    ) == pytest.approx(1.5)
+
 
 
 def test_pegy_ratio_adds_dividend_yield_to_implied_growth():
@@ -247,8 +285,20 @@ VALUATION_LAYOUT = """<div>#1 / 2 Total</div>
 <div class="fv-table_row" data-row-key="MU"><div data-column-id="forwardPE">24.0</div><div data-column-id="peg">1.2</div></div>"""
 
 FINANCIAL_LAYOUT = """<div>#1 / 2 Total</div>
-<div class="fv-table_row" data-row-key="NVDA"><div data-column-id="dividend">2.00%</div></div>
-<div class="fv-table_row" data-row-key="MU"><div data-column-id="dividend">-</div></div>"""
+<div class="fv-table_row" data-row-key="NVDA"><div data-column-id="dividend">2.00%</div><div data-column-id="roe">20.0%</div></div>
+<div class="fv-table_row" data-row-key="MU"><div data-column-id="dividend">-</div><div data-column-id="roe">10.0%</div></div>"""
+
+OWNERSHIP_LAYOUT = """<div>#1 / 2 Total</div>
+<div class="fv-table_row" data-row-key="NVDA">
+  <div data-column-id="outstanding">24.5B</div><div data-column-id="float">23.9B</div>
+  <div data-column-id="instOwn">65.00%</div><div data-column-id="instTrans">8.25%</div>
+  <div data-column-id="shortFloat">1.25%</div><div data-column-id="shortRatio">1.2</div>
+</div>
+<div class="fv-table_row" data-row-key="MU">
+  <div data-column-id="outstanding">1.12B</div><div data-column-id="float">1.08B</div>
+  <div data-column-id="instOwn">72.00%</div><div data-column-id="instTrans">-2.50%</div>
+  <div data-column-id="shortFloat">3.20%</div><div data-column-id="shortRatio">2.1</div>
+</div>"""
 
 
 def test_finviz_parser_normalizes_valuation_and_dividend_column_id_aliases():
@@ -261,6 +311,10 @@ def test_finviz_parser_normalizes_valuation_and_dividend_column_id_aliases():
       <div data-column-id="fwdPe">24.0</div>
       <div data-column-id="PEG">1.2</div>
       <div data-column-id="dividendYield">2.00%</div>
+      <div data-column-id="instOwn">60.25%</div>
+      <div data-column-id="instTrans">5.80%</div>
+      <div data-column-id="float">12.5M</div>
+      <div data-column-id="roe">17.5%</div>
     </div>"""
     rows, total = finviz.parse_page(page)
     assert total == 1
@@ -269,6 +323,10 @@ def test_finviz_parser_normalizes_valuation_and_dividend_column_id_aliases():
     assert rows[1]["forward_pe"] == pytest.approx(24.0)
     assert rows[1]["peg"] == pytest.approx(1.2)
     assert rows[1]["dividend_yield"] == pytest.approx(2.0)
+    assert rows[1]["institutional_ownership"] == pytest.approx(60.25)
+    assert rows[1]["institutional_transactions"] == pytest.approx(5.8)
+    assert rows[1]["shares_float"] == pytest.approx(12.5e6)
+    assert rows[1]["roe"] == pytest.approx(17.5)
 
 
 def test_finviz_fetch_merges_peg_and_dividend_yield_by_ticker():
@@ -279,7 +337,7 @@ def test_finviz_fetch_merges_peg_and_dividend_yield_by_ticker():
         def raise_for_status(self):
             pass
 
-    pages = {"111": NEW_LAYOUT, "121": VALUATION_LAYOUT, "161": FINANCIAL_LAYOUT}
+    pages = {"111": NEW_LAYOUT, "121": VALUATION_LAYOUT, "161": FINANCIAL_LAYOUT, "131": OWNERSHIP_LAYOUT}
     requests_seen = []
     def get(_url, params, **_kwargs):
         requests_seen.append(dict(params))
@@ -290,11 +348,17 @@ def test_finviz_fetch_merges_peg_and_dividend_yield_by_ticker():
     nvda, mu = rows
     assert nvda["peg"] == pytest.approx(2.0) and nvda["forward_pe"] == pytest.approx(30.0)
     assert nvda["dividend_yield"] == pytest.approx(2.0)
+    assert nvda["roe"] == pytest.approx(20.0)
+    assert nvda["institutional_ownership"] == pytest.approx(65.0)
+    assert nvda["institutional_transactions"] == pytest.approx(8.25)
+    assert nvda["shares_float"] == pytest.approx(23.9e9)
     assert calc.pegy_ratio(nvda["peg"], nvda["forward_pe"], nvda["dividend_yield"]) == pytest.approx(1.76)
     assert mu["peg"] == pytest.approx(1.2) and mu["dividend_yield"] == 0.0
+    assert mu["institutional_transactions"] == pytest.approx(-2.5)
     assert calc.pegy_ratio(mu["peg"], mu["forward_pe"], mu["dividend_yield"]) == pytest.approx(1.2)
     assert any(request.get("v") == "121" and request.get("t") == "NVDA,MU" for request in requests_seen)
     assert any(request.get("v") == "161" and request.get("t") == "NVDA,MU" for request in requests_seen)
+    assert any(request.get("v") == "131" and request.get("t") == "NVDA,MU" for request in requests_seen)
 
 
 def _q(start, end, val):

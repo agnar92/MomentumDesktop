@@ -52,7 +52,7 @@ def symbol(sym, store, log=print, weekly=prices.weekly, monthly=prices.monthly, 
                          conditions=store.settings.get("strategy_conditions"))
     # W przypadku symbolu otwartego przez Ctrl+K zachowaj pola wyliczane ze świec dziennych,
     # dopóki odświeżenie dzienne nie dostarczy nowej serii.
-    for key in ("rvol_d", "cc250", "bdot"):
+    for key in ("rvol_d", "cc250", "bdot", "glb_rvol"):
         if key in existing:
             row[key] = existing[key]
     store.extra[sym] = (row, w)
@@ -105,6 +105,7 @@ def run(store, log=print, fetch_list=finviz.fetch, weekly=prices.weekly, monthly
     for r in rows + list(tracked_rows.values()):
         sd = dser.get(r["ticker"])
         r["rvol_d"] = calc.rel_volume(sd["v"], calc.RVOL_D) if sd else None
+        r["glb_rvol"] = calc.breakout_rel_volume(sd, r.get("glb"), max_age=10) if sd else None
         closes = sd.get("c", []) if sd else []
         # C/C[max]: use the oldest available close when fewer than 250 prior sessions exist.
         r["cc250"] = closes[-1] / closes[max(0, len(closes) - 251)] if len(closes) >= 2 and closes[max(0, len(closes) - 251)] else None

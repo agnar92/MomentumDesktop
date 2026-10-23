@@ -269,26 +269,44 @@ def test_trend_line_draw_move_delete_and_filters(app):
 
 
 def test_fundamentals_panel_displays_both_scores_and_category_breakdown():
+    import datetime as dt
     from desktop import calc as C
     from desktop import chart as C_chart
 
     eps_history = [
-        ["2024-01-31", 0.5], ["2024-04-30", 0.6], ["2024-07-31", 0.7], ["2024-10-31", 0.8],
-        ["2025-01-31", 0.6], ["2025-04-30", 0.8], ["2025-07-31", 0.9], ["2025-10-31", 1.0],
-        ["2026-01-31", 1.2],
+        ["2022-01-31", 0.50], ["2022-04-30", 0.60], ["2022-07-31", 0.70], ["2022-10-31", 0.80],
+        ["2023-01-31", 0.65], ["2023-04-30", 0.78], ["2023-07-31", 0.91], ["2023-10-31", 1.04],
+        ["2024-01-31", 0.845], ["2024-04-30", 1.014], ["2024-07-31", 1.183], ["2024-10-31", 1.352],
+        ["2025-01-31", 1.0985], ["2025-04-30", 1.3182], ["2025-07-31", 1.5379], ["2025-10-31", 1.7576],
     ]
     row = {
         "ticker": "AAA", "company": "AAA Corp", "rev_rr": 35, "accel": 8, "eps_rev": 15, "dopm": 4,
         "surp": 20, "surp_prev": 10, "rev_surp": 12, "eps_q": eps_history,
-        "qs": [{"rev_rr": 10}, {"rev_rr": 20}, {"rev_rr": 30}, {"rev_rr": 35}],
-        "rs": 60, "glb_state": "SYGNAŁ", "rvol_d": 2.2, "price": 120, "glb": 118, "glb_pct": 1.7,
+        "qs": [{"rev": rev, "rev_rr": 30.0} for rev in [80, 85, 90, 95, 100, 110, 120, 130]],
+        "rs": 60, "sector": "Technology", "industry": "Semiconductors", "glb_state": "WYBICIE",
+        "glb_rvol": 1.6, "dil": -1, "shares_float": 45e6,
+        "institutional_ownership": 50, "institutional_transactions": 8, "roe": 20,
+        "price": 120, "glb": 118, "glb_pct": 1.7,
     }
     other = {
-        "ticker": "BBB", "rs": -20, "glb_state": "BRAK", "rvol_d": 1.0, "surp": -5, "surp_prev": -2,
-        "rev_surp": -4, "eps_q": [["2025-01-31", 0.5], ["2026-01-31", 0.4]],
+        "ticker": "BBB", "rs": -20, "sector": "Energy", "industry": "Oil & Gas",
+        "glb_state": "BRAK", "glb_rvol": None, "dil": 5, "shares_float": 900e6,
+        "institutional_ownership": 8, "institutional_transactions": -5, "roe": 4,
+        "surp": -5, "surp_prev": -2, "rev_surp": -4,
+        "eps_q": [[day, value * 0.5] for day, value in eps_history],
+        "qs": [{"rev": rev, "rev_rr": 5.0} for rev in [80, 85, 90, 95, 100, 102, 104, 106]],
+    }
+    today = dt.date.today()
+    as_of = today.isoformat()
+    monday = today - dt.timedelta(days=today.weekday())
+    market = {
+        "d": [(monday - dt.timedelta(weeks=60 - i)).isoformat() for i in range(60)],
+        "c": [300.0 + i * 2.0 for i in range(60)],
     }
     growth = C.growth_score(row)
-    canslim = C.canslim_glb_scores([row, other])["AAA"]
+    canslim = C.canslim_glb_scores(
+        [row, other], market_series=market, as_of=as_of
+    )["AAA"]
     lines = C_chart.fund_panel_lines(
         row, growth_score_result=growth, canslim_glb_result=canslim, canslim_in_universe=True
     )
@@ -297,9 +315,10 @@ def test_fundamentals_panel_displays_both_scores_and_category_breakdown():
     assert "Growth Score" in text and "CAN SLIM–GLB" in text
     assert f"{growth['score']:.1f}/100" in text
     assert f"{canslim['score']:.1f}/100" in text
-    assert "Wzrost i przyspieszenie" in text
-    assert "L — Siła względna" in text
-    assert "Modele są niezależne" in text
+    assert "C — Current quarterly earnings" in text
+    assert "L — Leader / laggard" in text
+    assert "N:" not in text
+
 
 
 def test_fundamentals_panel_explains_canslim_when_ticker_is_outside_scanner():
@@ -378,6 +397,7 @@ def test_daily_chart_rwb_and_blue_dot(app, monkeypatch):
     dots = C.blue_dots(m["h"], m["l"], c, 40)
     assert dots and dots[-1] >= 150 and not C.blue_dots(m["h"], m["l"], c, 1e9)   # pod Green Line nie ma kropek
     monkeypatch.setattr(prices, "daily_ohlc", lambda t: dict(m))
+    app.store.row("AAA")["glb"] = 40
     app.open_chart("AAA")
     ch = app.chart
     ch.update()
@@ -389,6 +409,11 @@ def test_daily_chart_rwb_and_blue_dot(app, monkeypatch):
         time.sleep(0.02)
     assert ch.period == "D" and ch.geom["n"] == min(n, 260)
     assert ch.daily_style == "bars" and ch.daily_style_btn.cget("text") == "D: RWB"
+    blue_dot_items = [
+        item for item in ch.cv.find_all()
+        if ch.cv.type(item) == "oval" and ch.cv.itemcget(item, "fill") == "#4aa3ff"
+    ]
+    assert blue_dot_items, "Blue Dot markers should also be visible on the daily OHLC bar chart"
     ch.toggle_daily_style()     # nadal można przełączyć dzienny na RWB / GMMA
     ch.redraw()
     assert ch.daily_style == "line" and ch.daily_style_btn.cget("text") == "D: słupki"

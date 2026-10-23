@@ -87,7 +87,13 @@ class Store:
         self.daily_series = read(self.dir / "daily.json", {})
         self.extra = {}   # symbole otwarte przez Ctrl+K (tylko w pamięci): {ticker: (wiersz, świece)}
         a = read(self.dir / "alerts.json", {})
-        self.alerts = {"lines": a.get("lines") or {}, "watch": a.get("watch") or {}, "pos": a.get("pos") or {}, "log": a.get("log") or [], "seen": a.get("seen") or ""}
+        self.alerts = {
+            "lines": a.get("lines") or {},
+            "watch": a.get("watch") or {},
+            "pos": a.get("pos") or {},
+            "log": a.get("log") or [],
+            "seen": a.get("seen") or "",
+        }
         self.reload()
 
     @property

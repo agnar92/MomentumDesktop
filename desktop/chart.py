@@ -297,8 +297,15 @@ def draw(cv, data, row=None, w=None, h=None, n_show=None, end=None, tlines=(), s
         if all(abs(y - v) >= 13 for v in taken):   # podziałka ustępuje napisom Green Line / ceny / stopu
             cv.create_text(x1 + 4, y, text=fmt(t), anchor="w", fill=DIM, font=FONT)
     u = {"M": "mies.", "D": "sesji"}.get(period, "tyg.")
-    if period == "D" and daily_style == "line":
-        draw_rwb(cv, data, row, i0, i1, xf, yf, g, step, cfull)
+    blue_dot_indices = []
+    if period == "D":
+        if daily_style == "line":
+            blue_dot_indices = draw_rwb(cv, data, row, i0, i1, xf, yf, g, step, cfull)
+        else:
+            blue_dot_indices = [
+                i for i in calc.blue_dots(data["h"], data["l"], data["c"], level)
+                if i0 <= i < i1
+            ]
     yrs = max(1, math.ceil(60 / max(1e-9, step * 12)))     # wykres miesięczny: co ile lat podpis, żeby się nie nakładały
     every = max(1, math.ceil(62 / max(1e-9, step * 13)))   # tygodniowy: co który kwartał podpis (wąski wykres)
     q_no = 0
@@ -335,6 +342,16 @@ def draw(cv, data, row=None, w=None, h=None, n_show=None, end=None, tlines=(), s
             cv.create_line(x, yf(c[i]), x + step * 0.3, yf(c[i]), fill=col)
         else:
             cv.create_line(x - step * 0.35, yf(c[i]), x + step * 0.35, yf(c[i]), fill=col)
+    # Dzienny wykres słupkowy używa tego samego sygnału Blue Dot co tryb RWB.
+    if period == "D" and daily_style == "bars":
+        for i in blue_dot_indices:
+            low = data["l"][i]
+            if low:
+                y = yf(low) + 9
+                cv.create_oval(
+                    xf(i - i0) - 4, y - 4, xf(i - i0) + 4, y + 4,
+                    fill=BLUE_DOT, outline=""
+                )
     # E = dzień publikacji wyników. E umieszczamy bezpośrednio pod Low świecy.
     for i in sorted(earnings_local):
         if i < len(lo) and lo[i] is not None:
@@ -402,7 +419,7 @@ def draw(cv, data, row=None, w=None, h=None, n_show=None, end=None, tlines=(), s
             cv.create_text(xf(i), m1 - 6, text="▼", fill=STOP_COLOR, font=FONT)
         cv.create_text(x0 + 4, m0 + 6, text=f"MACD (12, 26, 9) {u}" + (" · ▼ = stop pod Low tygodnia przecięcia" if period == "W" else ""),
                        anchor="w", fill=DIM, font=FONT)
-    legend = ("  ".join(DAILY_MA_COLORS) if daily_style == "bars" else "GMMA: szybkie EMA (czerwone) / wolne (niebieskie) · jasne tło = RWB · ● Blue Dot") if period == "D" else "  ".join(f"SMA {k} {u}" for k in ((4, 10, 30) if period == "W" else (10, 30)))
+    legend = (("  ".join(DAILY_MA_COLORS) + " · ● Blue Dot") if daily_style == "bars" else "GMMA: szybkie EMA (czerwone) / wolne (niebieskie) · jasne tło = RWB · ● Blue Dot") if period == "D" else "  ".join(f"SMA {k} {u}" for k in ((4, 10, 30) if period == "W" else (10, 30)))
     if period == "M":
         draw_glb_history(cv, data, i0, i1, xf, yf, g, pmin, pmax, level)
     boxed(cv, x0 + 4, y1 - 10 if period == "D" else y0 + 10, legend, FG)
@@ -611,7 +628,13 @@ def scoring_panel_lines(growth_result=None, canslim_result=None, canslim_in_univ
     else:
         add_model("CAN SLIM–GLB", None, calc.CANSLIM_GLB_GROUPS,
                   "ticker poza aktywną listą skanera; percentyl RS nie jest porównywalny")
-    out.append(("Modele są niezależne; CAN SLIM–GLB jest eksperymentalny.", "dim"))
+    if canslim_in_universe and canslim_result:
+        market_state = canslim_result.get("market_state")
+        market_note = canslim_result.get("market_note")
+        if market_state:
+            out.append((f"  M: SPY {market_state.lower()} — {market_note}",
+                        "ok" if market_state == "WZROSTOWY" else "warn"))
+    out.append(("CAN SLIM–GLB używa jawnie opisanych proxy, gdy brak oficjalnych ratingów/danych IBD.", "dim"))
     return out
 
 
@@ -968,8 +991,8 @@ class ChartWindow(tk.Toplevel):
         if self.period in ("D", "W"):
             cache = getattr(self, "earnings_cache_entry", None) or {}
             lines.extend(earnings_tooltip_lines(data, index, cache, self.period))
-        # Blue Dot pokazujemy w dymku danych po najechaniu na świecę, bez dodatkowej linii na wykresie.
-        if self.period == "D" and self.daily_style == "line":
+        # Blue Dot pokazujemy w dymku danych po najechaniu na świecę, w obu stylach dziennych.
+        if self.period == "D":
             row = self.app.store.row(self.ticker) or {}
             dots = calc.blue_dots(data["h"], data["l"], data["c"], row.get("glb"))
             if index in dots:
@@ -1140,7 +1163,7 @@ class ChartWindow(tk.Toplevel):
         self.render_panel()
 
     def render_panel(self):
-        """Panel fundamentów: warunki, wartości z ostatnich raportów, lista kontrolna, ostrzeżenie dla pozycji."""
+        """Panel fundamentów: warunki, oba score, wartości raportowe i lista kontrolna."""
         r = self.app.store.row(self.ticker) or {}
         arrow = "▶" if self.show_panel else "◀"
         self.fund_btn.config(text="\n".join([arrow, ""] + list("FUNDAMENTY") + ["", arrow]), fg="#ffb020" if r.get("slow") else "#c9d1d9")
@@ -1150,7 +1173,11 @@ class ChartWindow(tk.Toplevel):
         scanner_rows = self.app.store.rows
         in_scanner = any(item.get("ticker") == self.ticker for item in scanner_rows)
         growth_result = calc.growth_score(r) if r else None
-        canslim_result = calc.canslim_glb_scores(scanner_rows).get(self.ticker) if in_scanner else None
+        canslim_results = calc.canslim_glb_scores(
+            scanner_rows,
+            market_series=self.app.store.weekly("SPY"),
+        )
+        canslim_result = canslim_results.get(self.ticker) if in_scanner else None
         for txt, tag in fund_panel_lines(
             r, self.app.store.alerts["pos"].get(self.ticker), self.plan(),
             self.app.store.settings.get("exit", "MACD"), self.app.store.settings.get("strategy_conditions"),

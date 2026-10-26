@@ -26,6 +26,18 @@ def test_glb_state():
     assert calc.glb_state(110, 103, 100) == "SYGNAŁ"
     assert calc.glb_state(111, 103, 100) == "NAD"
     assert calc.glb_state(125, 99, 100) == "WYBICIE"                    # tydzień przebicia: dowolnie wysoko = mocne wybicie
+    assert calc.glb_state(105, 103, 100, armed=False) == "NAD"          # powrót w strefę po wyjściu wyżej: kupowanie spadku, nie sygnał
+
+
+def test_glb_armed_only_after_breakout_from_below():
+    assert calc.glb_armed([90, 95, 101, 104], 100)                       # zamknięcie pod linią, potem przebicie i kolejny tydzień w strefie
+    assert not calc.glb_armed([90, 101, 115, 108], 100)                  # wyszła > 10 % nad linię i wróciła w strefę (CDLX 03/2020)
+    assert calc.glb_armed([90, 101, 115, 98, 103], 100)                  # zeszła pod linię i przebiła ponownie: znów sygnał
+    assert not calc.glb_armed([105, 108, 104], 100)                      # nigdy pod linią w oknie
+    assert not calc.glb_armed([90, 95], None)
+    row = calc.build_row({"ticker": "X"}, {"d": [f"2026-01-{i + 1:02d}" for i in range(4)], "o": [0] * 4, "h": [0] * 4, "l": [1] * 4,
+                                           "c": [90, 115, 108, 106], "v": [1] * 4}, [100] * 5, None)
+    assert row["glb"] == 100 and row["glb_state"] == "NAD"
 
 
 def test_fresh_blue_dot_only_in_last_sessions():

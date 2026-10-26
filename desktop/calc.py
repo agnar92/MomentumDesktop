@@ -109,16 +109,33 @@ def fresh_blue_dot(daily, level, sessions=5):
     return daily["d"][dots[-1]] if dots and dots[-1] >= len(daily["c"]) - sessions else None
 
 
-def glb_state(price, prev, level, max_pct=ENTRY_MAX_PCT):
-    """Stan na zamknięciu tygodnia: WYBICIE (tydzień przebicia — poprzedni pod linią — przy dowolnej wysokości), SYGNAŁ (0–max_pct % nad linią),
-    NAD (dalej; wejście dopiero po Blue Dot na dziennym — stan „BLUE DOT”, `fresh_blue_dot`), POD, BRAK."""
+def glb_armed(closes, level, max_pct=ENTRY_MAX_PCT):
+    """Czy cena jest w strefie po przebiciu OD DOŁU: zamknięcie pod linią uzbraja, zamknięcie > max_pct % nad linią rozbraja.
+    Powrót w strefę 0–max_pct % po wyjściu wyżej to kupowanie spadku, nie sygnał (CDLX 03/2020: cofka do starej linii)."""
+    armed = False
+    if not (_ok(level) and level > 0):
+        return armed
+    for x in closes:
+        if not _ok(x):
+            continue
+        if x < level:
+            armed = True
+        elif x > level * (1 + max_pct / 100):
+            armed = False
+    return armed
+
+
+def glb_state(price, prev, level, max_pct=ENTRY_MAX_PCT, armed=True):
+    """Stan na zamknięciu tygodnia: WYBICIE (tydzień przebicia — poprzedni pod linią — przy dowolnej wysokości), SYGNAŁ (0–max_pct % nad linią
+    po przebiciu od dołu, `glb_armed`), NAD (dalej albo powrót w strefę po wyjściu wyżej; wejście tylko po Blue Dot na dziennym — stan „BLUE DOT”,
+    `fresh_blue_dot`), POD, BRAK."""
     if not (_ok(price) and _ok(level) and level > 0):
         return "BRAK"
     if price < level:
         return "POD"
     if _ok(prev) and prev < level:   # tydzień przebicia: mocne wybicie przy dowolnej wysokości nad linią
         return "WYBICIE"
-    return "NAD" if price > level * (1 + max_pct / 100) else "SYGNAŁ"
+    return "NAD" if price > level * (1 + max_pct / 100) or not armed else "SYGNAŁ"
 
 
 def sma(values, n):
@@ -305,7 +322,7 @@ def build_row(base, weekly, months, fund, spy=None, est=None, conditions=None):
     price = c[-1] if c else None
     prev = c[-2] if len(c) > 1 else None
     level, _ = green_line(months)
-    row.update(price=price, glb=level, glb_state=glb_state(price, prev, level),
+    row.update(price=price, glb=level, glb_state=glb_state(price, prev, level, armed=glb_armed(c, level)),
                glb_pct=(price / level - 1) * 100 if _ok(price) and _ok(level) and level else None,
                turnover=turnover(c, v))
     m = macd_info(c, lo)

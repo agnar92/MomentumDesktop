@@ -7,7 +7,7 @@ Prosta aplikacja okienkowa (Python + Tkinter, ciemny motyw) z **jedną strategi�
 | Lista do pobrania | **Skaner Finviz** do wyboru na pasku (*Skanery / ustawienia…*: własne skanery = nazwa + filtr + limit; domyślnie Bezpieczny (backtest), Trend 50/200, Blisko rekordu (ATH), CANSLIM). Pierwszy = bezpieczny filtr wstępny `ind_stocksonly,sh_price_o10,sh_avgvol_o300,fa_salesqoq_o15` (tylko akcje, cena > 10 $, śr. wolumen > 300 tys., przychody kw. > 15 % r/r). W teście nie odciął żadnego z dużych zwycięzców |
 | Warunki | przychody kw. **≥ +15 % r/r** i marża operacyjna **≥ +3 pp r/r** (SEC EDGAR); P/S, RS i niespodzianki EPS domyślnie wyłączone (badanie 2011–2025: RS ≥ 50 pp obniżał wynik — za mało sygnałów) |
 | Kolejność | warunki + sygnał, potem **najbliżej Green Line** (przy nadmiarze sygnałów: ten sam wynik, mniejsze obsunięcie) |
-| Wejście | **Green Line**: rekord wszech czasów **miesięcznego High** (jak w oryginale Dr. Wisha), który stoi **≥ 3 zamknięte miesiące** (po nowym rekordzie obowiązuje stara linia, dopóki nowy nie przestoi 3 miesięcy); kupno, gdy tydzień zamknie się **0–10 % nad linią** |
+| Wejście | **Green Line**: rekord wszech czasów **miesięcznego High** (jak w oryginale Dr. Wisha), który stoi **≥ 3 zamknięte miesiące** (po nowym rekordzie obowiązuje stara linia, dopóki nowy nie przestoi 3 miesięcy); kupno, gdy tydzień zamknie się **0–10 % nad linią po przebiciu od dołu** (cena zeszła pod linię i wróciła; powrót w strefę po wyjściu > 10 % wyżej to kupowanie spadku — nie sygnał) |
 | Wyjście | stop **10 %** pod wejściem i **tygodniowy MACD (12, 26, 9)**: stop pod Low tygodnia przecięcia w dół **po wejściu** (zamknięcie tygodnia) |
 | Portfel | 8–10 pozycji po równo; najpierw wyjścia, potem wejścia; nie sprzedawaj pozycji dla nowego sygnału; bez dokładek, trailing stopów i stopu czasowego; wolne miejsca = gotówka w SPY. Badanie 2011–2025 (≈5600 spółek, bez zdelistowanych): ≈ 21 % rocznie, DD ≈ −37 %; z gotówką w SPY ≈ 25 % |
 
@@ -16,7 +16,7 @@ Heurystyka z backtestu (spółki z dzisiejszej listy, bez spółek wycofanych z 
 ## Okno
 
 - **Lista**: ticker, spółka, sektor, cena, Green Line, odległość od linii, stan GLB (*WYBICIE* = ten tydzień zamknął się nad linią, poprzedni nie;
-  *SYGNAŁ* = 0–10 % nad linią; *NAD* = dalej; *POD*), MACD (nad / pod sygnałem) i stop z ostatniego przecięcia, zmiana marży operacyjnej i brutto r/r,
+  *SYGNAŁ* = 0–10 % nad linią po przebiciu od dołu; *NAD* = dalej albo powrót w strefę po wyjściu wyżej; *POD*), MACD (nad / pod sygnałem) i stop z ostatniego przecięcia, zmiana marży operacyjnej i brutto r/r,
   przychody r/r, kwartał danych, obrót. Zielone wiersze = warunki spełnione i sygnał GLB. Domyślnie widać wszystkie spółki; filtr „tylko spełniające warunki” jest wyłączony i można go włączyć na pasku.
   Klik w nagłówek sortuje; Enter / dwuklik = wykres; zaznaczenie na liście przełącza otwarty wykres.
 - **Warunki…** (obok checkboxa „tylko spełniające warunki”): wybór, które kryteria są obowiązkowe, i edycja progów dla przychodów kw. r/r, zmiany marży operacyjnej,
@@ -41,7 +41,7 @@ Heurystyka z backtestu (spółki z dzisiejszej listy, bez spółek wycofanych z 
   w dół). Liczby w 📖 Poradniku.
 - **RS jak w Deepvue** (zamiast panelu S&P 500): nad ceną RS Line = akcja / SPY ze średnią 52 tyg. (252 sesje na D), ● zielony = nowy szczyt RS i ceny, ● różowy = szczyt RS przed ceną;
   na końcu linii „+x pp” (RS 52 tyg.). Kolumna **C/C[52 tyg.]** = zamknięcie / zamknięcie sprzed 252 sesji.
-- **Wejście:** zamknięcie tygodnia **0–10 % nad Green Line** (WYBICIE = tydzień przebicia, SYGNAŁ = kolejny tydzień w strefie). Dalej niż 10 % (także BLUE DOT)
+- **Wejście:** zamknięcie tygodnia **0–10 % nad Green Line** po przebiciu od dołu (WYBICIE = tydzień przebicia, SYGNAŁ = kolejny tydzień w strefie; po wyjściu > 10 % wyżej kolejne wejście dopiero po zejściu pod linię). Dalej niż 10 % (także BLUE DOT)
   i Blue Line — tylko informacyjnie (w badaniu 2011–2025 dawały mniej).
 - **Niespodzianki EPS** (warunek „2× nad konsensus”: 2 ostatnie raporty powyżej konsensusu EPS; kolumny Niesp. EPS % i Rewizja EPS 90 dni %, z yfinance,
   co 7 dni). W backteście warunek podniósł wynik z 36,6 do 42,4 % rocznie. Rewizja prognozy na przyszły rok (dziś vs 90 dni temu) to podgląd — bez historii do testu.

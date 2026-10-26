@@ -698,7 +698,7 @@ def fund_panel_lines(r, pos=None, plan=None, exit_method="MACD", conditions=None
     st = r.get("glb_state")
     pct = r.get("glb_pct")
     sig = st in ("WYBICIE", "SYGNAŁ") and (pct is None or pct <= 10)
-    item(True if sig else None if st in ("NAD", "BLUE DOT", "WYBICIE") else False, f"Green Line: {st or '—'} (kupno: zamknięcie tygodnia 0–10 % nad linią)")
+    item(True if sig else None if st in ("NAD", "BLUE DOT", "WYBICIE") else False, f"Green Line: {st or '—'} (kupno: zamknięcie tygodnia 0–10 % nad linią po przebiciu od dołu)")
     item(r.get("macd") == "nad", f"MACD tyg. {r.get('macd') or '—'} sygnałem" + (f" · stop {r['macd_stop']:.2f}" if r.get("macd_stop") else ""))
     item(False if r.get("slow") else None if r.get("accel") is None else True, "brak hamowania przychodów")
     glb, price = r.get("glb"), r.get("price")

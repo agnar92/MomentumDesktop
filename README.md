@@ -19,7 +19,6 @@ Heurystyka z backtestu (spółki z dzisiejszej listy, bez spółek wycofanych z 
   *SYGNAŁ* = 0–10 % nad linią; *NAD* = dalej; *POD*), MACD (nad / pod sygnałem) i stop z ostatniego przecięcia, zmiana marży operacyjnej i brutto r/r,
   przychody r/r, kwartał danych, obrót. Zielone wiersze = warunki spełnione i sygnał GLB. Domyślnie widać wszystkie spółki; filtr „tylko spełniające warunki” jest wyłączony i można go włączyć na pasku.
   Klik w nagłówek sortuje; Enter / dwuklik = wykres; zaznaczenie na liście przełącza otwarty wykres.
-- **Growth Score** (osobny przycisk): okno TOP 10 spółek bieżącego skanera z wynikiem 0–100; lista **Ticker/Score**, domyślnie od najwyższego, kliknięcie tickera otwiera wykres, a rozwinięcie pokazuje wartości i punkty składników. Wagi: przychody r/r 25, przyspieszenie przychodów 20, EPS r/r 15, rewizje EPS z 90 dni 15, zmiana marży operacyjnej 10, EPS surprise 5, revenue surprise 5, trwałość wzrostu 5 (udział z maksymalnie czterech ostatnich kwartałów z dodatnim wzrostem przychodów r/r). ROA/ROI są warunkami filtra wstępnego Finviz, nie są punktowane ponownie. Brakujące dane są pomijane, wynik normalizowany do dostępnych wag i wyświetlany liczbowo przy pokryciu co najmniej 70/100.
 - **Warunki…** (obok checkboxa „tylko spełniające warunki”): wybór, które kryteria są obowiązkowe, i edycja progów dla przychodów kw. r/r, zmiany marży operacyjnej,
   P/S oraz RS 52 tyg. vs S&P 500; można też wyłączyć wymóg dwóch kolejnych niespodzianek EPS. Zmiany są zapisywane, działają od razu i obowiązują przy następnym Sync.
   Brak danych P/S nie odrzuca spółki, zgodnie z dotychczasową regułą.
@@ -39,7 +38,8 @@ Heurystyka z backtestu (spółki z dzisiejszej listy, bez spółek wycofanych z 
   względna (RS ≥ 50 pp nad SPY) i 2 raporty EPS powyżej konsensusu można włączyć ręcznie. Starsze zapisane ustawienia warunków są raz resetowane do nowych domyślnych. Wcześniejszy backtest (płynny rynek): Backtest 2015–2026: +15,6 % na transakcję, portfel wszystkich sygnałów
   36,6 % rocznie (S&P 500 13,6 %), ale mało sygnałów naraz i spadek portfela do −55 %. **Hamuje ⚠**: tempo przychodów spadło o ≥ 10 pp (⚠⚠ z marżą brutto
   w dół). Liczby w 📖 Poradniku.
-- **Linia siły relatywnej (RS) jak w IBD** na wykresie tygodniowym: cena / S&P 500 na dole panelu ceny, na końcu linii liczba „+x pp” (RS 52 tyg.), ● gdy RS jest na szczycie 52 tyg.
+- **RS jak w Deepvue** (zamiast panelu S&P 500): nad ceną RS Line = akcja / SPY ze średnią 52 tyg. (252 sesje na D), ● zielony = nowy szczyt RS i ceny, ● różowy = szczyt RS przed ceną;
+  na końcu linii „+x pp” (RS 52 tyg.). Kolumna **RS Rating** 1–99 = ranking w obrębie skanera z nadwyżki nad SPY za 1/3/6/12 mies. (wagi 40/30/20/10, jawne przybliżenie). Kolumna **C/C[52 tyg.]** = zamknięcie / zamknięcie sprzed 252 sesji.
 - **Wejście:** zamknięcie tygodnia **0–10 % nad Green Line** (WYBICIE = tydzień przebicia, SYGNAŁ = kolejny tydzień w strefie). Dalej niż 10 % (także BLUE DOT)
   i Blue Line — tylko informacyjnie (w badaniu 2011–2025 dawały mniej).
 - **Prognozy analityków** (yfinance): **Upside 12M %** = (średni cel cenowy analityków / bieżąca cena − 1) × 100; wartość odświeżana co 7 dni. To potencjał implikowany celem konsensusu, a nie gwarantowany zwrot.

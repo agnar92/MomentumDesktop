@@ -126,88 +126,6 @@ def test_build_row():
                           SPY, {**EST, "upside": 34.6})["upside"] == 34.6
 
 
-
-
-def _canslim_eps_history():
-    return [
-        ["2022-01-31", 0.50], ["2022-04-30", 0.60], ["2022-07-31", 0.70], ["2022-10-31", 0.80],
-        ["2023-01-31", 0.65], ["2023-04-30", 0.78], ["2023-07-31", 0.91], ["2023-10-31", 1.04],
-        ["2024-01-31", 0.845], ["2024-04-30", 1.014], ["2024-07-31", 1.183], ["2024-10-31", 1.352],
-        ["2025-01-31", 1.0985], ["2025-04-30", 1.3182], ["2025-07-31", 1.5379], ["2025-10-31", 1.7576],
-    ]
-
-
-def _canslim_spy(as_of="2026-10-23"):
-    today = dt.date.fromisoformat(as_of)
-    last_monday = today - dt.timedelta(days=today.weekday())
-    dates = [(last_monday - dt.timedelta(weeks=60 - i)).isoformat() for i in range(60)]
-    return {"d": dates, "c": [300.0 + i * 2.0 for i in range(60)]}
-
-
-def test_canslim_glb_score_uses_equal_weights_for_six_letters_without_n_confirmation():
-    leader = {
-        "ticker": "LEADER", "sector": "Technology", "industry": "Semiconductors", "rs": 60,
-        "glb_state": "WYBICIE", "glb_rvol": 1.6, "dil": -1.0, "shares_float": 45e6,
-        "institutional_ownership": 50.0, "institutional_transactions": 8.0, "roe": 20.0,
-        "rev_rr": 30.0, "accel": 10.0, "dopm": 3.0, "surp": 15.0, "rev_surp": 8.0,
-        "eps_q": _canslim_eps_history(),
-        "qs": [{"rev": x, "rev_rr": 30.0} for x in [80, 85, 90, 95, 100, 110, 120, 130]],
-    }
-    laggard = {
-        "ticker": "LAGGARD", "sector": "Energy", "industry": "Oil & Gas", "rs": -20,
-        "glb_state": "BRAK", "glb_rvol": None, "dil": 5.0, "shares_float": 900e6,
-        "institutional_ownership": 8.0, "institutional_transactions": -5.0, "roe": 4.0,
-        "rev_rr": 5.0, "accel": -5.0, "dopm": -2.0, "surp": -5.0, "rev_surp": -3.0,
-        "eps_q": [[day, value * 0.5] for day, value in _canslim_eps_history()],
-        "qs": [{"rev": x, "rev_rr": 5.0} for x in [80, 85, 90, 95, 100, 102, 104, 106]],
-    }
-    mid = {
-        "ticker": "MID", "sector": "Industrials", "industry": "Tools", "rs": 10,
-        "glb_state": "NAD", "glb_rvol": None, "dil": None, "shares_float": None,
-        "institutional_ownership": None, "institutional_transactions": None, "roe": None,
-        "rev_rr": None, "accel": None, "dopm": None, "surp": None, "rev_surp": None,
-        "eps_q": [], "qs": [],
-    }
-    scored = calc.canslim_glb_scores(
-        [leader, laggard, mid], market_series=_canslim_spy(), as_of="2026-10-23",
-    )
-    result = scored["LEADER"]
-    assert result["score"] is not None and result["coverage"] == pytest.approx(100)
-    assert result["details"]["eps_q_growth"]["value"] == pytest.approx(30.0, abs=0.5)
-    assert result["details"]["annual_eps_cagr"]["value"] == pytest.approx(30.0, abs=1.0)
-    assert result["details"]["annual_eps_consistency"]["value"] == 3
-    assert "new_catalyst" not in result["details"]
-    assert result["details"]["breakout_rvol"]["points"] == pytest.approx(result["details"]["breakout_rvol"]["weight"])
-    assert result["details"]["institutional_transactions"]["points"] > scored["LAGGARD"]["details"]["institutional_transactions"]["points"]
-    assert result["details"]["rs_percentile"]["points"] > scored["LAGGARD"]["details"]["rs_percentile"]["points"]
-    assert result["details"]["market_direction"]["points"] == pytest.approx(result["details"]["market_direction"]["weight"])
-    assert set(result["categories"]) == {
-        "current_earnings", "annual_earnings", "supply_demand", "leadership", "institutional", "market",
-    }
-    weights = [category["weight"] for category in result["categories"].values()]
-    assert all(weight == pytest.approx(100 / 6) for weight in weights)
-    assert sum(calc.CANSLIM_GLB_WEIGHTS.values()) == pytest.approx(100)
-    assert scored["LAGGARD"]["details"]["breakout_rvol"]["points"] is None
-    assert scored["LAGGARD"]["score"] < result["score"]
-
-
-def test_canslim_market_direction_is_missing_without_weekly_spy_data():
-    result = calc.canslim_glb_scores([{"ticker": "A"}], as_of="2026-10-23")["A"]
-    assert result["details"]["market_direction"]["points"] is None
-    assert "new_catalyst" not in result["details"]
-    assert result["score"] is None
-
-
-def test_breakout_relative_volume_uses_the_actual_daily_close_cross():
-    level = 100.0
-    closes = [95.0] * 55 + [99.0, 100.5, 101.0]
-    volumes = [1_000_000.0] * 56 + [1_500_000.0, 1_100_000.0]
-    assert calc.breakout_rel_volume(
-        {"d": [str(i) for i in range(len(closes))], "c": closes, "v": volumes}, level, max_age=10
-    ) == pytest.approx(1.5)
-
-
-
 def test_pegy_ratio_adds_dividend_yield_to_implied_growth():
     # Forward P/E 30 / PEG 2 = implied EPS growth 15%; dividend yield 2% => 30 / 17.
     assert calc.pegy_ratio(2.0, 30.0, 2.0) == pytest.approx(1.76)
@@ -280,8 +198,6 @@ def test_finviz_parse_and_fetch_pages():
             pass
     out, total = finviz.fetch("x", pause=0, log=lambda s: None, get=lambda *a, **k: R())
     assert [r["ticker"] for r in out] == ["NVDA", "MU"] and total == 2
-
-
 
 
 VALUATION_LAYOUT = """<div>#1 / 2 Total</div>
@@ -550,56 +466,6 @@ def test_surprises_known_at_date_and_fresh():
     assert calc.surprises(est, "2026-07-01") == (None, None, None)
 
 
-
-def test_growth_score_uses_seven_weighted_signals_and_normalizes_coverage():
-    row = {
-        "rev_rr": 50, "accel": 10, "eps_rev": 20, "dopm": 6, "surp": 30, "rev_surp": 30,
-        "eps_q": [["2025-01-31", 2.0], ["2026-01-31", 4.0]],
-        "qs": [{"rev_rr": 10}, {"rev_rr": 20}, {"rev_rr": 30}, {"rev_rr": 40}],
-    }
-    result = calc.growth_score(row)
-    assert sum(calc.GROWTH_SCORE_WEIGHTS.values()) == 100.0
-    assert result["score"] == 100.0
-    assert result["coverage"] == 100.0
-    assert result["points"] == 100.0
-    assert result["details"]["eps_growth"]["value"] == pytest.approx(100.0)
-    assert set(result["components"]) == set(calc.GROWTH_SCORE_GROUPS)
-
-    weak = {
-        "rev_rr": 0, "accel": -10, "eps_rev": -20, "dopm": -5, "surp": -20, "rev_surp": -20,
-        "eps_q": [["2025-01-31", 2.0], ["2026-01-31", 1.0]],
-        "qs": [{"rev_rr": -10}, {"rev_rr": -20}],
-    }
-    assert calc.growth_score(weak)["score"] == 0.0
-
-
-def test_growth_score_skips_missing_data_and_requires_70_points_of_coverage():
-    partial = calc.growth_score({"rev_rr": 25, "accel": 5, "eps_rev": 10, "dopm": 3})
-    assert partial["coverage"] == 70.0
-    assert partial["score"] is not None
-    assert partial["details"]["eps_surprise"]["points"] is None
-    assert partial["details"]["revenue_surprise"]["points"] is None
-
-    insufficient = calc.growth_score({"rev_rr": 25, "accel": 5})
-    assert insufficient["coverage"] == 45.0
-    assert insufficient["score"] is None
-
-
-def test_growth_score_scores_surprises_and_quarterly_growth_durability():
-    result = calc.growth_score({
-        "surp": 5,
-        "rev_surp": 5,
-        "qs": [{"rev_rr": 20}, {"rev_rr": 10}, {"rev_rr": -5}, {"rev_rr": 0}],
-    })
-    assert result["details"]["eps_surprise"]["points"] == pytest.approx(3.0)
-    assert result["details"]["revenue_surprise"]["points"] == pytest.approx(3.0)
-    assert result["details"]["durability"]["value"] == pytest.approx(50.0)
-    assert result["details"]["durability"]["points"] == pytest.approx(2.5)
-    assert result["details"]["durability"]["note"].startswith("2/4")
-    assert result["coverage"] == 15.0
-    assert result["score"] is None
-
-
 def test_build_row_exposes_latest_revenue_surprise_and_reported_eps_history():
     est = {
         "surp": [["2026-02-09", 6.0]],
@@ -616,12 +482,9 @@ def test_build_row_exposes_latest_revenue_surprise_and_reported_eps_history():
         SPY,
         est,
     )
-    # W kończy się przed raportem 2026-03-10; przyszła niespodzianka nie może wejść do score.
+    # W kończy się przed raportem 2026-03-10; przyszła niespodzianka nie może wejść do wiersza.
     assert row["rev_surp"] == pytest.approx(4.5)
     assert row["eps_q"] == est["eps_q"]
-    assert calc.growth_score(row)["details"]["eps_growth"]["value"] == pytest.approx(100.0)
-
-
 
 
 def test_old_saved_conditions_reset_to_study_rules(tmp_path):
@@ -635,3 +498,36 @@ def test_old_saved_conditions_reset_to_study_rules(tmp_path):
     st.settings["strategy_conditions"]["rs"]["enabled"] = True
     st.save_settings()
     assert Store(tmp_path).settings["strategy_conditions"]["rs"]["enabled"]
+
+
+def test_rs_rating_deepvue_weights_and_rank():
+    """RS Rating jak w webowym Momentum: nadwyżka nad SPY za 4/13/26/52 tyg. (wagi 40/30/20/10), ranking 1–99 w obrębie listy."""
+    d = [f"2025-{1 + i // 5:02d}-{1 + (i % 5) * 6:02d}" for i in range(60)]
+    spy = {"d": d, "c": [100.0] * 60}
+    fast = {"d": d, "c": [100.0 + i for i in range(60)]}
+    slow = {"d": d, "c": [100.0] * 60}
+    sf, ss = calc.rs_rating_score(fast, spy), calc.rs_rating_score(slow, spy)
+    exp = (159 / 155 - 1) * 40 + (159 / 146 - 1) * 30 + (159 / 133 - 1) * 20 + (159 / 107 - 1) * 10
+    assert sf == pytest.approx(exp) and ss == pytest.approx(0.0)
+    assert calc.rs_rating_score(fast, None) is None
+    rows = calc.rank_rs_rating([{"rs_rating_score": sf}, {"rs_rating_score": ss}, {"rs_rating_score": None}])
+    assert [r["rs_rating"] for r in rows] == [99, 1, None]
+    assert calc.rank_rs_rating([{"rs_rating_score": 5}])[0]["rs_rating"] == 50
+
+
+def test_price_ratio_252_sessions():
+    closes = [100.0] + [50.0] * 251 + [75.0]
+    assert calc.price_ratio(closes) == pytest.approx(0.75)        # 253 zamknięcia: baza = pierwsze (sprzed 252 sesji)
+    assert calc.price_ratio([10.0, 20.0]) == pytest.approx(2.0)    # krótsza historia: najstarsze zamknięcie
+    assert calc.price_ratio([5.0]) is None
+
+
+def test_store_migrates_cc250_and_ranks_rs(tmp_path):
+    import json
+    d = [f"2025-{1 + i // 5:02d}-{1 + (i % 5) * 6:02d}" for i in range(60)]
+    series = {"SPY": {"d": d, "c": [100.0] * 60}, "A": {"d": d, "c": [100.0 + i for i in range(60)]}, "B": {"d": d, "c": [100.0] * 60}}
+    (tmp_path / "weekly.json").write_text(json.dumps(series), encoding="utf-8")
+    (tmp_path / "scan.json").write_text(json.dumps({"at": "x", "rows": [{"ticker": "A", "cc250": 1.4}, {"ticker": "B"}]}), encoding="utf-8")
+    st = Store(tmp_path)
+    a, b = st.rows
+    assert a["cc52w"] == 1.4 and "cc250" not in a and a["rs_rating"] == 99 and b["rs_rating"] == 1

@@ -19,7 +19,7 @@ COLUMNS = [  # (klucz, nagłówek, szerokość, format)
     ("macd_stop", "Stop MACD", 85, "p"), ("dopm", "Δ marża oper. pp", 120, "%"), ("rev_rr", "Przychody r/r %", 115, "%"),
     ("dgm", "Δ marża brutto pp", 125, "%"), ("quarter", "Kwartał", 105, "s"), ("turnover", "Obrót mln $", 95, "m"),
     ("ps", "P/S", 60, "x"), ("peg", "PEG", 70, "x2"), ("pegy", "PEGY", 75, "x2"),
-    ("rs", "RS 52 tyg. pp", 105, "%"), ("surp", "Niesp. EPS %", 95, "%"), ("beat2", "2× nad konsensus", 115, "b"), ("eps_rev", "Rewizja EPS 90 dni %", 140, "%"), ("rvol_w", "RVol tyg.", 80, "x"), ("rvol_d", "RVol dz.", 75, "x"), ("cc250", "C/C250", 85, "r"), ("ok", "Warunki", 75, "b"), ("slow", "Hamuje", 95, "w"),
+    ("rs_rating", "RS Rating", 80, "rating"), ("rs", "RS 52 tyg. pp", 105, "%"), ("surp", "Niesp. EPS %", 95, "%"), ("beat2", "2× nad konsensus", 115, "b"), ("eps_rev", "Rewizja EPS 90 dni %", 140, "%"), ("rvol_w", "RVol tyg.", 80, "x"), ("rvol_d", "RVol dz.", 75, "x"), ("cc52w", "C/C[52 tyg.]", 95, "r"), ("ok", "Warunki", 75, "b"), ("slow", "Hamuje", 95, "w"),
 ]
 SIGNAL = ("WYBICIE", "SYGNAŁ")
 ENTRY_MAX = calc.ENTRY_MAX_PCT   # kupno: zamknięcie tygodnia 0–10 % nad Green Line (BLUE DOT i wyżej — tylko informacyjnie)
@@ -83,6 +83,8 @@ def cell(v, f):
         return f"{v:.2f}"
     if f == "w":
         return "⚠⚠ + marża" if v == "HAMUJE+MB" else "⚠ hamuje" if v else ""
+    if f == "rating":
+        return str(round(v))
     return str(v)
 
 
@@ -113,7 +115,6 @@ class App:
         apply_dark(self.root)
         self.store = Store(base)
         self.q, self.chart, self.sort = queue.Queue(), None, None
-        self.growth_dialog = None
         self._daily_alert_refreshing = False
         self._symbol_syncs = set()
         self._symbol_openings = set()
@@ -128,7 +129,6 @@ class App:
         self.scanner_box.pack(side="left", padx=2)
         self.scanner_box.bind("<<ComboboxSelected>>", lambda e: self.select_scanner(self.scanner.get()))
         tk.Button(bar, text="Skanery / ustawienia…", command=self.open_settings, relief="flat").pack(side="left", padx=4)
-        tk.Button(bar, text="Scoring", command=self.open_growth_score, relief="flat").pack(side="left", padx=4)
         self.only_ok = tk.BooleanVar(value=False)
         tk.Checkbutton(bar, text="tylko spełniające warunki", variable=self.only_ok, command=self.refresh, bg=PANEL).pack(side="left", padx=8)
         tk.Button(bar, text="Warunki…", command=lambda: StrategyConditionsDialog(self), relief="flat").pack(side="left", padx=2)
@@ -161,9 +161,15 @@ class App:
         all_columns = [c[0] for c in COLUMNS]
         display_columns = self.store.settings.get("main_columns")
         if display_columns:
+            display_columns = ["cc52w" if k == "cc250" else k for k in display_columns]   # C/C250 -> C/C[52 tyg.]
             display_columns = [k for k in display_columns if k in all_columns]
             # Nowe kolumny dodajemy też do zapisanych wcześniej układów.
             changed = False
+            if not self.store.settings.get("rs_rating_column"):   # RS Rating (Deepvue) — dodany raz, potem można go ukryć
+                self.store.settings["rs_rating_column"] = True
+                if "rs_rating" not in display_columns:
+                    display_columns.insert(display_columns.index("rs") if "rs" in display_columns else len(display_columns), "rs_rating")
+                changed = True
             for key in ("upside", "peg", "pegy"):
                 if key not in display_columns:
                     if key in ("peg", "pegy") and "ps" in display_columns:
@@ -290,7 +296,6 @@ class App:
                                 f"   (warunki konieczne: {condition_text};"
                                 f" sygnał: zamknięcie tyg. 0–{calc.ENTRY_MAX_PCT:g} % nad Green Line; wyjście: MACD tyg. + stop {calc.STOP_PCT:g} %)")
 
-        self.refresh_growth_dialog()
 
     def sort_by(self, key):
         self.sort = (key, not self.sort[1]) if self.sort and self.sort[0] == key else (key, key not in ("ticker", "company", "sector"))
@@ -435,28 +440,6 @@ class App:
         settings["symbols"] = [sym] + [x for x in settings.get("symbols", []) if x != sym][:14]
         self.store.save_settings()
 
-    def open_growth_score(self):
-        if self.growth_dialog is not None:
-            try:
-                if self.growth_dialog.winfo_exists():
-                    self.growth_dialog.fill()
-                    self.growth_dialog.lift()
-                    return
-            except tk.TclError:
-                pass
-        self.growth_dialog = GrowthScoreDialog(self)
-
-    def refresh_growth_dialog(self):
-        dialog = self.growth_dialog
-        if dialog is not None:
-            try:
-                if dialog.winfo_exists():
-                    dialog.fill()
-                else:
-                    self.growth_dialog = None
-            except tk.TclError:
-                self.growth_dialog = None
-
     def _poll(self):
         try:
             while True:
@@ -492,9 +475,7 @@ class App:
                     old = self.store.row(ticker) or {}
                     if daily and daily.get("c"):
                         row["rvol_d"] = calc.rel_volume(daily.get("v") or [], calc.RVOL_D)
-                        closes = daily["c"]
-                        base_i = max(0, len(closes) - 251)
-                        row["cc250"] = closes[-1] / closes[base_i] if len(closes) >= 2 and closes[base_i] else None
+                        row["cc52w"] = calc.price_ratio(daily["c"])
                         blue_dot = calc.fresh_blue_dot(daily, row.get("glb")) if row.get("glb_state") == "NAD" else None
                         if blue_dot:
                             row["glb_state"], row["bdot"] = "BLUE DOT", blue_dot
@@ -503,7 +484,7 @@ class App:
                         daily["period"] = "D"
                         self.store.save_daily_series(ticker, daily)
                     else:
-                        for key in ("rvol_d", "cc250", "bdot"):
+                        for key in ("rvol_d", "cc52w", "bdot"):
                             if key in old:
                                 row[key] = old[key]
                     if monthly:
@@ -1226,7 +1207,7 @@ Test 2015–2026: RWB + nad GLB + Blue Dot, stop pod Low kropki, wyjście MACD: 
 CZEGO NIE SZUKAĆ (nic nie wnosiło)
 ROE / ROI, Blue Dot jako wejście, stan MACD przy wejściu, trend S&P 500, wolumen wybicia, długość bazy, kup +0,1 % / sprzedaj −0,1 % przy linii
 (dziennie: −0,3 % rocznie), samo przyspieszenie przychodów, poziom marży brutto i operacyjnej, sam EPS, zmiana marży kwartał do kwartału.
-Wykres tygodniowy: S&P 500 nad ceną = kierunek rynku; słupki przychodów pod wolumenem — zielony ≥ +25 % r/r, żółty ≥ +15 %.
+Wykres: nad ceną RS Line jak w Deepvue (akcja / SPY, średnia 52 tyg., ● zielony = nowy szczyt RS i ceny, ● różowy = RS przed ceną, RS Rating 1–99 w obrębie skanera); słupki przychodów pod wolumenem — zielony ≥ +25 % r/r, żółty ≥ +15 %.
 
 Heurystyka z backtestu na spółkach notowanych dziś (bez wycofanych z giełdy), nie porada inwestycyjna."""
 
@@ -1282,421 +1263,6 @@ def checklist(row, pos=None, conditions=None):
                        f"w {'50' if r['slow'] == 'HAMUJE+MB' else '44'} % przypadków (normalnie 33 %). Rozważ zacieśnienie stopu."]
     return lines_
 
-
-class GrowthScoreDialog(tk.Toplevel):
-    """Ranking wszystkich spółek bieżącego skanera z rozwijanym panelem składowych po prawej."""
-
-    PANEL_WIDTH = 360
-    BASE_WIDTH = 790
-    WINDOW_HEIGHT = 720
-
-    def __init__(self, app):
-        super().__init__(app.root)
-        self.app = app
-        self.descending = True
-        self.show_components = False
-        self.MODE_GROWTH = "Growth Score"
-        self.MODE_CANSLIM = "CAN SLIM–GLB"
-        saved_mode = app.store.settings.get("scoring_mode", self.MODE_GROWTH)
-        if saved_mode not in (self.MODE_GROWTH, self.MODE_CANSLIM):
-            saved_mode = self.MODE_GROWTH
-        self.mode_var = tk.StringVar(value=saved_mode)
-        self.scores = {}
-        self.metric_value_labels = {}
-        self.metric_points_labels = {}
-        self.category_score_labels = {}
-        self.title(f"Scoring — {self.mode_var.get()}")
-        self.geometry(f"{self.BASE_WIDTH}x{self.WINDOW_HEIGHT}")
-        self.minsize(650, 420)
-        self.configure(bg=PANEL)
-        apply_dark(self)
-
-        header = tk.Frame(self, bg=PANEL)
-        header.pack(fill="x", padx=12, pady=(10, 8))
-        title_box = tk.Frame(header, bg=PANEL)
-        title_box.pack(side="left", fill="x", expand=True)
-        self.mode_title = tk.Label(title_box, text=self.mode_var.get(), bg=PANEL, fg=FG,
-                                   font=("Segoe UI", 13, "bold"))
-        self.mode_title.pack(anchor="w")
-        self.count_label = tk.Label(title_box, text="", bg=PANEL, fg="#8b95a3", anchor="w")
-        self.count_label.pack(anchor="w", pady=(2, 0))
-        mode_frame = tk.Frame(header, bg=PANEL)
-        mode_frame.pack(side="right", padx=(8, 4))
-        tk.Label(mode_frame, text="Model:", bg=PANEL, fg=FG).pack(side="left", padx=(0, 5))
-        self.mode_box = ttk.Combobox(
-            mode_frame, textvariable=self.mode_var,
-            values=(self.MODE_GROWTH, self.MODE_CANSLIM), state="readonly", width=17
-        )
-        self.mode_box.pack(side="left")
-        self.mode_box.bind("<<ComboboxSelected>>", self.change_mode)
-        tk.Button(header, text="⟳ Odśwież", command=self.fill, relief="flat").pack(side="right", padx=(4, 0))
-        tk.Button(header, text="Zamknij", command=self.close, relief="flat").pack(side="right", padx=(4, 0))
-
-        self.body = tk.Frame(self, bg=BG)
-        self.body.pack(fill="both", expand=True, padx=10, pady=(0, 8))
-
-        table_frame = tk.Frame(self.body, bg=BG)
-        table_frame.pack(side="left", fill="both", expand=True)
-        self.tree = ttk.Treeview(
-            table_frame, columns=("ticker", "score", "coverage"), show="headings",
-            height=24, selectmode="browse"
-        )
-        self.tree.heading("ticker", text="Ticker")
-        self.tree.heading("score", text="Score ↓", command=self.toggle_sort)
-        self.tree.heading("coverage", text="Pokrycie")
-        self.tree.column("ticker", width=145, minwidth=100, anchor="w", stretch=True)
-        self.tree.column("score", width=85, minwidth=75, anchor="e", stretch=False)
-        self.tree.column("coverage", width=92, minwidth=82, anchor="e", stretch=False)
-        vsb = ttk.Scrollbar(table_frame, orient="vertical", command=self.tree.yview)
-        hsb = ttk.Scrollbar(table_frame, orient="horizontal", command=self.tree.xview)
-        self.tree.configure(yscrollcommand=vsb.set, xscrollcommand=hsb.set)
-        self.tree.grid(row=0, column=0, sticky="nsew")
-        vsb.grid(row=0, column=1, sticky="ns")
-        hsb.grid(row=1, column=0, sticky="ew")
-        table_frame.grid_rowconfigure(0, weight=1)
-        table_frame.grid_columnconfigure(0, weight=1)
-        self.tree.tag_configure("high", foreground="#3ddc84")
-        self.tree.tag_configure("mid", foreground="#ffcc66")
-        self.tree.tag_configure("low", foreground="#ff8585")
-        self.tree.tag_configure("missing", foreground="#8b95a3")
-        self.tree.bind("<ButtonRelease-1>", self.on_cell_click)
-        self.tree.bind("<<TreeviewSelect>>", self.update_components)
-        self.tree.bind("<Double-1>", self.open_selected)
-        self.tree.bind("<Return>", self.open_selected)
-
-        # Jak panel fundamentów na wykresie: wąski przycisk zostaje przy krawędzi,
-        # a szczegóły pojawiają się z boku zamiast wypychać tabelę od dołu.
-        self.panel_toggle = tk.Button(
-            self.body, text="", command=self.toggle_components, relief="flat", width=2,
-            bg="#1b2129", fg="#c9d1d9", activebackground="#263040",
-            font=("Segoe UI", 9)
-        )
-        self.panel_toggle.pack(side="right", fill="y", padx=(4, 0))
-        self.detail_frame = tk.Frame(self.body, bg=PANEL, width=self.PANEL_WIDTH)
-        self.detail_frame.pack_propagate(False)
-        self.detail_canvas = tk.Canvas(self.detail_frame, bg=PANEL, highlightthickness=0)
-        self.detail_scrollbar = ttk.Scrollbar(self.detail_frame, orient="vertical", command=self.detail_canvas.yview)
-        self.detail_canvas.configure(yscrollcommand=self.detail_scrollbar.set)
-        self.detail_scrollbar.pack(side="right", fill="y")
-        self.detail_canvas.pack(side="left", fill="both", expand=True)
-        self.detail_content = tk.Frame(self.detail_canvas, bg=PANEL)
-        self.detail_window = self.detail_canvas.create_window((0, 0), window=self.detail_content, anchor="nw")
-        self.detail_content.bind(
-            "<Configure>",
-            lambda _e: self.detail_canvas.configure(scrollregion=self.detail_canvas.bbox("all"))
-        )
-        self.detail_canvas.bind(
-            "<Configure>",
-            lambda e: self.detail_canvas.itemconfigure(self.detail_window, width=e.width)
-        )
-        self.detail_canvas.bind(
-            "<MouseWheel>",
-            lambda e: self.detail_canvas.yview_scroll(int(-1 * (e.delta / 120)), "units")
-        )
-        self._update_panel_button()
-        self.protocol("WM_DELETE_WINDOW", self.close)
-        app.growth_dialog = self
-        self.fill()
-
-    @staticmethod
-    def _fmt_value(value, suffix=""):
-        if value is None:
-            return "Brak danych"
-        try:
-            return f"{float(value):+.1f}{suffix}".replace(".", ",")
-        except (TypeError, ValueError):
-            return str(value)
-
-    @staticmethod
-    def _fmt_points(points, weight):
-        return "pominięte" if points is None else f"{points:.1f}/{weight:g} pkt".replace(".", ",")
-
-    @staticmethod
-    def _score_text(score):
-        return "—" if score is None else f"{score:.1f}".replace(".", ",")
-
-    @staticmethod
-    def _bar(parent, fraction, color, bg="#303946"):
-        track = tk.Frame(parent, bg=bg, height=7)
-        track.pack(fill="x", padx=9, pady=(2, 5))
-        track.pack_propagate(False)
-        fraction = min(1.0, max(0.0, float(fraction or 0.0)))
-        if fraction > 0:
-            fill = tk.Frame(track, bg=color, height=7)
-            fill.place(x=0, y=0, relheight=1, relwidth=fraction)
-        return track
-
-    @staticmethod
-    def _score_color(score):
-        if score is None:
-            return "#8b95a3"
-        if score >= 75:
-            return "#3ddc84"
-        if score >= 50:
-            return "#ffcc66"
-        return "#ff8585"
-
-    def _update_panel_button(self):
-        arrow = "▶" if self.show_components else "◀"
-        label = "\n".join([arrow, ""] + list("SKŁADOWE") + ["", arrow])
-        self.panel_toggle.config(text=label)
-
-    def _resize_for_panel(self):
-        screen_width = self.winfo_screenwidth()
-        width = self.BASE_WIDTH
-        if self.show_components:
-            width += self.PANEL_WIDTH + 8
-        width = min(width, max(650, screen_width - 40))
-        height = min(self.WINDOW_HEIGHT, max(420, self.winfo_screenheight() - 80))
-        self.geometry(f"{width}x{height}")
-
-    def change_mode(self, _event=None):
-        """Przełącza model rankingu, zachowując listę tickerów i panel boczny."""
-        self.app.store.settings["scoring_mode"] = self.mode_var.get()
-        self.app.store.save_settings()
-        self.mode_title.config(text=self.mode_var.get())
-        self.title(f"Scoring — {self.mode_var.get()}")
-        self.descending = True
-        self.tree.heading("score", text="Score ↓", command=self.toggle_sort)
-        self.fill()
-
-    def fill(self):
-        selected = self.tree.selection()
-        selected_ticker = selected[0] if selected else None
-        self.tree.delete(*self.tree.get_children())
-        rows = []
-        self.scores = {}
-        source_rows = self.app.store.rows
-        if self.mode_var.get() == self.MODE_CANSLIM:
-            self.scores = calc.canslim_glb_scores(
-                source_rows,
-                market_series=self.app.store.weekly("SPY"),
-            )
-        for row in source_rows:
-            ticker = row.get("ticker")
-            if not ticker:
-                continue
-            result = self.scores.get(ticker) if self.mode_var.get() == self.MODE_CANSLIM else calc.growth_score(row)
-            self.scores[ticker] = result
-            rows.append((ticker, result["score"], result["coverage"]))
-        def key(item):
-            ticker, score, _coverage = item
-            if score is None:
-                return (1, 0.0, ticker)
-            return (0, -score if self.descending else score, ticker)
-        rows.sort(key=key)
-        # Nie ucinamy listy do TOP 10 — każdy ticker aktualnego skanera ma swój wiersz.
-        for ticker, score, coverage in rows:
-            shown = self._score_text(score)
-            tags = ("missing",) if score is None else (
-                "high" if score >= 75 else "mid" if score >= 50 else "low",
-            )
-            self.tree.insert("", "end", iid=ticker, values=(ticker, shown, f"{coverage:.0f}/100"), tags=tags)
-        scored = sum(1 for _ticker, score, _coverage in rows if score is not None)
-        hint = ("CAN SLIM–GLB · 6 liter C/A/S/L/I/M, każda z równą wagą"
-                if self.mode_var.get() == self.MODE_CANSLIM else "Growth Score · wzrost i niespodzianki wynikowe")
-        self.count_label.config(
-            text=f"{len(rows)} spółek · {scored} z wynikiem (pokrycie ≥70/100) · {hint}"
-        )
-        if selected_ticker in self.tree.get_children():
-            self.tree.selection_set(selected_ticker)
-        elif self.tree.get_children():
-            self.tree.selection_set(self.tree.get_children()[0])
-        self.update_components()
-
-    def toggle_sort(self):
-        self.descending = not self.descending
-        self.tree.heading("score", text=f"Score {'↓' if self.descending else '↑'}", command=self.toggle_sort)
-        self.fill()
-
-    def toggle_components(self):
-        self.show_components = not self.show_components
-        if self.show_components:
-            self.detail_frame.pack(side="right", fill="y", before=self.panel_toggle)
-            if not self.tree.selection() and self.tree.get_children():
-                self.tree.selection_set(self.tree.get_children()[0])
-        else:
-            self.detail_frame.pack_forget()
-        self._update_panel_button()
-        self._resize_for_panel()
-        self.update_components()
-
-    def update_components(self, _event=None):
-        if not self.show_components:
-            return
-        selected = self.tree.selection()
-        ticker = selected[0] if selected else None
-        row = next((r for r in self.app.store.rows if r.get("ticker") == ticker), None)
-        result = self.scores.get(ticker)
-        for child in self.detail_content.winfo_children():
-            child.destroy()
-        self.metric_value_labels = {}
-        self.metric_points_labels = {}
-        self.category_score_labels = {}
-
-        if row is None or result is None:
-            tk.Label(
-                self.detail_content, text="Zaznacz spółkę z rankingu, aby zobaczyć składowe.",
-                bg=PANEL, fg="#8b95a3", justify="left", wraplength=300,
-                font=("Segoe UI", 10)
-            ).pack(fill="x", padx=12, pady=18)
-            return
-
-        score = result["score"]
-        score_text = self._score_text(score)
-        score_color = self._score_color(score)
-        summary = tk.Frame(
-            self.detail_content, bg="#1c2632", highlightbackground="#354354",
-            highlightthickness=1
-        )
-        summary.pack(fill="x", padx=9, pady=(10, 8))
-        tk.Label(
-            summary, text=f"{ticker}  ·  {self.mode_var.get().upper()}", bg="#1c2632", fg="#c9d1d9",
-            font=("Segoe UI", 10, "bold"), anchor="w"
-        ).pack(fill="x", padx=11, pady=(9, 0))
-        score_row = tk.Frame(summary, bg="#1c2632")
-        score_row.pack(fill="x", padx=10, pady=(0, 1))
-        self.score_label = tk.Label(
-            score_row, text=score_text, bg="#1c2632", fg=score_color,
-            font=("Segoe UI", 25, "bold"), anchor="w"
-        )
-        self.score_label.pack(side="left")
-        tk.Label(
-            score_row, text="/ 100 pkt", bg="#1c2632", fg="#8b95a3",
-            font=("Segoe UI", 10), anchor="s"
-        ).pack(side="left", padx=(5, 0), pady=(0, 5))
-        self.score_status = tk.Label(
-            summary,
-            text=(f"Pokrycie danych {result['coverage']:.0f}/100" if score is not None
-                  else f"Za mało danych: {result['coverage']:.0f}/100 · potrzeba 70"),
-            bg="#1c2632", fg="#8b95a3" if score is None else score_color,
-            font=("Segoe UI", 9, "bold"), anchor="w"
-        )
-        self.score_status.pack(fill="x", padx=11)
-        self.coverage_label = tk.Label(
-            summary, text=f"Pokrycie danych: {result['coverage']:.0f}/100",
-            bg="#1c2632", fg="#c9d1d9", font=("Segoe UI", 9), anchor="w"
-        )
-        self.coverage_label.pack(fill="x", padx=11, pady=(4, 0))
-        self._bar(summary, result["coverage"] / 100, score_color)
-        tk.Label(
-            summary,
-            text="Wynik normalizowany względem dostępnych danych; braków nie liczymy jako zera.",
-            bg="#1c2632", fg="#8b95a3", justify="left", wraplength=310,
-            font=("Segoe UI", 8)
-        ).pack(fill="x", padx=11, pady=(1, 9))
-
-        group_defs = result.get("groups", calc.GROWTH_SCORE_GROUPS)
-        for group_key, (group_label, metric_keys) in group_defs.items():
-            category = result["categories"][group_key]
-            card = tk.Frame(
-                self.detail_content, bg="#171e27", highlightbackground="#303b49",
-                highlightthickness=1
-            )
-            card.pack(fill="x", padx=9, pady=(0, 7))
-            heading = tk.Frame(card, bg="#171e27")
-            heading.pack(fill="x", padx=9, pady=(7, 0))
-            tk.Label(
-                heading, text=group_label, bg="#171e27", fg="#eef2f7",
-                font=("Segoe UI", 9, "bold"), anchor="w", justify="left", wraplength=205
-            ).pack(side="left", fill="x", expand=True)
-            earned = category["points"]
-            covered = category["coverage"]
-            weight = category["weight"]
-            earned_text = "brak danych" if earned is None else f"{earned:.1f}".replace(".", ",")
-            score_label = tk.Label(
-                heading, text=(f"{earned_text}/{covered:.0f}" if covered else "—"),
-                bg="#171e27", fg=self._score_color(None if earned is None or not covered else earned / covered * 100),
-                font=("Consolas", 10, "bold"), anchor="e"
-            )
-            score_label.pack(side="right", padx=(4, 0))
-            self.category_score_labels[group_key] = score_label
-            tk.Label(
-                card, text=f"Dostępne wagi: {covered:.0f}/{weight:.0f} pkt",
-                bg="#171e27", fg="#8b95a3", font=("Segoe UI", 8), anchor="w"
-            ).pack(fill="x", padx=9, pady=(2, 0))
-            self._bar(card, earned / covered if covered and earned is not None else 0,
-                      self._score_color(None if earned is None or not covered else earned / covered * 100),
-                      bg="#2b3440")
-
-            for key in metric_keys:
-                detail = result["details"][key]
-                metric = tk.Frame(card, bg="#171e27")
-                metric.pack(fill="x", padx=9, pady=(4, 4))
-                line = tk.Frame(metric, bg="#171e27")
-                line.pack(fill="x")
-                tk.Label(
-                    line, text=detail["label"], bg="#171e27", fg="#c9d1d9",
-                    font=("Segoe UI", 8), anchor="w", justify="left", wraplength=190
-                ).pack(side="left", fill="x", expand=True)
-                raw_value = detail["value"]
-                value_color = "#8b95a3" if raw_value is None else (
-                    "#3ddc84" if raw_value >= 0 else "#ff8585"
-                )
-                value_label = tk.Label(
-                    line, text=self._fmt_value(raw_value, detail["unit"]),
-                    bg="#171e27", fg=value_color, font=("Consolas", 9, "bold"), anchor="e"
-                )
-                value_label.pack(side="right", padx=(4, 0))
-                self.metric_value_labels[key] = value_label
-                points_label = tk.Label(
-                    metric, text=self._fmt_points(detail["points"], detail["weight"]),
-                    bg="#171e27", fg="#8b95a3" if detail["points"] is None else "#c9d1d9",
-                    font=("Segoe UI", 8), anchor="w"
-                )
-                points_label.pack(fill="x", pady=(1, 0))
-                self.metric_points_labels[key] = points_label
-                if detail["points"] is not None:
-                    self._bar(
-                        metric, detail["points"] / detail["weight"],
-                        self._score_color(detail["points"] / detail["weight"] * 100),
-                        bg="#2b3440"
-                    )
-                note = detail.get("note")
-                if note:
-                    tk.Label(
-                        metric, text=note, bg="#171e27", fg="#8b95a3",
-                        font=("Segoe UI", 8), justify="left", wraplength=300, anchor="w"
-                    ).pack(fill="x", pady=(0, 2))
-
-        footer_text = (
-            "Model eksperymentalny wg TraderLion: C = kwartalny EPS/sprzedaż; A = EPS roczny przez 3 lata, sprzedaż i ROE; "
-            "S = RVol na rzeczywistym dziennym przejściu ponad Green Line, rozwodnienie i float; "
-            "L = percentyl RS/branży w aktywnym skanerze; I = Inst Own/Trans Finviz (bez oceny jakości funduszy); "
-            "M = trend SPY SMA10/40 tygodni, nie oficjalny IBD Follow-Through Day. Sześć liter ma równą wagę; GLB odpowiada za wybicie Green Line."
-            if self.mode_var.get() == self.MODE_CANSLIM else
-            "ROA/ROI, marże i część filtrów jakościowych pochodzą z filtrów wstępnych Finviz — nie są punktowane ponownie."
-        )
-        footer = tk.Label(
-            self.detail_content,
-            text=footer_text,
-            bg=PANEL, fg="#8b95a3", justify="left", wraplength=320,
-            font=("Segoe UI", 8)
-        )
-        footer.pack(fill="x", padx=12, pady=(2, 12))
-
-    def on_cell_click(self, event):
-        if self.tree.identify_region(event.x, event.y) != "cell":
-            return
-        ticker = self.tree.identify_row(event.y)
-        if not ticker:
-            return
-        self.tree.selection_set(ticker)
-        self.tree.focus(ticker)
-        if self.tree.identify_column(event.x) == "#1":
-            self.app.open_chart(ticker)
-        else:
-            self.update_components()
-
-    def open_selected(self, event=None):
-        selected = self.tree.selection()
-        if selected:
-            self.app.open_chart(selected[0])
-
-    def close(self):
-        if getattr(self.app, "growth_dialog", None) is self:
-            self.app.growth_dialog = None
-        self.destroy()
 
 class GuideDialog(tk.Toplevel):
     """📖 Poradnik: zasady z badań + lista kontrolna spółki otwartej na wykresie (albo zaznaczonej na liście)."""

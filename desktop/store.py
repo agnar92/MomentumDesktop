@@ -122,8 +122,14 @@ class Store:
                 ticker = row.get("ticker")
                 if ticker:
                     self._other_rows.setdefault(ticker, row)
+        spy = self.series.get("SPY") if isinstance(getattr(self, "series", None), dict) else None
         for row in self.rows:
             row["ok"] = calc.passes(row, self.settings.get("strategy_conditions"))
+            if "cc52w" not in row and "cc250" in row:   # starsze zapisy: C/C250 -> C/C[52 tyg.]
+                row["cc52w"] = row.pop("cc250")
+            if row.get("rs_rating_score") is None and spy and self.series.get(row.get("ticker")):
+                row["rs_rating_score"] = calc.rs_rating_score(self.series[row["ticker"]], spy)
+        calc.rank_rs_rating(self.rows)   # RS Rating 1–99 w obrębie listy skanera (Deepvue)
 
     def select(self, name):
         """Przełącza wybrany skaner (lista spółek z jego ostatniego Sync)."""

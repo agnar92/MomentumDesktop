@@ -8,7 +8,8 @@ import math
 SIGNAL_STATES = ("WYBICIE", "SYGNAŁ", "BLUE DOT")
 MAX_LOG = 200
 STOP_PCT = 10.0    # stop początkowy pod ceną kupna
-HALF_DROP = 20.0   # spadek od szczytu (zamknięcia tygodnia od wejścia), przy którym sprzedajesz połowę
+HALF_DROP = 20.0   # spadek od szczytu (zamknięcia tygodnia od wejścia), przy którym można sprzedać połowę (wynik bez zmian, opcja)
+MAX_POSITIONS = 10   # portfel: 10 pozycji po równo; wolne miejsca = gotówka w SPY do nowego sygnału
 
 
 def date_index(dates, d):
@@ -100,9 +101,32 @@ def state_alerts(prev, row):
     return out
 
 
+def _ema(values, n):
+    k, out, prev = 2 / (n + 1), [], None
+    for v in values:
+        prev = v if prev is None else prev + k * (v - prev)
+        out.append(prev)
+    return out
+
+
+def macd_stop_since(data, since):
+    """Stop MACD pozycji: Low ostatniego tygodnia, w którym MACD (12, 26, 9) przeciął sygnał w dół PO tygodniu wejścia; None = jeszcze nie było
+    (badanie 2011–2025: przecięcia sprzed wejścia obniżały wynik z ≈ 21 % do ≈ 13 % rocznie)."""
+    c, lo, d = (data or {}).get("c") or [], (data or {}).get("l") or [], (data or {}).get("d") or []
+    if len(c) < 35 or not lo:
+        return None
+    m = [a - b for a, b in zip(_ema(c, 12), _ema(c, 26))]
+    h = [a - b for a, b in zip(m, _ema(m, 9))]
+    out = None
+    for i in range(max(1, date_index(d, since or "") + 1), len(c)):
+        if h[i] < 0 <= h[i - 1] and lo[i] is not None:
+            out = lo[i]
+    return out
+
+
 def position_plan(pos, data, row):
-    """Plan wyjścia pozycji: pos = {since, price}, data = tygodniowe {d, c}, row = wiersz (glb) -> {entry, stop_init (−10 %), peak (najwyższe
-    zamknięcie tygodnia od wejścia), half_at (−20 % od szczytu), half (ostatnie zamknięcie ≤ half_at), last, glb_exit}."""
+    """Plan wyjścia pozycji: pos = {since, price}, data = tygodniowe {d, c, l}, row = wiersz (glb) -> {entry, stop_init (−10 %), macd_stop (MACD od
+    wejścia), peak (najwyższe zamknięcie tygodnia od wejścia), half_at (−20 % od szczytu), half (ostatnie zamknięcie ≤ half_at), last, glb_exit}."""
     c, d = (data or {}).get("c") or [], (data or {}).get("d") or []
     entry = (pos or {}).get("price")
     peak = entry
@@ -112,7 +136,8 @@ def position_plan(pos, data, row):
     last = c[-1] if c else None
     half_at = peak * (1 - HALF_DROP / 100) if peak is not None else None
     glb = (row or {}).get("glb")
-    return {"entry": entry, "stop_init": entry * (1 - STOP_PCT / 100) if entry is not None else None, "peak": peak, "half_at": half_at, "last": last,
+    return {"entry": entry, "stop_init": entry * (1 - STOP_PCT / 100) if entry is not None else None,
+            "macd_stop": macd_stop_since(data, (pos or {}).get("since")), "peak": peak, "half_at": half_at, "last": last,
             "half": last is not None and half_at is not None and last <= half_at, "glb_exit": bool(last is not None and glb and last < glb)}
 
 
@@ -124,7 +149,8 @@ def position_status(plan, row, exit_method="MACD"):
         out.append("STOP −10 %")
     if exit_method == "GLB" and pl.get("glb_exit"):
         out.append("WYJŚCIE: zamknięcie pod GLB")
-    if exit_method != "GLB" and r.get("macd_stop") and last is not None and last < r["macd_stop"]:
+    ms = pl["macd_stop"] if "macd_stop" in pl else r.get("macd_stop")   # plan pozycji: MACD od wejścia
+    if exit_method != "GLB" and ms and last is not None and last < ms:
         out.append("WYJŚCIE: pod stopem MACD")
     if pl.get("half"):
         out.append("SPRZEDAJ ½ (−20 % od szczytu)")

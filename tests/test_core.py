@@ -52,16 +52,20 @@ def test_macd_cross_and_stop_is_low_of_cross_week():
 
 def test_turnover_and_conditions():
     assert calc.turnover([10, 10, 10, 10], [5e7] * 4) == pytest.approx(1e8)
-    good = {"turnover": 120e6, "rev_rr": 20, "dopm": 4, "rs": 60, "beat2": True}
-    assert calc.passes(good) and calc.passes({**good, "ps": 15}) and calc.passes({**good, "ps": None})
-    assert calc.passes({**good, "turnover": 1e3})                      # obrót nie jest warunkiem (filtr w Finviz)
-    for k, v in (("rev_rr", 10), ("dopm", 2), ("dopm", None), ("rs", 40), ("rs", None), ("ps", 25), ("beat2", False), ("beat2", None)):
+    good = {"turnover": 120e6, "rev_rr": 20, "dopm": 4}
+    assert calc.passes(good) and calc.passes({**good, "turnover": 1e3})   # obrót nie jest warunkiem (filtr w Finviz)
+    # domyślnie (badanie 2011–2025) RS, P/S i beat2 nie blokują
+    assert calc.passes({**good, "rs": 10, "ps": 40, "beat2": False})
+    for k, v in (("rev_rr", 10), ("rev_rr", None), ("dopm", 2), ("dopm", None)):
         assert not calc.passes({**good, k: v})
 
 
 def test_strategy_conditions_are_configurable():
     row = {"rev_rr": 20, "dopm": 4, "ps": 18, "rs": 55, "beat2": True}
     cfg = calc.normalize_conditions()
+    assert not cfg["ps"]["enabled"] and not cfg["rs"]["enabled"] and not cfg["beat2"]["enabled"]
+    for k in ("ps", "rs"):
+        cfg[k]["enabled"] = True
     assert calc.passes(row, cfg)
 
     cfg["rev_growth"]["threshold"] = 25
@@ -102,7 +106,7 @@ def test_strategy_condition_normalization_falls_back_for_invalid_thresholds():
     })
     assert cfg["rev_growth"] == {"enabled": False, "threshold": calc.MIN_REV_GROWTH}
     assert cfg["op_margin"] == {"enabled": True, "threshold": calc.MIN_DOPM}
-    assert cfg["ps"] == {"enabled": True, "threshold": calc.MAX_PS}
+    assert cfg["ps"] == {"enabled": False, "threshold": calc.MAX_PS}
     assert set(cfg) == set(calc.DEFAULT_CONDITIONS)
 
 
@@ -111,7 +115,7 @@ def test_build_row():
     row = calc.build_row({"ticker": "X"}, w, [50, 100, 90, 90, 90, 95], {"rev_rr": 30, "dopm": 5})
     assert row["glb"] == 100 and row["glb_state"] == "WYBICIE" and row["glb_pct"] == pytest.approx(4)
     assert row["turnover"] == pytest.approx(104 * 3e6 / 5, rel=0.05)
-    assert row["rs"] is None and not row["ok"]          # 40 tygodni historii i brak SPY -> brak siły względnej -> nie spełnia
+    assert row["rs"] is None and row["ok"]              # brak SPY -> brak RS, ale RS domyślnie nie jest warunkiem
     r = calc.build_row({"ticker": "Y"}, W, [50, 100, 90, 90, 90, 95], {"rev_rr": 30, "dopm": 5}, SPY, EST)
     assert r["rs"] == pytest.approx(108) and r["ok"] and r["glb_state"] == "SYGNAŁ"
     assert r["surp"] == 8.0 and r["surp_prev"] == 4.0 and r["beat2"] and r["eps_rev"] == 12.0
@@ -508,8 +512,10 @@ def test_conditions_cut_rgti_and_expensive():
     """RGTI: „Δ marży” +558 pp przy przychodach 5 mln $ — odpada na P/S (≈ 200); drogie (P/S ≥ 20) odpadają; brak kapitalizacji: cena × akcje."""
     f = {"rev_rr": 30, "dopm": 12, "ttm_rev": 300e6}
     assert calc.build_row({"ticker": "A", "market_cap": 3e9}, W, [50, 100, 90, 90, 90], f, SPY, EST)["ok"]      # P/S 10
-    assert not calc.build_row({"ticker": "B", "market_cap": 9e9}, W, [50, 100, 90, 90, 90], f, SPY)["ok"]      # P/S 30
-    rgti = calc.build_row({"ticker": "RGTI", "market_cap": 4e9}, W, [], {"rev_rr": 185, "dopm": 558, "ttm_rev": 20e6}, SPY)
+    assert calc.build_row({"ticker": "B", "market_cap": 9e9}, W, [50, 100, 90, 90, 90], f, SPY)["ok"]          # P/S domyślnie nie blokuje
+    with_ps = {**calc.normalize_conditions(), "ps": {"enabled": True, "threshold": calc.MAX_PS}}
+    assert not calc.build_row({"ticker": "B", "market_cap": 9e9}, W, [50, 100, 90, 90, 90], f, SPY, conditions=with_ps)["ok"]   # P/S 30
+    rgti = calc.build_row({"ticker": "RGTI", "market_cap": 4e9}, W, [], {"rev_rr": 185, "dopm": 558, "ttm_rev": 20e6}, SPY, conditions=with_ps)
     assert rgti["ps"] == 200 and not rgti["ok"]
     assert calc.build_row({"ticker": "D"}, W, [], {**f, "shares": 60e6}, SPY)["ps"] == pytest.approx(104 * 60e6 / 300e6)
 
@@ -616,3 +622,16 @@ def test_build_row_exposes_latest_revenue_surprise_and_reported_eps_history():
     assert calc.growth_score(row)["details"]["eps_growth"]["value"] == pytest.approx(100.0)
 
 
+
+
+def test_old_saved_conditions_reset_to_study_rules(tmp_path):
+    """Zapisane przed badaniem 2011–2025 warunki (RS, P/S, beat2 włączone) wracają raz do nowych domyślnych; późniejsze zmiany zostają."""
+    import json
+    old = {k: {"enabled": True, "threshold": v["threshold"]} if "threshold" in v else {"enabled": True} for k, v in calc.DEFAULT_CONDITIONS.items()}
+    (tmp_path / "settings.json").write_text(json.dumps({"strategy_conditions": old}), encoding="utf-8")
+    st = Store(tmp_path)
+    cfg = st.settings["strategy_conditions"]
+    assert cfg["rev_growth"]["enabled"] and cfg["op_margin"]["enabled"] and not cfg["rs"]["enabled"] and not cfg["ps"]["enabled"] and not cfg["beat2"]["enabled"]
+    st.settings["strategy_conditions"]["rs"]["enabled"] = True
+    st.save_settings()
+    assert Store(tmp_path).settings["strategy_conditions"]["rs"]["enabled"]

@@ -21,12 +21,18 @@ COLUMNS = [  # (klucz, nagłówek, szerokość, format)
     ("ps", "P/S", 60, "x"), ("peg", "PEG", 70, "x2"), ("pegy", "PEGY", 75, "x2"),
     ("rs", "RS 52 tyg. pp", 105, "%"), ("surp", "Niesp. EPS %", 95, "%"), ("beat2", "2× nad konsensus", 115, "b"), ("eps_rev", "Rewizja EPS 90 dni %", 140, "%"), ("rvol_w", "RVol tyg.", 80, "x"), ("rvol_d", "RVol dz.", 75, "x"), ("cc250", "C/C250", 85, "r"), ("ok", "Warunki", 75, "b"), ("slow", "Hamuje", 95, "w"),
 ]
-SIGNAL = ("WYBICIE", "SYGNAŁ", "BLUE DOT")
+SIGNAL = ("WYBICIE", "SYGNAŁ")
+ENTRY_MAX = calc.ENTRY_MAX_PCT   # kupno: zamknięcie tygodnia 0–10 % nad Green Line (BLUE DOT i wyżej — tylko informacyjnie)
+
+
+def is_signal(r):
+    """Sygnał kupna wg badania 2011–2025: Green Line, zamknięcie tygodnia 0–10 % nad linią (szersza strefa i Blue Dot dawały mniej)."""
+    return r.get("glb_state") in SIGNAL and (r.get("glb_pct") is None or r["glb_pct"] <= ENTRY_MAX)
 # filtry listy (wszystkie naraz, ORAZ): {kolumna: {"in": [wartości]} | {"min", "max"}}; liczby w jednostkach tabeli (obrót w mln $)
 FILTER_CHOICES = {"glb_state": ["WYBICIE", "SYGNAŁ", "BLUE DOT", "NAD", "POD", "BRAK"], "macd": ["nad", "pod"], "ok": ["tak", "nie"], "trend": ["tak", "nie"], "beat2": ["tak", "nie"], "slow": ["HAMUJE", "HAMUJE+MB", "—"]}
 FILTER_SCALE = {"turnover": 1e6}
 FILTER_PRESETS = [
-    ("Sygnał kupna: warunki + wybicie / 0–10 % / Blue Dot", {"ok": {"in": ["tak"]}, "glb_state": {"in": ["WYBICIE", "SYGNAŁ", "BLUE DOT"]}}),
+    ("Reguły: sygnał GLB 0–10 % + warunki (przychody, marża)", {"ok": {"in": ["tak"]}, "glb_state": {"in": ["WYBICIE", "SYGNAŁ"]}, "glb_pct": {"min": 0, "max": 10}}),
     ("Liderzy: RS 52 tyg. ≥ 50 pp + nad GLB", {"rs": {"min": 50}, "glb_state": {"in": ["WYBICIE", "SYGNAŁ", "BLUE DOT", "NAD"]}}),
     ("Przebicie GLB + SMA 10 > 30 (dowolnie wysoko)", {"trend": {"in": ["tak"]}, "glb_state": {"in": ["WYBICIE", "SYGNAŁ", "BLUE DOT", "NAD"]}}),
     ("Aktywne: RVol tyg. ≥ 1,5 + nad GLB", {"rvol_w": {"min": 1.5}, "glb_state": {"in": ["WYBICIE", "SYGNAŁ", "BLUE DOT", "NAD"]}}),
@@ -92,9 +98,10 @@ def progress_text(frac, stage, elapsed):
 
 
 def default_order(r):
-    """Najpierw spełniające warunki z sygnałem GLB, potem spełniające warunki; w grupie od największej siły względnej."""
-    sig = r.get("glb_state") in SIGNAL
-    return (not (r.get("ok") and sig), not r.get("ok"), -(r.get("rs") if r.get("rs") is not None else -1e9))
+    """Najpierw spełniające warunki z sygnałem GLB 0–10 %, potem spełniające warunki; w grupie najbliżej Green Line
+    (przy nadmiarze sygnałów najbliższe linii: ten sam wynik, mniejsze obsunięcie), potem siła względna."""
+    pct = r.get("glb_pct")
+    return (not (r.get("ok") and is_signal(r)), not r.get("ok"), abs(pct) if pct is not None else 1e9, -(r.get("rs") if r.get("rs") is not None else -1e9))
 
 
 class App:
@@ -240,14 +247,16 @@ class App:
         """📌 pozycja do uwagi: wyjście wg wybranej metody (MACD: zamknięcie pod stopem MACD, GLB: pod Green Line), −20 % od szczytu, hamowanie."""
         st, price = self.store, r.get("price") or 0
         plan = lines.position_plan(st.alerts["pos"][r["ticker"]], st.weekly(r["ticker"]), r)
-        exit_now = (r.get("glb") and price < r["glb"]) if st.settings.get("exit", "MACD") == "GLB" else (r.get("macd_stop") and price < r["macd_stop"])
+        ms = plan["macd_stop"]   # MACD liczony od wejścia
+        exit_now = (r.get("glb") and price < r["glb"]) if st.settings.get("exit", "MACD") == "GLB" else \
+            bool((ms and price < ms) or (plan["stop_init"] is not None and price <= plan["stop_init"]))
         return bool(r.get("slow") or exit_now or plan["half"])
 
     def refresh(self):
         sel = self.current()
         self.tree.delete(*self.tree.get_children())
         for r in self.rows():
-            tag = "signal" if r.get("ok") and r.get("glb_state") in SIGNAL else "" if r.get("ok") else "dim"
+            tag = "signal" if r.get("ok") and is_signal(r) else "" if r.get("ok") else "dim"
             held = r["ticker"] in self.store.alerts["pos"]
             if held and self.pos_warn(r):
                 tag = "poswarn"
@@ -263,7 +272,7 @@ class App:
         nf = active_filters(self.store.settings.get("list_filters"))
         self.flt_btn.config(text=f"Filtry ({nf})…" if nf else "Filtry…")
         n_ok = sum(1 for r in self.store.rows if r.get("ok"))
-        n_sig = sum(1 for r in self.store.rows if r.get("ok") and r.get("glb_state") in SIGNAL)
+        n_sig = sum(1 for r in self.store.rows if r.get("ok") and is_signal(r))
         cfg = calc.normalize_conditions(self.store.settings.get("strategy_conditions"))
         required = []
         if cfg["rev_growth"]["enabled"]:
@@ -899,7 +908,7 @@ def pos_rows(store):
         pl = lines.position_plan(p, store.weekly(t), r)
         last = pl["last"] if pl["last"] is not None else r.get("price")
         ch = (last / pl["entry"] - 1) * 100 if last and pl["entry"] else None
-        ex = r.get("glb") if exit_m == "GLB" else r.get("macd_stop")
+        ex = r.get("glb") if exit_m == "GLB" else pl["macd_stop"]
         st = lines.position_status(pl, r, exit_m)
         out.append((t, [t, " · ".join(st) or "trzymaj", p.get("since") or "", cell(pl["entry"], "p"), cell(last, "p"), cell(ch, "%"), cell(pl["peak"], "p"),
                         cell(pl["half_at"], "p"), cell(pl["stop_init"], "p"), cell(ex, "p"), r.get("glb_state") or "", r.get("macd") or ""], st))
@@ -929,8 +938,12 @@ class PositionsDialog(tk.Toplevel):
         self.configure(bg=PANEL)
         apply_dark(self)
         m = app.store.settings.get("exit", "MACD")
-        tk.Label(self, text=f"📌 POZYCJE · metoda wyjścia: {'pod GLB (zamknięcie tygodnia pod Green Line)' if m == 'GLB' else 'MACD (stop pod Low tygodnia przecięcia w dół)'}"
-                 " · zawsze stop −10 % i ½ przy −20 % od szczytu · dwuklik = wykres", bg=PANEL, fg="#8b95a3").pack(anchor="w", padx=10, pady=(10, 4))
+        free = max(0, lines.MAX_POSITIONS - len(app.store.alerts["pos"]))
+        tk.Label(self, text=f"📌 POZYCJE · metoda wyjścia: {'pod GLB (zamknięcie tygodnia pod Green Line)' if m == 'GLB' else 'MACD (stop pod Low tygodnia przecięcia w dół po wejściu)'}"
+                 " · zawsze stop −10 % · ½ przy −20 % od szczytu opcjonalnie · dwuklik = wykres"
+                 f"\nWolne miejsca: {free} z {lines.MAX_POSITIONS}" + (f" → ok. {free * 100 // lines.MAX_POSITIONS} % kapitału trzymaj w SPY do nowego sygnału" if free else "")
+                 + " · najpierw wyjścia, potem wejścia; przy nadmiarze sygnałów najbliżej Green Line; nie sprzedawaj pozycji dla nowego sygnału",
+                 bg=PANEL, fg="#8b95a3", justify="left").pack(anchor="w", padx=10, pady=(10, 4))
         self.pos = self._tree(self.POS, 8, "pos_columns")
         tk.Label(self, text="🔔 OBSERWOWANE (bez pozycji)", bg=PANEL, fg="#8b95a3").pack(anchor="w", padx=10, pady=(10, 4))
         self.watch = self._tree(self.WATCH, 8, "watch_columns")
@@ -1158,7 +1171,17 @@ class AlertsDialog(tk.Toplevel):
         self.destroy()
 
 
-GUIDE = """WARUNKI (październik 2026) — tylko to, co w strategii GLB + MACD działało najmocniej (wszystkie sygnały 2015–2026, ceny bez korekty)
+GUIDE = """REGUŁY (badanie 2011–2025: ≈5600 spółek USA, fundamenty SEC znane 50/80 dni po kwartale, portfel 10 pozycji, koszt 0,1 %/stronę)
+   skaner Finviz	ind_stocksonly, cena > 10, śr. wolumen > 300 tys., Sales Q/Q > 15 % (skaner „Bezpieczny (backtest)”)
+   warunki	przychody kw. ≥ +15 % r/r i marża operacyjna ≥ +3 pp r/r; RS, P/S i niespodzianki EPS domyślnie wyłączone (RS ≥ 50 pp obniżał wynik — za mało sygnałów)
+   kupno	zamknięcie tygodnia 0–10 % nad Green Line (WYBICIE / SYGNAŁ); dalej niż 10 % i BLUE DOT — nie kupuj; Blue Line tylko informacyjnie
+   wyjście	zamknięcie tygodnia ≤ −10 % od kupna albo pod Low tygodnia przecięcia MACD w dół PO wejściu (przecięcia sprzed wejścia: ≈ 13 % zamiast ≈ 21 % rocznie)
+   portfel	8–10 pozycji po równo; najpierw wyjścia, potem wejścia; przy nadmiarze sygnałów najbliżej Green Line (domyślna kolejność);
+	nie sprzedawaj pozycji dla nowego sygnału, bez dokładek, trailing stopów i stopu czasowego (wszystko gorsze); wolne miejsca = gotówka w SPY
+   wynik	≈ 21 % rocznie (2011–17 ≈ 13 %, 2018–25 ≈ 28 %), DD ≈ −37 %; z gotówką w SPY ≈ 25 %; dane bez spółek zdelistowanych (zawyżone)
+	wynik robią nieliczne duże ruchy — nie pomijaj sygnałów i trzymaj zwycięzców do wyjścia; ½ przy −20 % od szczytu opcjonalnie (wynik bez zmian)
+
+STARSZE NOTATKI — WARUNKI (październik 2026, backtest 2015–2026 płynnego rynku, ceny bez korekty)
    przychody kwartału ≥ +15 % r/r	bez tego 34,9 % rocznie
    marża operacyjna ≥ +3 pp r/r	bez tego 28,9 %
    wycena P/S < 20	bez tego 31,5 % (drogie tracą; odpada też RGTI)
@@ -1246,7 +1269,7 @@ def checklist(row, pos=None, conditions=None):
                         f"2 ostatnie raporty powyżej konsensusu EPS ({f(r.get('surp'), ' %')}, wcześniej {f(r.get('surp_prev'), ' %')})"),
               f"{yes(cond(r.get('eps_rev'), lambda v: v > 0))} Rewizja prognozy EPS na przyszły rok, 90 dni: {f(r.get('eps_rev'), ' %')} (podgląd, bez backtestu)"]
     st = r.get("glb_state")
-    lines_.append(f"{yes(True if st in SIGNAL else None if st == 'NAD' else False)} Green Line: {st or '—'} ({f(r.get('glb_pct'), ' %')} od linii; kupno: tydzień przebicia dowolnie wysoko, 0–10 % nad albo Blue Dot na dziennym, gdy > 10 %)")
+    lines_.append(f"{yes(True if is_signal(r) else None if st in ('NAD', 'BLUE DOT', 'WYBICIE') else False)} Green Line: {st or '—'} ({f(r.get('glb_pct'), ' %')} od linii; kupno: zamknięcie tygodnia 0–10 % nad linią)")
     stop = f"{r['macd_stop']:.2f}" if r.get("macd_stop") else "—"
     lines_.append(f"{yes(r.get('macd') == 'nad')} MACD tyg. {r.get('macd') or '—'} sygnałem (stop pod {stop})")
     glb = r.get("glb")

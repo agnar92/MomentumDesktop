@@ -1153,7 +1153,7 @@ GUIDE = """REGUŁY (badanie 2011–2025: ≈5600 spółek USA, fundamenty SEC zn
    wyjście	albo pod Low tygodnia przecięcia MACD w dół PO wejściu (przecięcia sprzed wejścia: ≈ 13 % zamiast ≈ 21 % rocznie)
    portfel	8–10 pozycji po równo; najpierw wyjścia, potem wejścia; przy nadmiarze sygnałów najbliżej Green Line (domyślna kolejność);
 	nie sprzedawaj pozycji dla nowego sygnału, bez dokładek, trailing stopów i stopu czasowego (wszystko gorsze); wolne miejsca = gotówka w SPY
-   wynik	≈ 14 % rocznie (2011–17 ≈ 10 %, 2018–25 ≈ 22 %), DD ≈ −40 %; z gotówką w SPY ≈ 20 %; dane bez spółek zdelistowanych (zawyżone)
+   wynik	≈ 11 % rocznie (2011–17 ≈ 10 %, 2018–25 ≈ 14 %), DD ≈ −40 %; z gotówką w SPY ≈ 17 %; dane bez spółek zdelistowanych (zawyżone)
 	wynik robią nieliczne duże ruchy — nie pomijaj sygnałów i trzymaj zwycięzców do wyjścia; ½ przy −20 % od szczytu opcjonalnie (wynik bez zmian)
 
 WYJŚCIE — PRZYCISK 🚪 NA WYKRESIE

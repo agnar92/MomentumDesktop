@@ -12,12 +12,12 @@ EST = {"surp": [["2025-11-10", 4.0], ["2026-02-09", 8.0]], "rev90": 12.0}   # 2 
 SPY = {"d": _D, "o": [1] * 60, "h": [1] * 60, "l": [1] * 60, "c": [400.0] * 60, "v": [1e7] * 60}
 
 
-def test_green_line_needs_three_closed_months_and_keeps_old_line():
-    assert calc.green_line([10, 12, 11, 11]) == (None, None)            # rekord 12 stoi dopiero 2 miesiące
-    assert calc.green_line([10, 12, 11, 11, 11]) == (12, 1)             # ≥ 3 miesiące -> linia
-    assert calc.green_line([10, 12, 11, 11, 11, 15, 14]) == (12, 1)     # nowy rekord 15 jeszcze nie stoi 3 miesięcy: obowiązuje stara linia
-    assert calc.green_line([10, 12, 11, 11, 11, 15, 14, 14, 14]) == (15, 5)
-    assert calc.green_line([10, 12, 11, 11, 11, 11, 11, 11, 11])[0] == 12   # „3 lub więcej” — rekord stojący dłużej nadal jest linią
+def test_green_line_needs_peak_plus_two_closed_months_and_keeps_old_line():
+    assert calc.green_line([10, 12, 11]) == (None, None)                # rekord 12 + 1 miesiąc = 2 świece
+    assert calc.green_line([10, 12, 11, 11]) == (12, 1)                 # szczyt + 2 zamknięte miesiące = 3 świece -> linia
+    assert calc.green_line([10, 12, 11, 11, 11, 15, 14]) == (12, 1)     # nowy rekord 15 ma szczyt + 1 miesiąc: obowiązuje stara linia
+    assert calc.green_line([10, 12, 11, 11, 11, 15, 14, 14]) == (15, 5)  # nowy rekord 15 + 2 miesiące: zastępuje starą linię
+    assert calc.green_line([10, 12, 11, 11, 11, 11, 11, 11, 11])[0] == 12   # rekord stojący dłużej nadal jest linią
 
 
 def test_glb_state():

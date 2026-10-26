@@ -1,17 +1,18 @@
 """Obliczenia (czyste funkcje, bez sieci i GUI): Green Line z miesięcznych High (jak w oryginale Dr. Wisha), stan GLB na zamknięciu tygodnia, MACD tygodniowy,
 średnie, obrót i warunki strategii (badanie 2011–2025, szeroki rynek USA, portfel 10 pozycji — jak w aplikacji webowej Momentum):
   - przychody kw. ≥ +15 % r/r i marża operacyjna ≥ +3 pp r/r (z SEC); skaner Finviz: cena > 10, śr. wolumen > 300 tys., Sales Q/Q > 15 %,
-  - wejście: zamknięcie tygodnia 0–10 % nad Green Line (rekord wszech czasów miesięcznego High, który stoi ≥ 3 zamknięte miesiące),
+  - wejście: zamknięcie tygodnia 0–10 % nad Green Line (rekord wszech czasów miesięcznego High, który stoi 3 miesiące łącznie: miesiąc szczytu + 2 zamknięte kolejne),
   - wyjście: stop 10 % pod wejściem i tygodniowy MACD (12, 26, 9) — stop pod Low tygodnia przecięcia w dół PO wejściu (lines.position_plan).
 Heurystyka z backtestu, nie porada inwestycyjna."""
 import bisect
 import datetime as dt
 import math
 
-CONFIRM_MONTHS = 3      # rekord musi stać co najmniej tyle zamkniętych miesięcy
+CONFIRM_MONTHS = 2      # zamknięte miesiące PO miesiącu szczytu; razem ze szczytem 3 miesiące (Dr Wish: „at least 3 months”, użytkownik: „dwie świeczki po szczycie”)
 ENTRY_MAX_PCT = 10.0    # wejście do 10 % nad linią
 # Badanie 2011–2025 (≈5600 spółek, fundamenty SEC znane 50/80 dni po kwartale, portfel 10 pozycji, koszt 0,1 %/stronę): GLB bez warunków ≈ 12 % rocznie,
-# z przychodami ≥ 15 % i Δ marży ≥ 3 pp ≈ 21 % (2011–17 ≈ 13 %, 2018–25 ≈ 28 %), DD ≈ −37 %; z wolną gotówką w SPY ≈ 25 %. RS ≥ 50 pp jako warunek obniżał
+# z przychodami ≥ 15 % i Δ marży ≥ 3 pp, sygnał po przebiciu od dołu i linia potwierdzana po szczycie + 2 miesiące: ≈ 11 % rocznie (2011–17 ≈ 10 %, 2018–25 ≈ 14 %), DD ≈ −40 %; z wolną gotówką w SPY ≈ 17 %
+# (poprzednio, bez reguły przebicia i z 3 zamkniętymi miesiącami: ≈ 21 % / 25 %). RS ≥ 50 pp jako warunek obniżał
 # wynik (za mało sygnałów), P/S i beat2 nie dało się sprawdzić historycznie — domyślnie wyłączone (można włączyć w ustawieniach warunków).
 # Usunięte, bo przy tych warunkach nic nie zmieniały: przychody kw. ≥ 25 mln $, zysk oper. w $ ↑, „Mocne” (Δ marży ≥ 10 pp), rozwodnienie, Potencjał.
 # Obrót nie jest warunkiem (użytkownik: „usuń limit obrotu w ogóle, sam będę filtrował w Finviz po wolumenie”); backtest liczono na obrocie ≥ 100 mln $.
@@ -39,7 +40,7 @@ def _ok(v):
 
 def green_line(months, confirm=CONFIRM_MONTHS):
     """months = High ZAMKNIĘTYCH miesięcy (od najstarszego). -> (poziom, indeks miesiąca rekordu) albo (None, None).
-    Rekord wszech czasów jest linią, gdy stoi ≥ `confirm` miesięcy; nowszy rekord zastępuje ją dopiero po swoich `confirm` miesiącach."""
+    Rekord wszech czasów jest linią, gdy po jego miesiącu zamknęły się ≥ `confirm` miesięcy (domyślnie 2 = 3 świece łącznie ze szczytem); nowszy rekord zastępuje ją dopiero po swoich `confirm` miesiącach."""
     level = at = None
     mx, mi = -math.inf, None
     for i, c in enumerate(months):

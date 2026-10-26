@@ -628,7 +628,7 @@ def draw_glb_history(cv, data, i0, i1, xf, yf, g, pmin, pmax, level):
         cv.create_text(x - 9 if right else x + 9, y + 16, text=f"rekord {data['d'][at][:7]} · High {fmt(hs[at])} · stoi {stood} mies.",
                        anchor="e" if right else "w", fill=GLB_COLOR, font=FONT)
     cmp = f"Green Line z wykresu {fmt(lv)}" + (f" · z listy {fmt(level)}" + ("" if level and lv and abs(lv / level - 1) < 0.005 else "  ⚠ różnica") if level else "")
-    cv.create_text(x0 + 4, g["price"][1] - 8, text=cmp + " · przerywana = linia w czasie (rekord High, który stoi ≥ 3 zamknięte mies.)",
+    cv.create_text(x0 + 4, g["price"][1] - 8, text=cmp + " · przerywana = linia w czasie (rekord High, który stoi 3 mies. łącznie: szczyt + 2 zamknięte)",
                    anchor="w", fill=GLB_COLOR, font=FONT)
 
 

@@ -11,7 +11,7 @@ import math
 CONFIRM_MONTHS = 2      # zamknięte miesiące PO miesiącu szczytu; razem ze szczytem 3 miesiące (Dr Wish: „at least 3 months”, użytkownik: „dwie świeczki po szczycie”)
 ENTRY_MAX_PCT = 10.0    # wejście do 10 % nad linią
 # Badanie 2011–2025 (≈5600 spółek, fundamenty SEC znane 50/80 dni po kwartale, portfel 10 pozycji, koszt 0,1 %/stronę): GLB bez warunków ≈ 12 % rocznie,
-# z przychodami ≥ 15 % i Δ marży ≥ 3 pp, sygnał po przebiciu od dołu i linia potwierdzana po szczycie + 2 miesiące: ≈ 11 % rocznie (2011–17 ≈ 10 %, 2018–25 ≈ 14 %), DD ≈ −40 %; z wolną gotówką w SPY ≈ 17 %
+# z przychodami ≥ 15 % i Δ marży ≥ 3 pp, sygnał po przebiciu od dołu i linia potwierdzana po szczycie + 2 miesiące: ≈ 9 % rocznie (2011–17 ≈ 10 %, 2018–25 ≈ 8 %), DD ≈ −40 %; z wolną gotówką w SPY ≈ 16 %
 # (poprzednio, bez reguły przebicia i z 3 zamkniętymi miesiącami: ≈ 21 % / 25 %). RS ≥ 50 pp jako warunek obniżał
 # wynik (za mało sygnałów), P/S i beat2 nie dało się sprawdzić historycznie — domyślnie wyłączone (można włączyć w ustawieniach warunków).
 # Usunięte, bo przy tych warunkach nic nie zmieniały: przychody kw. ≥ 25 mln $, zysk oper. w $ ↑, „Mocne” (Δ marży ≥ 10 pp), rozwodnienie, Potencjał.
@@ -111,31 +111,32 @@ def fresh_blue_dot(daily, level, sessions=5):
 
 
 def glb_armed(closes, level, max_pct=ENTRY_MAX_PCT):
-    """Czy cena jest w strefie po przebiciu OD DOŁU: zamknięcie pod linią uzbraja, zamknięcie > max_pct % nad linią rozbraja.
-    Powrót w strefę 0–max_pct % po wyjściu wyżej to kupowanie spadku, nie sygnał (CDLX 03/2020: cofka do starej linii)."""
-    armed = False
+    """Czy ta linia nadal daje sygnał: zamknięcie pod linią uzbraja (przebicie OD DOŁU), ale gdy cena zamknęła się > max_pct % nad linią,
+    linia WYGASA aż do powstania nowej Green Line — powrót do niej po dużym rajdzie to kupowanie spadku po wyższym rekordzie
+    (cena nad linią o ≤ max_pct % nie bywa pod SMA 200 / 50, bo linia jest wtedy aktualnym ATH). `closes` = zamknięcia tygodni BEZ bieżącego."""
+    armed = retired = False
     if not (_ok(level) and level > 0):
         return armed
     for x in closes:
         if not _ok(x):
             continue
         if x < level:
-            armed = True
+            armed = not retired
         elif x > level * (1 + max_pct / 100):
-            armed = False
+            armed, retired = False, True
     return armed
 
 
 def glb_state(price, prev, level, max_pct=ENTRY_MAX_PCT, armed=True):
     """Stan na zamknięciu tygodnia: WYBICIE (tydzień przebicia — poprzedni pod linią — przy dowolnej wysokości), SYGNAŁ (0–max_pct % nad linią
-    po przebiciu od dołu, `glb_armed`), NAD (dalej albo powrót w strefę po wyjściu wyżej; wejście tylko po Blue Dot na dziennym — stan „BLUE DOT”,
-    `fresh_blue_dot`), POD, BRAK."""
+    po przebiciu od dołu, `glb_armed`), NAD (dalej albo linia wygasła po rajdzie; wejście tylko po Blue Dot na dziennym — stan „BLUE DOT”,
+    `fresh_blue_dot`), POD, BRAK. `armed` liczone z zamknięć sprzed bieżącego tygodnia."""
     if not (_ok(price) and _ok(level) and level > 0):
         return "BRAK"
     if price < level:
         return "POD"
     if _ok(prev) and prev < level:   # tydzień przebicia: mocne wybicie przy dowolnej wysokości nad linią
-        return "WYBICIE"
+        return "WYBICIE" if armed else "NAD"
     return "NAD" if price > level * (1 + max_pct / 100) or not armed else "SYGNAŁ"
 
 
@@ -323,7 +324,7 @@ def build_row(base, weekly, months, fund, spy=None, est=None, conditions=None):
     price = c[-1] if c else None
     prev = c[-2] if len(c) > 1 else None
     level, _ = green_line(months)
-    row.update(price=price, glb=level, glb_state=glb_state(price, prev, level, armed=glb_armed(c, level)),
+    row.update(price=price, glb=level, glb_state=glb_state(price, prev, level, armed=glb_armed(c[:-1], level)),
                glb_pct=(price / level - 1) * 100 if _ok(price) and _ok(level) and level else None,
                turnover=turnover(c, v))
     m = macd_info(c, lo)

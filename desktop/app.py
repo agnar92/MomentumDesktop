@@ -1148,12 +1148,12 @@ class AlertsDialog(tk.Toplevel):
 GUIDE = """REGUŁY (badanie 2011–2025: ≈5600 spółek USA, fundamenty SEC znane 50/80 dni po kwartale, portfel 10 pozycji, koszt 0,1 %/stronę)
    skaner Finviz	ind_stocksonly, cena > 10, śr. wolumen > 300 tys., Sales Q/Q > 15 % (skaner „Bezpieczny (backtest)”)
    warunki	przychody kw. ≥ +15 % r/r i marża operacyjna ≥ +3 pp r/r; RS, P/S i niespodzianki EPS domyślnie wyłączone (RS ≥ 50 pp obniżał wynik — za mało sygnałów)
-   kupno	zamknięcie tygodnia 0–10 % nad Green Line PO PRZEBICIU OD DOŁU (WYBICIE / SYGNAŁ), na otwarciu następnego tygodnia; dalej niż 10 %, BLUE DOT i powrót w strefę po wyjściu wyżej (kupowanie spadku) — nie kupuj; ponowne wejście dopiero po zejściu pod linię i nowym przebiciu
+   kupno	zamknięcie tygodnia 0–10 % nad Green Line PO PRZEBICIU OD DOŁU (WYBICIE / SYGNAŁ), na otwarciu następnego tygodnia; dalej niż 10 %, BLUE DOT i po rajdzie > 10 % nad linią ta linia wygasa do powstania nowej (powrót w strefę = kupowanie spadku po wyższym rekordzie) — nie kupuj
    stop	początkowy −10 % od ceny kupna (nie pod linią); zamknięcie tygodnia ≤ −10 % = wyjście
    wyjście	albo pod Low tygodnia przecięcia MACD w dół PO wejściu (przecięcia sprzed wejścia: ≈ 13 % zamiast ≈ 21 % rocznie)
    portfel	8–10 pozycji po równo; najpierw wyjścia, potem wejścia; przy nadmiarze sygnałów najbliżej Green Line (domyślna kolejność);
 	nie sprzedawaj pozycji dla nowego sygnału, bez dokładek, trailing stopów i stopu czasowego (wszystko gorsze); wolne miejsca = gotówka w SPY
-   wynik	≈ 11 % rocznie (2011–17 ≈ 10 %, 2018–25 ≈ 14 %), DD ≈ −40 %; z gotówką w SPY ≈ 17 %; dane bez spółek zdelistowanych (zawyżone)
+   wynik	≈ 9 % rocznie (2011–17 ≈ 10 %, 2018–25 ≈ 8 %), DD ≈ −40 %; z gotówką w SPY ≈ 16 %; dane bez spółek zdelistowanych (zawyżone)
 	wynik robią nieliczne duże ruchy — nie pomijaj sygnałów i trzymaj zwycięzców do wyjścia; ½ przy −20 % od szczytu opcjonalnie (wynik bez zmian)
 
 WYJŚCIE — PRZYCISK 🚪 NA WYKRESIE

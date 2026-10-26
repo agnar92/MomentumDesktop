@@ -20,9 +20,9 @@ UP, DOWN = "#d5d9e0", "#e5484d"
 SMA_COLORS = {4: "#22d3ee", 10: "#e5484d", 30: "#f0b429"}
 DAILY_MA_COLORS = {"EMA 8": "#e5484d", "EMA 10": "#f0b429", "EMA 20": "#3b82f6", "SMA 50": "#22d3ee"}
 TLINE = "#22d3ee"
-GLB_COLOR, STOP_COLOR, MACD_C, SIG_C, SPX_C = "#3ddc84", "#ff5c5c", "#4aa3ff", "#f0b429", "#b392f0"
+GLB_COLOR, STOP_COLOR, MACD_C, SIG_C = "#3ddc84", "#ff5c5c", "#4aa3ff", "#f0b429"
 FAST_C, SLOW_C, RWB_BG, BLUE_DOT = "#e5484d", "#3b82f6", "#232a33", "#4aa3ff"
-RS_C = "#38bdf8"   # linia siły relatywnej (cena / S&P 500), jak w IBD
+RS_C = "#38bdf8"   # RS Line (akcja / SPY), jak w Deepvue
 FONT = ("Consolas", 9)
 RIGHT, LEFT, TOP = 64, 6, 22
 
@@ -141,19 +141,19 @@ def fmt_vol(v):
 
 
 def geometry(w, h, period="W"):
-    """Panele (jak w IBD): S&P 500 10 %, cena 50 %, wolumen 10 %, przychody kwartalne 11 %, MACD reszta (odstępy i oś czasu osobno);
-    dzienny (D): S&P 500, cena (linia zamknięć + RWB + Blue Dot + GLB) i wolumen — bez przychodów i Stochastic."""
+    """Panele: RS Line jak w Deepvue (akcja / SPY + średnia, szczyty RS) 10 %, cena 50 %, wolumen 10 %, przychody kwartalne 11 %, MACD reszta
+    (odstępy i oś czasu osobno); dzienny (D): RS Line, cena (linia zamknięć + RWB + Blue Dot + GLB) i wolumen — bez przychodów i Stochastic."""
     top = 8
     ph = h - top - 22
     s1 = top + ph * 0.10
     p0 = s1 + 8
     if period == "D":
         p1 = p0 + ph * 0.74
-        return {"spx": (top, s1), "price": (p0, p1), "vol": (p1 + 6, h - 22), "rev": None, "macd": (h - 22, h - 22), "x0": LEFT, "x1": w - RIGHT}
+        return {"rs": (top, s1), "price": (p0, p1), "vol": (p1 + 6, h - 22), "rev": None, "macd": (h - 22, h - 22), "x0": LEFT, "x1": w - RIGHT}
     p1 = p0 + ph * 0.50
     v0, v1 = p1 + 6, p1 + 6 + ph * 0.10
     r0, r1 = v1 + 8, v1 + 8 + ph * 0.11
-    return {"spx": (top, s1), "price": (p0, p1), "vol": (v0, v1), "rev": (r0, r1), "macd": (r1 + 8, h - 22), "x0": LEFT, "x1": w - RIGHT}
+    return {"rs": (top, s1), "price": (p0, p1), "vol": (v0, v1), "rev": (r0, r1), "macd": (r1 + 8, h - 22), "x0": LEFT, "x1": w - RIGHT}
 
 
 def fmt_big(v):
@@ -424,25 +424,8 @@ def draw(cv, data, row=None, w=None, h=None, n_show=None, end=None, tlines=(), s
     if period == "M":
         draw_glb_history(cv, data, i0, i1, xf, yf, g, pmin, pmax, level)
     boxed(cv, x0 + 4, y1 - 10 if period == "D" else y0 + 10, legend, FG)
-    # S&P 500 nad wykresem: kierunek rynku (skala log w oknie)
-    s0, s1 = g["spx"]
-    sv = []
-    if spx and spx.get("d"):
-        for d in dates:
-            k = L.date_index(spx["d"], d)
-            sv.append(spx["c"][k] if k >= 0 else None)
-    sok = [v for v in sv if v]
-    if len(sok) > 1:
-        lo_, hi_ = math.log(min(sok)), math.log(max(sok))
-        pts = [(xf(i), s1 - (math.log(v) - lo_) / ((hi_ - lo_) or 1) * (s1 - s0 - 4) - 2) for i, v in enumerate(sv) if v]
-        cv.create_line(*[p for xy in pts for p in xy], fill=SPX_C, width=1.3)
-        ch = (sok[-1] / sok[0] - 1) * 100
-        cv.create_text(x0 + 4, s0 + 6, text=f"S&P 500 (SPY) {fmt(sok[-1])} · w oknie {ch:+.1f} %", anchor="w", fill=SPX_C, font=FONT)
-    else:
-        cv.create_text(x0 + 4, s0 + 6, text="S&P 500 — brak danych SPY (zrób Sync)", anchor="w", fill=DIM, font=FONT)
-    cv.create_line(x0, s1 + 3, x1, s1 + 3, fill=GRID)
-    if period == "W":
-        draw_rs_line(cv, c, sv, xf, g, (row or {}).get("rs"))
+    # RS Line jak w Deepvue nad wykresem (zastępuje panel S&P 500)
+    draw_rs_panel(cv, data, i0, i1, xf, g, spx, row, period)
     # przychody kwartalne (słupki w okresie kwartału) z dynamiką r/r: zielony ≥ +25 %, żółty ≥ +15 % (dzienny: bez)
     if period == "D":
         return {"g": g, "step": step, "n": n, "i0": i0, "lmin": lmin, "lmax": lmax, "segs": segs}
@@ -468,29 +451,73 @@ def draw(cv, data, row=None, w=None, h=None, n_show=None, end=None, tlines=(), s
 
 
 def rs_line(closes, spx_closes):
-    """Linia siły relatywnej jak w IBD: zamknięcie akcji / zamknięcie S&P 500 (SPY) w tym samym tygodniu (None, gdy brak)."""
+    """RS Line: zamknięcie akcji / zamknięcie SPY w tym samym tygodniu (sesji) — None, gdy brak."""
     return [c / s if c and s else None for c, s in zip(closes, spx_closes)]
 
 
-def draw_rs_line(cv, c, sv, xf, g, rs52=None):
-    """Linia RS na dole panelu ceny (własna skala log, jak IBD); ● na końcu, gdy RS jest na najwyższym poziomie z 52 tyg. okna."""
-    rs = rs_line(c, sv)
+RS_HIGH_C, RS_EARLY_C, RS_MA_C = "#3ddc84", "#f472b6", "#f0b429"
+
+
+def rs_markers(rs, highs, lookback):
+    """Szczyty RS Line jak w Deepvue: {indeks: True (nowy szczyt RS i ceny) / False (RS przed ceną)} — RS powyżej maksimum z `lookback` poprzednich."""
+    out = {}
+    for i in range(lookback, len(rs)):
+        v = rs[i]
+        prior = [x for x in rs[i - lookback:i] if x]
+        if not v or not prior or v <= max(prior):
+            continue
+        ph = [x for x in highs[i - lookback:i] if x]
+        out[i] = not ph or (highs[i] or 0) > max(ph)
+    return out
+
+
+def draw_rs_panel(cv, data, i0, i1, xf, g, spx, row=None, period="W"):
+    """Panel RS Line (Deepvue): akcja / SPY na skali log okna, średnia 52 tyg. (252 sesje na D, 12 mies. na M), ● zielony = nowy szczyt RS
+    i ceny, ● różowy = szczyt RS przed ceną; RS Rating 1–99 w obrębie skanera i RS 52 tyg. w pp na końcu linii."""
+    s0, s1 = g["rs"]
+    x0, x1 = g["x0"], g["x1"]
+    dates, closes = data.get("d") or [], data.get("c") or []
+    highs = data.get("h") or closes
+    sv = []
+    if spx and spx.get("d"):
+        for d in dates:
+            k = L.date_index(spx["d"], d)
+            sv.append(spx["c"][k] if k >= 0 else None)
+    rs_full = rs_line(closes, sv) if sv else []
+    lookback = 252 if period == "D" else 12 if period == "M" else 52
+    ma_full = [None] * len(rs_full)
+    for i in range(lookback - 1, len(rs_full)):
+        win = rs_full[i - lookback + 1:i + 1]
+        if all(win):
+            ma_full[i] = sum(win) / lookback
+    rs, ma = rs_full[i0:i1], ma_full[i0:i1]
     ok = [v for v in rs if v]
     if len(ok) < 2:
+        cv.create_text(x0 + 4, s0 + 6, text="RS Line — brak danych SPY (zrób Sync)", anchor="w", fill=DIM, font=FONT)
+        cv.create_line(x0, s1 + 3, x1, s1 + 3, fill=GRID)
         return
-    y0, y1 = g["price"]
-    b0, b1 = y1 - (y1 - y0) * 0.22, y1 - 4
-    lo_, hi_ = math.log(min(ok)), math.log(max(ok))
+    vals = ok + [v for v in ma if v]
+    lo_, hi_ = math.log(min(vals)), math.log(max(vals))
 
     def yr(v):
-        return b1 - (math.log(v) - lo_) / ((hi_ - lo_) or 1) * (b1 - b0)
+        return s1 - (math.log(v) - lo_) / ((hi_ - lo_) or 1) * (s1 - s0 - 4) - 2
     pts = [(xf(i), yr(v)) for i, v in enumerate(rs) if v]
-    cv.create_line(*[p for xy in pts for p in xy], fill=RS_C, width=1.4)
-    last = [v for v in rs[-52:] if v]
-    if rs[-1] and rs[-1] >= max(last):   # ● = RS na szczycie 52 tyg.
-        cv.create_oval(pts[-1][0] - 4, pts[-1][1] - 4, pts[-1][0] + 4, pts[-1][1] + 4, fill=RS_C, outline="")
-    if rs52 is not None:   # na końcu linii tylko liczba: siła względna 52 tyg. w pp vs S&P 500 (jak kolumna RS)
-        boxed(cv, g["x1"] + 4, pts[-1][1], f"{rs52:+.0f} pp", RS_C)
+    cv.create_line(*[p for xy in pts for p in xy], fill=RS_C, width=1.6)
+    mpts = [(xf(i), yr(v)) for i, v in enumerate(ma) if v]
+    if len(mpts) > 1:
+        cv.create_line(*[p for xy in mpts for p in xy], fill=RS_MA_C, width=1.3)
+    for i, with_price in rs_markers(rs_full, highs, lookback).items():
+        if i0 <= i < i1:
+            x, y = xf(i - i0), yr(rs_full[i])
+            cv.create_oval(x - 3.5, y - 3.5, x + 3.5, y + 3.5, fill=RS_HIGH_C if with_price else RS_EARLY_C, outline="")
+    r = row or {}
+    unit = "252 sesji" if period == "D" else "12 mies." if period == "M" else "52 tyg."
+    head = f"RS Rating {round(r['rs_rating'])}/99 · " if r.get("rs_rating") is not None else ""
+    full = f"{head}RS Line (akcja / SPY) · średnia {unit} · ● zielony = nowy szczyt RS · ● różowy = RS przed ceną"
+    boxed(cv, x0 + 4, s0 + 6, full if x1 - x0 > 7 * len(full) else f"{head}RS / MA {unit}", RS_C)
+    if r.get("rs") is not None:   # na końcu linii: siła względna 52 tyg. w pp vs SPY (jak kolumna RS)
+        boxed(cv, x1 + 4, pts[-1][1], f"{r['rs']:+.0f} pp", RS_C)
+    cv.create_line(x0, s1 + 3, x1, s1 + 3, fill=GRID)
 
 
 def draw_lines(cv, data, tlines, sel, i0, i1, xf, yf, g, step, w):
@@ -599,46 +626,6 @@ def draw_glb_history(cv, data, i0, i1, xf, yf, g, pmin, pmax, level):
                    anchor="w", fill=GLB_COLOR, font=FONT)
 
 
-def scoring_panel_lines(growth_result=None, canslim_result=None, canslim_in_universe=True):
-    """Czytelne wyniki obu rankingów i dostępność danych dla panelu fundamentów."""
-    out = [("SCORING · PORÓWNANIE MODELI", "sec")]
-
-    def add_model(name, result, groups, missing_note=None):
-        if result is None:
-            out.append((f"{name}\t—", "na"))
-            out.append((f"  {missing_note or 'brak wyniku'}", "dim"))
-            return
-        score, coverage = result.get("score"), float(result.get("coverage") or 0)
-        tag = "score_na" if score is None else "score_ok" if score >= 75 else "score_warn" if score >= 50 else "score_no"
-        out.append((f"{name}\t{score:.1f}/100" if score is not None else f"{name}\t—", tag))
-        out.append((f"  pokrycie danych\t{coverage:.0f}/100" + (" · wymagane ≥70" if score is None else ""), "dim"))
-        categories = result.get("categories") or {}
-        for group_key, (group_label, _metric_keys) in groups.items():
-            category = categories.get(group_key)
-            if not category or category.get("points") is None:
-                out.append((f"  {group_label}: — (brak danych)", "dim"))
-                continue
-            points = float(category["points"])
-            available = float(category.get("coverage") or 0)
-            weight = float(category.get("weight") or 0)
-            out.append((f"  {group_label}: {points:.1f} pkt · dostępne wagi {available:.0f}/{weight:.0f}", "component"))
-
-    add_model("Growth Score", growth_result, calc.GROWTH_SCORE_GROUPS)
-    if canslim_in_universe:
-        add_model("CAN SLIM–GLB", canslim_result, calc.CANSLIM_GLB_GROUPS)
-    else:
-        add_model("CAN SLIM–GLB", None, calc.CANSLIM_GLB_GROUPS,
-                  "ticker poza aktywną listą skanera; percentyl RS nie jest porównywalny")
-    if canslim_in_universe and canslim_result:
-        market_state = canslim_result.get("market_state")
-        market_note = canslim_result.get("market_note")
-        if market_state:
-            out.append((f"  M: SPY {market_state.lower()} — {market_note}",
-                        "ok" if market_state == "WZROSTOWY" else "warn"))
-    out.append(("CAN SLIM–GLB używa jawnie opisanych proxy, gdy brak oficjalnych ratingów/danych IBD.", "dim"))
-    return out
-
-
 def _stop_level(row):
     """Linia stopu na wykresie: dla 📌 pozycji max(−10 %, MACD od wejścia), bez pozycji stop MACD wiersza; metoda GLB — brak."""
     r = row or {}
@@ -650,8 +637,7 @@ def _stop_level(row):
     return r.get("macd_stop")
 
 
-def fund_panel_lines(r, pos=None, plan=None, exit_method="MACD", conditions=None,
-                     growth_score_result=None, canslim_glb_result=None, canslim_in_universe=True):
+def fund_panel_lines(r, pos=None, plan=None, exit_method="MACD", conditions=None):
     """Treść panelu fundamentów -> [(tekst, tag)]; pokazuje progi strategii i warunki aktualnie włączone."""
     cfg = calc.normalize_conditions(conditions)
     def v(x, u, d=1):
@@ -669,11 +655,11 @@ def fund_panel_lines(r, pos=None, plan=None, exit_method="MACD", conditions=None
             (f"  poprzedni kw.\t{v(r.get('dopm1'), ' pp')}", "val"), (f"Marża oper.\t{v(r.get('opm'), ' %')}", "val"),
             (f"Δ marży brutto r/r\t{v(r.get('dgm'), ' pp')}", "val"),
             (f"Wycena P/S\t{r['ps']:.1f}" if r.get("ps") else "Wycena P/S\t—", "val"),
+            (f"RS Rating (1–99)\t{'—' if r.get('rs_rating') is None else round(r['rs_rating'])}", "val"),
             (f"RS 52 tyg. vs S&P\t{v(r.get('rs'), ' pp')}", "val"),
             (f"Niespodzianka EPS\t{v(r.get('surp'), ' %')}", "val"), (f"Rewizja EPS 90 dni\t{v(r.get('eps_rev'), ' %')}", "val"),
             (f"Obrót dzienny\t{r['turnover'] / 1e6:.0f} mln $" if r.get("turnover") else "Obrót dzienny\t—", "val"),
             (f"Do Green Line\t{v(r.get('glb_pct'), ' %')}", "val")]
-    out.extend(scoring_panel_lines(growth_score_result, canslim_glb_result, canslim_in_universe))
     out.append(("LISTA KONTROLNA", "sec"))
 
     def item(ok, txt):
@@ -822,14 +808,6 @@ class ChartWindow(tk.Toplevel):
             ("component", {"foreground": "#c0cad6", "font": ("Segoe UI", 10),
                            "spacing1": 1, "spacing3": 4, "lmargin1": 12,
                            "lmargin2": 20, "rmargin": 7}),
-            ("score_ok", {"font": ("Segoe UI", 12, "bold"), "foreground": "#48e09b",
-                          "spacing1": 7, "spacing3": 3}),
-            ("score_warn", {"font": ("Segoe UI", 12, "bold"), "foreground": "#ffc15a",
-                            "spacing1": 7, "spacing3": 3}),
-            ("score_no", {"font": ("Segoe UI", 12, "bold"), "foreground": "#ff858b",
-                          "spacing1": 7, "spacing3": 3}),
-            ("score_na", {"font": ("Segoe UI", 12, "bold"), "foreground": "#a4afbc",
-                          "spacing1": 7, "spacing3": 3}),
         )
         for tag, kw in tag_styles:
             self.ptext.tag_configure(tag, **kw)
@@ -1016,7 +994,7 @@ class ChartWindow(tk.Toplevel):
         self.daily_style_btn.config(state="normal" if self.period == "D" else "disabled",
                                     text="D: RWB" if self.daily_style == "bars" else "D: słupki")
         self.geom = draw(self.cv, data, self.row_for_chart(), n_show=self.n_show, end=self.end, tlines=self.lines(), sel=self.sel,
-                         spx=self.app.store.weekly("SPY"), period=self.period, daily_style=self.daily_style,
+                         spx=(self.period == "D" and self.app.store.daily("SPY")) or self.app.store.weekly("SPY"), period=self.period, daily_style=self.daily_style,
                          earnings_dates=self.earnings_dates)
 
     def plan(self):
@@ -1088,7 +1066,7 @@ class ChartWindow(tk.Toplevel):
         i = int((e.x - g["x0"]) / self.geom["step"])
         if not 0 <= i < self.geom["n"]:
             return
-        self.cv.create_line(e.x, g["spx"][0], e.x, g["macd"][1], fill="#3a4654", tags="tip")
+        self.cv.create_line(e.x, g["rs"][0], e.x, g["macd"][1], fill="#3a4654", tags="tip")
         index = self.geom["i0"] + i
         lines = [s for s in info_lines(data, index) if s]
         if self.period in ("D", "W"):
@@ -1266,25 +1244,16 @@ class ChartWindow(tk.Toplevel):
         self.render_panel()
 
     def render_panel(self):
-        """Panel fundamentów: warunki, oba score, wartości raportowe i lista kontrolna."""
+        """Panel fundamentów: warunki, wartości raportowe i lista kontrolna."""
         r = self.app.store.row(self.ticker) or {}
         arrow = "▶" if self.show_panel else "◀"
         self.fund_btn.config(text="\n".join([arrow, ""] + list("FUNDAMENTY") + ["", arrow]), fg="#ffb020" if r.get("slow") else "#c9d1d9")
         t = self.ptext
         t.config(state="normal")
         t.delete("1.0", "end")
-        scanner_rows = self.app.store.rows
-        in_scanner = any(item.get("ticker") == self.ticker for item in scanner_rows)
-        growth_result = calc.growth_score(r) if r else None
-        canslim_results = calc.canslim_glb_scores(
-            scanner_rows,
-            market_series=self.app.store.weekly("SPY"),
-        )
-        canslim_result = canslim_results.get(self.ticker) if in_scanner else None
         for txt, tag in fund_panel_lines(
             r, self.app.store.alerts["pos"].get(self.ticker), self.plan(),
             self.app.store.settings.get("exit", "MACD"), self.app.store.settings.get("strategy_conditions"),
-            growth_result, canslim_result, in_scanner,
         ):
             t.insert("end", txt + "\n", tag)
         t.config(state="disabled")

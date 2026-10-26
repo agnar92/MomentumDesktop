@@ -5,7 +5,7 @@ import datetime as dt
 
 from . import calc, estimates, finviz, prices, sec
 
-BENCH = "SPY"   # S&P 500 nad wykresem (jak w IBD) i siła względna 52 tyg.
+BENCH = "SPY"   # RS Line / RS Rating (jak Deepvue) i siła względna 52 tyg.
 
 # etapy i ich udział w pasku postępu (SEC trwa najdłużej: jedno zapytanie na spółkę)
 STAGES = (("Finviz — lista spółek", 0.15), ("yfinance — tygodniowe", 0.25), ("yfinance — miesięczne High", 0.2), ("SEC — fundamenty", 0.4))
@@ -39,16 +39,13 @@ def cached_symbol(sym, store):
     row = calc.build_row(base, w, prices.monthly_highs(mcache.get(sym)), scache.get(sym), spy, ecache.get(sym),
                          conditions=store.settings.get("strategy_conditions"))
 
-    for key in ("rvol_d", "cc250", "bdot", "glb_rvol"):
+    for key in ("rvol_d", "cc52w", "bdot"):
         if key in existing:
             row[key] = existing[key]
     daily = store.daily(sym)
     if daily and daily.get("c"):
         row["rvol_d"] = calc.rel_volume(daily.get("v") or [], calc.RVOL_D)
-        closes = daily["c"]
-        base_i = max(0, len(closes) - 251)
-        row["cc250"] = closes[-1] / closes[base_i] if len(closes) >= 2 and closes[base_i] else None
-        row["glb_rvol"] = calc.breakout_rel_volume(daily, row.get("glb"), max_age=10)
+        row["cc52w"] = calc.price_ratio(daily["c"])
         blue_dot = calc.fresh_blue_dot(daily, row.get("glb")) if row.get("glb_state") == "NAD" else None
         if blue_dot:
             row["glb_state"], row["bdot"] = "BLUE DOT", blue_dot
@@ -86,7 +83,7 @@ def symbol(sym, store, log=print, weekly=prices.weekly, monthly=prices.monthly, 
                          conditions=store.settings.get("strategy_conditions"))
     # W przypadku symbolu otwartego przez Ctrl+Space zachowaj pola wyliczane ze świec dziennych,
     # dopóki odświeżenie dzienne nie dostarczy nowej serii.
-    for key in ("rvol_d", "cc250", "bdot", "glb_rvol"):
+    for key in ("rvol_d", "cc52w", "bdot"):
         if key in existing:
             row[key] = existing[key]
     store.extra[sym] = (row, w)
@@ -131,18 +128,15 @@ def run(store, log=print, fetch_list=finviz.fetch, weekly=prices.weekly, monthly
         if t in series:
             tracked_rows[t] = calc.build_row({"ticker": t}, series[t], prices.monthly_highs(mcache.get(t)), scache.get(t), series.get(BENCH), ecache.get(t),
                                               conditions=store.settings.get("strategy_conditions"))
-    try:   # Dwieście pięćdziesiąt sesji do C/C[250], a także RVol i Blue Dot.
+    try:   # 252 sesje do C/C[52 tyg.], a także RVol i Blue Dot.
         dser = daily(liquid, log=log, period="2y") if liquid else {}
     except Exception as e:
-        log(f"⚠ dzienne (RVol/C/C[250]) niedostępne ({e})")
+        log(f"⚠ dzienne (RVol/C/C[52 tyg.]) niedostępne ({e})")
         dser = {}
     for r in rows + list(tracked_rows.values()):
         sd = dser.get(r["ticker"])
         r["rvol_d"] = calc.rel_volume(sd["v"], calc.RVOL_D) if sd else None
-        r["glb_rvol"] = calc.breakout_rel_volume(sd, r.get("glb"), max_age=10) if sd else None
-        closes = sd.get("c", []) if sd else []
-        # C/C[max]: use the oldest available close when fewer than 250 prior sessions exist.
-        r["cc250"] = closes[-1] / closes[max(0, len(closes) - 251)] if len(closes) >= 2 and closes[max(0, len(closes) - 251)] else None
+        r["cc52w"] = calc.price_ratio(sd.get("c", []) if sd else [])
         bd = calc.fresh_blue_dot(sd, r.get("glb")) if r.get("glb_state") == "NAD" else None
         if bd:   # > 10 % nad linią i nie tydzień przebicia: wejście po Blue Dot na dziennym
             r["glb_state"], r["bdot"] = "BLUE DOT", bd

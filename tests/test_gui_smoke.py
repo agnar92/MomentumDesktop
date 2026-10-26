@@ -172,7 +172,7 @@ def test_chart_sync_button_refreshes_only_the_open_ticker(app, monkeypatch):
     assert app.store.weekly("AAA")["c"][-1] == refreshed_weekly["c"][-1]
     assert app.store.daily("AAA")["c"] == daily_closes
     assert app.store.row("AAA")["rvol_d"] == 1.0
-    assert app.store.row("AAA")["cc250"] == daily_closes[-1] / daily_closes[0]
+    assert app.store.row("AAA")["cc52w"] == daily_closes[-1] / daily_closes[0]
     assert ch.other["D"]["AAA"]["c"] == daily_closes
     assert ch.other["M"]["AAA"]["c"] == monthly_closes
     assert ch.sync_btn["text"] == "⟳ Sync"
@@ -280,70 +280,6 @@ def test_trend_line_draw_move_delete_and_filters(app):
     A.AlertsDialog(app).destroy()
 
 
-def test_fundamentals_panel_displays_both_scores_and_category_breakdown():
-    import datetime as dt
-    from desktop import calc as C
-    from desktop import chart as C_chart
-
-    eps_history = [
-        ["2022-01-31", 0.50], ["2022-04-30", 0.60], ["2022-07-31", 0.70], ["2022-10-31", 0.80],
-        ["2023-01-31", 0.65], ["2023-04-30", 0.78], ["2023-07-31", 0.91], ["2023-10-31", 1.04],
-        ["2024-01-31", 0.845], ["2024-04-30", 1.014], ["2024-07-31", 1.183], ["2024-10-31", 1.352],
-        ["2025-01-31", 1.0985], ["2025-04-30", 1.3182], ["2025-07-31", 1.5379], ["2025-10-31", 1.7576],
-    ]
-    row = {
-        "ticker": "AAA", "company": "AAA Corp", "rev_rr": 35, "accel": 8, "eps_rev": 15, "dopm": 4,
-        "surp": 20, "surp_prev": 10, "rev_surp": 12, "eps_q": eps_history,
-        "qs": [{"rev": rev, "rev_rr": 30.0} for rev in [80, 85, 90, 95, 100, 110, 120, 130]],
-        "rs": 60, "sector": "Technology", "industry": "Semiconductors", "glb_state": "WYBICIE",
-        "glb_rvol": 1.6, "dil": -1, "shares_float": 45e6,
-        "institutional_ownership": 50, "institutional_transactions": 8, "roe": 20,
-        "price": 120, "glb": 118, "glb_pct": 1.7,
-    }
-    other = {
-        "ticker": "BBB", "rs": -20, "sector": "Energy", "industry": "Oil & Gas",
-        "glb_state": "BRAK", "glb_rvol": None, "dil": 5, "shares_float": 900e6,
-        "institutional_ownership": 8, "institutional_transactions": -5, "roe": 4,
-        "surp": -5, "surp_prev": -2, "rev_surp": -4,
-        "eps_q": [[day, value * 0.5] for day, value in eps_history],
-        "qs": [{"rev": rev, "rev_rr": 5.0} for rev in [80, 85, 90, 95, 100, 102, 104, 106]],
-    }
-    today = dt.date.today()
-    as_of = today.isoformat()
-    monday = today - dt.timedelta(days=today.weekday())
-    market = {
-        "d": [(monday - dt.timedelta(weeks=60 - i)).isoformat() for i in range(60)],
-        "c": [300.0 + i * 2.0 for i in range(60)],
-    }
-    growth = C.growth_score(row)
-    canslim = C.canslim_glb_scores(
-        [row, other], market_series=market, as_of=as_of
-    )["AAA"]
-    lines = C_chart.fund_panel_lines(
-        row, growth_score_result=growth, canslim_glb_result=canslim, canslim_in_universe=True
-    )
-    text = "\n".join(line for line, _tag in lines)
-    assert "SCORING · PORÓWNANIE MODELI" in text
-    assert "Growth Score" in text and "CAN SLIM–GLB" in text
-    assert f"{growth['score']:.1f}/100" in text
-    assert f"{canslim['score']:.1f}/100" in text
-    assert "C — Current quarterly earnings" in text
-    assert "L — Leader / laggard" in text
-    assert "N:" not in text
-
-
-
-def test_fundamentals_panel_explains_canslim_when_ticker_is_outside_scanner():
-    from desktop import calc as C
-    from desktop import chart as C_chart
-
-    lines = C_chart.scoring_panel_lines(C.growth_score({"rev_rr": 10}), None, canslim_in_universe=False)
-    text = "\n".join(line for line, _tag in lines)
-    assert "Growth Score" in text
-    assert "CAN SLIM–GLB" in text
-    assert "poza aktywną listą skanera" in text
-
-
 def test_guide_position_and_ibd_panels(app):
     from desktop import app as A
     st = app.store
@@ -356,11 +292,12 @@ def test_guide_position_and_ibd_panels(app):
     ch.update()
     ch.redraw()
     texts = [ch.cv.itemcget(i, "text") for i in ch.cv.find_all() if ch.cv.type(i) == "text"]
-    assert any(t.startswith("S&P 500 (SPY)") for t in texts) and any(t.startswith("Przychody kw.") and "1.2 mld" in t for t in texts)
+    assert any("RS" in t and "MA" in t or "RS Line (akcja / SPY)" in t for t in texts) and any(t.startswith("Przychody kw.") and "1.2 mld" in t for t in texts)
+    assert not any(t.startswith("S&P 500") for t in texts)   # panel S&P 500 zastąpiony RS Line (Deepvue)
     g = ch.geom["g"]
-    assert g["spx"][1] < g["price"][0] and g["vol"][1] < g["rev"][0] < g["rev"][1] < g["macd"][0]
+    assert g["rs"][1] < g["price"][0] and g["vol"][1] < g["rev"][0] < g["rev"][1] < g["macd"][0]
     panel_text = ch.ptext.get("1.0", "end")
-    assert "Growth Score" in panel_text and "CAN SLIM–GLB" in panel_text
+    assert "Growth Score" not in panel_text and "CAN SLIM" not in panel_text and "RS Rating" in panel_text
     ch.toggle_pos()
     assert "AAA" in st.alerts["pos"] and "AAA" in st.alerts["watch"] and "⚠" in ch.ptext.get("1.0", "end") and "spełnia warunki" in ch.ptext.get("1.0", "end")
     assert app.tree.item("AAA")["values"][0].startswith("📌") and "poswarn" in app.tree.item("AAA")["tags"]
@@ -432,8 +369,6 @@ def test_daily_chart_rwb_and_blue_dot(app, monkeypatch):
     texts = [ch.cv.itemcget(i, "text") for i in ch.cv.find_all() if ch.cv.type(i) == "text"]
     assert not any(t.startswith("Stochastic") or t.startswith("Przychody kw.") or t.startswith("MACD") for t in texts)   # dzienny: RWB + Blue Dot + GLB
     assert any("Blue Dot" in t for t in texts) and ch.geom["g"]["rev"] is None
-
-
 
 
 def test_revenue_surprise_is_computed_if_actual_and_estimate_are_supplied():
@@ -632,139 +567,6 @@ def test_ctrl_space_fetches_symbol_that_has_only_candles(app, monkeypatch):
     assert called == ["ZZZ"]
 
 
-
-
-def test_scoring_dialog_switches_between_growth_and_canslim_glb_modes(app):
-    from desktop import app as A
-
-    def history(q1, q2, q3, q4):
-        return [
-            ["2024-01-31", q1], ["2024-04-30", q1], ["2024-07-31", q1], ["2024-10-31", q1],
-            ["2025-01-31", q1], ["2025-04-30", q2], ["2025-07-31", q3], ["2025-10-31", q3],
-            ["2026-01-31", q4],
-        ]
-
-    app.store.row("AAA").update(
-        rs=60, glb_state="WYBICIE", rvol_d=2.2, surp=15, surp_prev=8, rev_surp=12,
-        eps_q=history(0.5, 0.7, 0.9, 1.2),
-    )
-    app.store.row("BBB").update(
-        rs=-10, glb_state="BRAK", rvol_d=3.0, surp=-5, surp_prev=-3, rev_surp=-4,
-        eps_q=history(0.5, 0.4, 0.35, 0.3),
-    )
-    dialog = A.GrowthScoreDialog(app)
-    dialog.update()
-    assert dialog.mode_box.cget("values") == ("Growth Score", "CAN SLIM–GLB")
-    assert dialog.mode_var.get() == "Growth Score"
-
-    dialog.mode_box.set("CAN SLIM–GLB")
-    dialog.change_mode()
-    dialog.update()
-    assert app.store.settings["scoring_mode"] == "CAN SLIM–GLB"
-    assert dialog.title() == "Scoring — CAN SLIM–GLB"
-    assert dialog.tree.get_children()[0] == "AAA"
-    assert dialog.scores["AAA"]["groups"] is calc.CANSLIM_GLB_GROUPS
-
-    dialog.toggle_components()
-    dialog.update()
-    assert dialog.category_score_labels["leadership"].winfo_exists()
-    assert dialog.metric_value_labels["eps_q_growth"].cget("text") != "Brak danych"
-    footer_labels = [
-        child.cget("text") for child in dialog.detail_content.winfo_children()
-        if isinstance(child, tk.Label)
-    ]
-    assert any("Model eksperymentalny" in text for text in footer_labels)
-    dialog.close()
-
-
-def test_growth_score_dialog_uses_a_visible_side_panel_with_visual_component_breakdown(app):
-    from desktop import app as A
-    app.store.row("AAA").update(
-        rev_rr=50, accel=10, eps_rev=20, dopm=6, surp=30, rev_surp=30,
-        eps_q=[["2025-01-31", 2.0], ["2026-01-31", 4.0]],
-        qs=[{"rev_rr": 10}, {"rev_rr": 20}, {"rev_rr": 30}, {"rev_rr": 40}],
-    )
-    dialog = A.GrowthScoreDialog(app)
-    dialog.update()
-    assert dialog.show_components is False
-    assert dialog.panel_toggle.winfo_manager() == "pack"
-    assert dialog.detail_frame.winfo_manager() == ""
-
-    dialog.toggle_components()
-    dialog.update()
-    assert dialog.show_components is True
-    assert dialog.detail_frame.master is dialog.body
-    assert dialog.detail_frame.winfo_manager() == "pack"
-    assert dialog.panel_toggle.winfo_manager() == "pack"
-    assert dialog.score_label.cget("text") == "100,0"
-    assert dialog.coverage_label.cget("text") == "Pokrycie danych: 100/100"
-    assert dialog.metric_value_labels["revenue_growth"].cget("text") == "+50,0%"
-    assert dialog.metric_value_labels["eps_growth"].cget("text") == "+100,0%"
-    assert dialog.metric_points_labels["eps_surprise"].cget("text") == "5,0/5 pkt"
-    assert dialog.category_score_labels["growth"].winfo_exists()
-
-    app.store.row("BBB").update(
-        rev_rr=None, accel=None, eps_rev=None, dopm=None, surp=None, rev_surp=None, eps_q=[], qs=[],
-    )
-    dialog.fill()
-    dialog.tree.selection_set("BBB")
-    dialog.update_components()
-    assert dialog.score_label.cget("text") == "—"
-    assert "Za mało danych" in dialog.score_status.cget("text")
-    assert dialog.metric_value_labels["revenue_growth"].cget("text") == "Brak danych"
-    assert dialog.metric_points_labels["eps_surprise"].cget("text") == "pominięte"
-    dialog.close()
-
-
-def test_growth_score_dialog_lists_every_scanner_ticker_and_opens_chart_on_ticker_click(app, monkeypatch):
-    from desktop import app as A
-    app.store.row("AAA").update(
-        rev_rr=50, accel=10, eps_rev=20, dopm=6, surp=15, rev_surp=15,
-        eps_q=[["2025-01-31", 2.0], ["2026-01-31", 4.0]],
-        qs=[{"rev_rr": 10}, {"rev_rr": 20}, {"rev_rr": 30}, {"rev_rr": 40}],
-    )
-    app.store.row("BBB").update(
-        rev_rr=10, accel=-10, eps_rev=-10, dopm=-3, surp=-10, rev_surp=-10,
-        eps_q=[["2025-01-31", 2.0], ["2026-01-31", 1.0]],
-        qs=[{"rev_rr": -10}, {"rev_rr": -20}],
-    )
-    for n in range(12):
-        app.store.rows.append({
-            "ticker": f"T{n:02d}", "rev_rr": 0, "accel": -10, "eps_rev": -20, "dopm": -5,
-            "surp": -20, "rev_surp": -20, "eps_q": [["2025-01-31", 2.0], ["2026-01-31", 1.0]],
-            "qs": [{"rev_rr": -10}, {"rev_rr": -20}],
-        })
-    dialog = A.GrowthScoreDialog(app)
-    dialog.update()
-    tickers = dialog.tree.get_children()
-    assert len(tickers) == len(app.store.rows) == 14
-    assert tickers[0] == "AAA"
-    assert "BBB" in tickers and "T11" in tickers
-    assert dialog.tree.set("AAA", "coverage") == "100/100"
-    assert float(dialog.tree.set("AAA", "score").replace(",", ".")) > float(
-        dialog.tree.set("BBB", "score").replace(",", ".")
-    )
-    opened = []
-    monkeypatch.setattr(app, "open_chart", lambda ticker: opened.append(ticker))
-    box = dialog.tree.bbox("AAA", column="#1")
-    assert box
-    event = type("E", (), {"x": box[0] + 8, "y": box[1] + box[3] // 2})()
-    dialog.on_cell_click(event)
-    assert opened == ["AAA"]
-
-    app.store.row("BBB").update(
-        rev_rr=50, accel=10, eps_rev=20, dopm=6, surp=30, rev_surp=30,
-        eps_q=[["2025-01-31", 2.0], ["2026-01-31", 5.0]],
-        qs=[{"rev_rr": 15}, {"rev_rr": 25}, {"rev_rr": 35}, {"rev_rr": 40}],
-    )
-    app.refresh()
-    assert len(dialog.tree.get_children()) == len(app.store.rows) == 14
-    assert dialog.tree.get_children()[0] == "BBB"
-    dialog.close()
-
-
-
-
 def test_fundamentals_panel_layout_is_wider_styled_and_scrollable(app):
     app.open_chart("AAA")
     ch = app.chart
@@ -775,7 +577,6 @@ def test_fundamentals_panel_layout_is_wider_styled_and_scrollable(app):
     assert ch.ptext.cget("yscrollcommand")
     assert ch.ptext.cget("wrap") == "word"
     assert ch.ptext.tag_cget("sec", "foreground") == "#7cc4ff"
-    assert ch.ptext.tag_cget("score_ok", "font")
     assert ch.ptext.tag_cget("status_ok", "background") == "#13271f"
 
 
@@ -846,3 +647,10 @@ def test_chart_ticker_entry_fetches_and_saves_missing_symbol(app, monkeypatch):
     assert app.store.weekly("ZZZ") is not None
     assert app.store.row("ZZZ")["company"] == "ZZZ Corp"
     assert app.store.settings["symbols"][0] == "ZZZ"
+
+
+def test_rs_markers_deepvue():
+    """● zielony = nowy szczyt RS i ceny, ● różowy = szczyt RS przed ceną."""
+    rs = [1.0, 1.0, 1.0, 1.2, 1.3]
+    highs = [10, 10, 10, 11, 9]
+    assert A_chart.rs_markers(rs, highs, 3) == {3: True, 4: False}

@@ -10,6 +10,7 @@ from pathlib import Path
 from . import calc, finviz, sec
 
 # skanery do wyboru: każdy = nazwa + filtr Finviz (+ limit spółek); wszystkie liczą tę samą strategię
+RULES_VERSION = 2   # podnieś, gdy zmienią się domyślne warunki strategii (stare zapisane ustawienia warunków są wtedy resetowane)
 DEFAULT_SCANNERS = [
     {"name": "Bezpieczny (backtest)", "filters": finviz.DEFAULT_FILTERS, "max_tickers": 1500},
     {"name": "Trend 50/200", "filters": "ta_sma50_pa,ta_sma200_pa,cap_midover,sh_avgvol_o300", "max_tickers": 1500},
@@ -79,6 +80,9 @@ class Store:
     def __init__(self, base=None):
         self.dir = data_dir(base)
         self.settings = normalize_scanners({**DEFAULT_SETTINGS, **read(self.dir / "settings.json", {})})
+        if self.settings.get("rules_version", 0) < RULES_VERSION:   # reguły z badania 2011–2025: tylko przychody + marża (RS, P/S, beat2 wyłączone)
+            self.settings["strategy_conditions"] = calc.normalize_conditions(None)
+            self.settings["rules_version"] = RULES_VERSION
         self.settings["strategy_conditions"] = calc.normalize_conditions(self.settings.get("strategy_conditions"))
         (self.dir / "scans").mkdir(exist_ok=True)
         self.series = read(self.dir / "weekly.json", None)

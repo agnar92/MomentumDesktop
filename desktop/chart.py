@@ -288,7 +288,7 @@ def draw(cv, data, row=None, w=None, h=None, n_show=None, end=None, tlines=(), s
         return y1 - (math.log(p) - lmin) / (lmax - lmin) * (y1 - y0)
 
     level0, last0 = (row or {}).get("glb"), c[-1] if c else None
-    stop0 = (row or {}).get("macd_stop") if (row or {}).get("exit") != "GLB" else None
+    stop0 = _stop_level(row)
     ly = yf(level0) if level0 and pmin < level0 < pmax else None
     last_y, stop_y = axis_spots(ly, yf(last0) if last0 else None, yf(stop0) if stop0 and pmin < stop0 < pmax else None)
     taken = [v for v in (ly, last_y, stop_y) if v is not None]
@@ -368,7 +368,7 @@ def draw(cv, data, row=None, w=None, h=None, n_show=None, end=None, tlines=(), s
         ty = max(y0 + 38, y - 11)
         boxed(cv, x0 + 4, ty, f"GREEN LINE {fmt(level)} · kupno do {fmt(level * 1.1)}" + (" · wyjście: zamknięcie tyg. pod linią" if (row or {}).get("exit") == "GLB" else ""),
               GLB_COLOR)
-    stop = (row or {}).get("macd_stop") if (row or {}).get("exit") != "GLB" else None   # metoda GLB: wyjście = zamknięcie pod Green Line
+    stop = _stop_level(row)   # metoda GLB: wyjście = zamknięcie pod Green Line
     if stop and pmin < stop < pmax:
         y = yf(stop)
         cv.create_line(x0, y, x1, y, fill=STOP_COLOR, dash=(5, 4))
@@ -639,6 +639,17 @@ def scoring_panel_lines(growth_result=None, canslim_result=None, canslim_in_univ
     return out
 
 
+def _stop_level(row):
+    """Linia stopu na wykresie: dla 📌 pozycji max(−10 %, MACD od wejścia), bez pozycji stop MACD wiersza; metoda GLB — brak."""
+    r = row or {}
+    if r.get("exit") == "GLB":
+        return None
+    pl = r.get("plan")
+    if pl:
+        return max((v for v in (pl.get("macd_stop"), pl.get("stop_init")) if v), default=None)
+    return r.get("macd_stop")
+
+
 def fund_panel_lines(r, pos=None, plan=None, exit_method="MACD", conditions=None,
                      growth_score_result=None, canslim_glb_result=None, canslim_in_universe=True):
     """Treść panelu fundamentów -> [(tekst, tag)]; pokazuje progi strategii i warunki aktualnie włączone."""
@@ -694,19 +705,21 @@ def fund_panel_lines(r, pos=None, plan=None, exit_method="MACD", conditions=None
     else:
         item(None, "2 ostatnie raporty EPS — kryterium wyłączone")
     st = r.get("glb_state")
-    item(True if st in ("WYBICIE", "SYGNAŁ", "BLUE DOT") else None if st == "NAD" else False, f"Green Line: {st or '—'} (kupno: przebicie dowolnie wysoko, 0–10 % albo Blue Dot)")
+    pct = r.get("glb_pct")
+    sig = st in ("WYBICIE", "SYGNAŁ") and (pct is None or pct <= 10)
+    item(True if sig else None if st in ("NAD", "BLUE DOT", "WYBICIE") else False, f"Green Line: {st or '—'} (kupno: zamknięcie tygodnia 0–10 % nad linią)")
     item(r.get("macd") == "nad", f"MACD tyg. {r.get('macd') or '—'} sygnałem" + (f" · stop {r['macd_stop']:.2f}" if r.get("macd_stop") else ""))
     item(False if r.get("slow") else None if r.get("accel") is None else True, "brak hamowania przychodów")
     glb, price = r.get("glb"), r.get("price")
     item(None if glb is None or price is None else price >= glb, f"zamknięcie nad Green Line {fmt(glb)} (wyjście metodą GLB: zamknięcie tyg. pod linią)")
     if plan:
-        ex = f"zamknięcie tyg. pod Green Line {fmt(glb)}" if exit_method == "GLB" else f"stop MACD {fmt(r.get('macd_stop'))}"
+        ex = f"zamknięcie tyg. pod Green Line {fmt(glb)}" if exit_method == "GLB" else f"stop MACD od wejścia {fmt(plan.get('macd_stop'))}"
         out += [("PLAN WYJŚCIA · metoda " + ("pod GLB" if exit_method == "GLB" else "MACD"), "sec"),
                 (f"Kupno\t{fmt(plan['entry'])}", "val"), (f"Stop −10 %\t{fmt(plan['stop_init'])}", "val"),
                 (f"Szczyt od wejścia\t{fmt(plan['peak'])}", "val"), (f"½ przy (−20 %)\t{fmt(plan['half_at'])}", "val"), (f"Reszta\t{ex}", "val")]
         if plan["half"]:
             out.append((f"⚠ Zamknięcie {fmt(plan['last'])} jest ≥ 20 % pod szczytem {fmt(plan['peak'])} — sprzedaj połowę.", "warn"))
-        if (plan["glb_exit"] if exit_method == "GLB" else (r.get("macd_stop") and (price or 0) < r["macd_stop"])):
+        if (plan["glb_exit"] if exit_method == "GLB" else (plan.get("macd_stop") and (price or 0) < plan["macd_stop"])):
             out.append(("⚠ Sygnał wyjścia (" + ("zamknięcie pod Green Line" if exit_method == "GLB" else "zamknięcie pod stopem MACD") + ").", "warn"))
     if pos and r.get("slow"):
         out.append((f"⚠ Masz pozycję, a raport pokazuje hamowanie{' i spadek marży brutto' if r['slow'] == 'HAMUJE+MB' else ''} — spadek ≥ 20 % w 6 mies. "

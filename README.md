@@ -5,10 +5,11 @@ Prosta aplikacja okienkowa (Python + Tkinter, ciemny motyw) z **jedną strategi�
 | Etap | Reguła |
 |---|---|
 | Lista do pobrania | **Skaner Finviz** do wyboru na pasku (*Skanery / ustawienia…*: własne skanery = nazwa + filtr + limit; domyślnie Bezpieczny (backtest), Trend 50/200, Blisko rekordu (ATH), CANSLIM). Pierwszy = bezpieczny filtr wstępny `ind_stocksonly,sh_price_o10,sh_avgvol_o300,fa_salesqoq_o15` (tylko akcje, cena > 10 $, śr. wolumen > 300 tys., przychody kw. > 15 % r/r). W teście nie odciął żadnego z dużych zwycięzców |
-| Warunki | przychody kw. **≥ +15 % r/r**, marża operacyjna **≥ +3 pp r/r** (SEC EDGAR), **P/S < 20**, siła względna 52 tyg. **≥ +50 pp nad S&P 500** |
-| Kolejność | od największej zmiany marży operacyjnej r/r |
+| Warunki | przychody kw. **≥ +15 % r/r** i marża operacyjna **≥ +3 pp r/r** (SEC EDGAR); P/S, RS i niespodzianki EPS domyślnie wyłączone (badanie 2011–2025: RS ≥ 50 pp obniżał wynik — za mało sygnałów) |
+| Kolejność | warunki + sygnał, potem **najbliżej Green Line** (przy nadmiarze sygnałów: ten sam wynik, mniejsze obsunięcie) |
 | Wejście | **Green Line**: rekord wszech czasów **miesięcznego High** (jak w oryginale Dr. Wisha), który stoi **≥ 3 zamknięte miesiące** (po nowym rekordzie obowiązuje stara linia, dopóki nowy nie przestoi 3 miesięcy); kupno, gdy tydzień zamknie się **0–10 % nad linią** |
-| Wyjście | **tygodniowy MACD (12, 26, 9)**: po przecięciu sygnału w dół stop pod Low tego tygodnia; do tego stop **10 %** pod wejściem |
+| Wyjście | stop **10 %** pod wejściem i **tygodniowy MACD (12, 26, 9)**: stop pod Low tygodnia przecięcia w dół **po wejściu** (zamknięcie tygodnia) |
+| Portfel | 8–10 pozycji po równo; najpierw wyjścia, potem wejścia; nie sprzedawaj pozycji dla nowego sygnału; bez dokładek, trailing stopów i stopu czasowego; wolne miejsca = gotówka w SPY. Badanie 2011–2025 (≈5600 spółek, bez zdelistowanych): ≈ 21 % rocznie, DD ≈ −37 %; z gotówką w SPY ≈ 25 % |
 
 Heurystyka z backtestu (spółki z dzisiejszej listy, bez spółek wycofanych z obrotu), nie porada inwestycyjna.
 
@@ -34,13 +35,13 @@ Heurystyka z backtestu (spółki z dzisiejszej listy, bez spółek wycofanych z 
   Linia jest przedłużona przerywaną kreską do ostatniej świecy. Linie dzienne i tygodniowe są przechowywane osobno; alert na linii dziennej sprawdza dzienne zamknięcia.
 - **🔔 Alerty** (pasek): zamknięcie tygodnia przecięło linię trendu oraz dla obserwowanych spółek (🔕 Obserwuj na wykresie): sygnał GLB, przecięcie MACD
   w dół, zamknięcie pod stopem MACD, spełnione warunki. Sprawdzane po starcie i po każdym Sync; zapis w `data/alerts.json`.
-- **Warunki domyślne** (zmieniane przyciskiem **Warunki…**; bez progu obrotu — płynność ustawiasz filtrem w Finviz): przychody kw. ≥ +15 % r/r, marża oper. ≥ +3 pp r/r, P/S < 20 i siła
-  względna (kolumna RS): zmiana ceny z 52 tyg. ≥ 50 pp lepsza od S&P 500 (SPY), plus 2 ostatnie raporty EPS powyżej konsensusu. Możesz wyłączyć dowolne kryterium lub zmienić jego próg. Backtest 2015–2026: +15,6 % na transakcję, portfel wszystkich sygnałów
+- **Warunki domyślne** (zmieniane przyciskiem **Warunki…**; bez progu obrotu — płynność ustawiasz filtrem w Finviz): przychody kw. ≥ +15 % r/r i marża oper. ≥ +3 pp r/r; P/S < 20, siła
+  względna (RS ≥ 50 pp nad SPY) i 2 raporty EPS powyżej konsensusu można włączyć ręcznie. Starsze zapisane ustawienia warunków są raz resetowane do nowych domyślnych. Wcześniejszy backtest (płynny rynek): Backtest 2015–2026: +15,6 % na transakcję, portfel wszystkich sygnałów
   36,6 % rocznie (S&P 500 13,6 %), ale mało sygnałów naraz i spadek portfela do −55 %. **Hamuje ⚠**: tempo przychodów spadło o ≥ 10 pp (⚠⚠ z marżą brutto
   w dół). Liczby w 📖 Poradniku.
 - **Linia siły relatywnej (RS) jak w IBD** na wykresie tygodniowym: cena / S&P 500 na dole panelu ceny, na końcu linii liczba „+x pp” (RS 52 tyg.), ● gdy RS jest na szczycie 52 tyg.
-- **Wejście:** WYBICIE = tydzień przebicia Green Line przy dowolnej wysokości (mocne wybicie), SYGNAŁ = 0–10 % nad linią, **BLUE DOT** = kolejny tydzień
-  > 10 % nad linią i Blue Dot na dziennym w ostatnich 5 sesjach (wejście; bez kropki stan NAD = czekaj).
+- **Wejście:** zamknięcie tygodnia **0–10 % nad Green Line** (WYBICIE = tydzień przebicia, SYGNAŁ = kolejny tydzień w strefie). Dalej niż 10 % (także BLUE DOT)
+  i Blue Line — tylko informacyjnie (w badaniu 2011–2025 dawały mniej).
 - **Prognozy analityków** (yfinance): **Upside 12M %** = (średni cel cenowy analityków / bieżąca cena − 1) × 100; wartość odświeżana co 7 dni. To potencjał implikowany celem konsensusu, a nie gwarantowany zwrot.
 - **Niespodzianki EPS** (warunek „2× nad konsensus”: 2 ostatnie raporty powyżej konsensusu EPS; kolumny Niesp. EPS % i Rewizja EPS 90 dni %, z yfinance,
   co 7 dni). W backteście warunek podniósł wynik z 36,6 do 42,4 % rocznie. Rewizja prognozy na przyszły rok (dziś vs 90 dni temu) to podgląd — bez historii do testu.

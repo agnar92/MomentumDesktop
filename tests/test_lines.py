@@ -69,11 +69,26 @@ def test_list_filters():
     assert active_filters({"a": {"in": []}, "b": {"min": 1}, "c": {}}) == 1
 
 
-def test_default_order_signal_first_then_relative_strength():
-    from desktop.app import default_order
-    rows = [{"ticker": "A", "ok": True, "glb_state": "SYGNAŁ", "rs": 55}, {"ticker": "B", "ok": True, "glb_state": "WYBICIE", "rs": 90},
-            {"ticker": "C", "ok": True, "glb_state": "POD", "rs": 120}, {"ticker": "D", "ok": False, "rs": 300}]
-    assert [r["ticker"] for r in sorted(rows, key=default_order)] == ["B", "A", "C", "D"]
+def test_default_order_signal_first_then_nearest_line():
+    from desktop.app import default_order, is_signal
+    rows = [{"ticker": "A", "ok": True, "glb_state": "SYGNAŁ", "glb_pct": 7, "rs": 55}, {"ticker": "B", "ok": True, "glb_state": "WYBICIE", "glb_pct": 2, "rs": 10},
+            {"ticker": "C", "ok": True, "glb_state": "POD", "glb_pct": -20, "rs": 120}, {"ticker": "D", "ok": False, "rs": 300},
+            {"ticker": "E", "ok": True, "glb_state": "WYBICIE", "glb_pct": 15, "rs": 99}]
+    assert [r["ticker"] for r in sorted(rows, key=default_order)] == ["B", "A", "E", "C", "D"]
+    assert not is_signal({"glb_state": "BLUE DOT", "glb_pct": 12}) and not is_signal(rows[4]) and is_signal(rows[1])
+
+
+def test_macd_stop_since_entry():
+    n, d, c, lo = 60, [], [], []
+    for i in range(n):
+        d.append(f"2025-{1 + i // 5:02d}-{1 + (i % 5) * 6:02d}")
+        v = 100 + i if i < 20 else 120 - (i - 20) * 3 if i < 26 else 102 + (i - 26) * 2 if i < 45 else 140 - (i - 45) * 2
+        c.append(v)
+        lo.append(v - 1)
+    s = {"d": d, "c": c, "l": lo}
+    allx = L.macd_stop_since(s, "")
+    assert allx is not None and L.macd_stop_since(s, d[46]) == allx
+    assert L.macd_stop_since(s, d[-1]) is None and L.position_plan({"since": d[-1], "price": 120}, s, {})["macd_stop"] is None
 
 
 def test_position_plan_and_half_sell_alert():
@@ -101,3 +116,5 @@ def test_position_status():
     assert L.position_status(pl, {"slow": "HAMUJE"}, "GLB") == ["STOP −10 %", "WYJŚCIE: zamknięcie pod GLB", "SPRZEDAJ ½ (−20 % od szczytu)", "⚠ hamuje"]
     assert L.position_status({**pl, "stop_init": 90, "half": False}, {"macd_stop": 105}, "MACD") == ["WYJŚCIE: pod stopem MACD"]
     assert L.position_status({"last": 150, "stop_init": 108}, {"macd_stop": 105}, "MACD") == []
+    assert L.position_status({"last": 100, "stop_init": 90, "macd_stop": None}, {"macd_stop": 105}, "MACD") == []   # MACD sprzed wejścia się nie liczy
+    assert L.position_status({"last": 100, "stop_init": 90, "macd_stop": 104}, {"macd_stop": 95}, "MACD") == ["WYJŚCIE: pod stopem MACD"]

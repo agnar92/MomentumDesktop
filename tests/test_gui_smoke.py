@@ -52,6 +52,17 @@ def test_list_chart_and_navigation(app):
     ev = type("E", (), {"x": (g["x0"] + g["x1"]) / 2, "y": (g["price"][0] + g["price"][1]) / 2})()
     ch.on_motion(ev)
     assert ch.cv.find_withtag("tip")
+    E = type("E", (), {})
+    a, b = E(), E()   # miarka: prawy przycisk przytrzymany od a do b
+    a.x, a.y, a.x_root, a.y_root = g["x0"] + 50, g["price"][1] - 20, 0, 0
+    b.x, b.y = g["x1"] - 50, g["price"][0] + 20
+    ch.right_click(a)
+    assert ch.ruler and ch.ruler["k"] < ch.geom["n"]
+    ch.ruler_move(b)
+    texts = [ch.cv.itemcget(i, "text") for i in ch.cv.find_withtag("ruler") if ch.cv.type(i) == "text"]
+    assert texts and texts[0].startswith("+") and " tyg." in texts[0]
+    ch.ruler_end(b)
+    assert not ch.cv.find_withtag("ruler") and ch.ruler is None
     ch.zoom(0.5)                                         # kółko: okno 78 tygodni, prawy brzeg zostaje
     assert ch.geom["n"] == 78 and ch.geom["i0"] == 78
     ch.slider.update()
@@ -297,7 +308,7 @@ def test_guide_position_and_ibd_panels(app):
     g = ch.geom["g"]
     assert g["rs"][1] < g["price"][0] and g["vol"][1] < g["rev"][0] < g["rev"][1] < g["macd"][0]
     panel_text = ch.ptext.get("1.0", "end")
-    assert "Growth Score" not in panel_text and "CAN SLIM" not in panel_text and "RS Rating" in panel_text
+    assert "Growth Score" not in panel_text and "CAN SLIM" not in panel_text and "RS Rating" not in panel_text
     ch.toggle_pos()
     assert "AAA" in st.alerts["pos"] and "AAA" in st.alerts["watch"] and "⚠" in ch.ptext.get("1.0", "end") and "spełnia warunki" in ch.ptext.get("1.0", "end")
     assert app.tree.item("AAA")["values"][0].startswith("📌") and "poswarn" in app.tree.item("AAA")["tags"]

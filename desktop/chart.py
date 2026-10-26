@@ -116,14 +116,21 @@ def earnings_tooltip_lines(data, index, entry, period):
     return out
 
 
-def boxed(cv, x, y, text, fill, anchor="w", font=FONT):
+def boxed(cv, x, y, text, fill, anchor="w", font=FONT, tags=""):
     """Napis na tle wykresu (prostokąt w kolorze tła pod spodem), żeby nie zlewał się ze świecami i liniami."""
-    t = cv.create_text(x, y, text=text, anchor=anchor, fill=fill, font=font)
+    t = cv.create_text(x, y, text=text, anchor=anchor, fill=fill, font=font, tags=tags)
     b = cv.bbox(t)
     if b:
-        r = cv.create_rectangle(b[0] - 2, b[1] - 1, b[2] + 2, b[3] + 1, fill=BG, outline="")
+        r = cv.create_rectangle(b[0] - 2, b[1] - 1, b[2] + 2, b[3] + 1, fill=BG, outline="", tags=tags)
         cv.tag_lower(r, t)
     return t
+
+
+def ruler_text(p1, p2, k1, k2, period="W"):
+    """Miarka (prawy przycisk): zmiana ceny w % od punktu kliknięcia i liczba świec między punktami -> napis."""
+    unit = "sesji" if period == "D" else "mies." if period == "M" else "tyg."
+    pct = (p2 / p1 - 1) * 100 if p1 else 0.0
+    return f"{pct:+.1f} % · {abs(k2 - k1)} {unit} · {fmt(p1)} → {fmt(p2)}"
 
 
 def axis_spots(level_y, last_y, stop_y, gap=16):
@@ -473,7 +480,7 @@ def rs_markers(rs, highs, lookback):
 
 def draw_rs_panel(cv, data, i0, i1, xf, g, spx, row=None, period="W"):
     """Panel RS Line (Deepvue): akcja / SPY na skali log okna, średnia 52 tyg. (252 sesje na D, 12 mies. na M), ● zielony = nowy szczyt RS
-    i ceny, ● różowy = szczyt RS przed ceną; RS Rating 1–99 w obrębie skanera i RS 52 tyg. w pp na końcu linii."""
+    i ceny, ● różowy = szczyt RS przed ceną; RS 52 tyg. w pp na końcu linii."""
     s0, s1 = g["rs"]
     x0, x1 = g["x0"], g["x1"]
     dates, closes = data.get("d") or [], data.get("c") or []
@@ -512,9 +519,8 @@ def draw_rs_panel(cv, data, i0, i1, xf, g, spx, row=None, period="W"):
             cv.create_oval(x - 3.5, y - 3.5, x + 3.5, y + 3.5, fill=RS_HIGH_C if with_price else RS_EARLY_C, outline="")
     r = row or {}
     unit = "252 sesji" if period == "D" else "12 mies." if period == "M" else "52 tyg."
-    head = f"RS Rating {round(r['rs_rating'])}/99 · " if r.get("rs_rating") is not None else ""
-    full = f"{head}RS Line (akcja / SPY) · średnia {unit} · ● zielony = nowy szczyt RS · ● różowy = RS przed ceną"
-    boxed(cv, x0 + 4, s0 + 6, full if x1 - x0 > 7 * len(full) else f"{head}RS / MA {unit}", RS_C)
+    full = f"RS Line (akcja / SPY) · średnia {unit} · ● zielony = nowy szczyt RS · ● różowy = RS przed ceną"
+    boxed(cv, x0 + 4, s0 + 6, full if x1 - x0 > 7 * len(full) else f"RS / MA {unit}", RS_C)
     if r.get("rs") is not None:   # na końcu linii: siła względna 52 tyg. w pp vs SPY (jak kolumna RS)
         boxed(cv, x1 + 4, pts[-1][1], f"{r['rs']:+.0f} pp", RS_C)
     cv.create_line(x0, s1 + 3, x1, s1 + 3, fill=GRID)
@@ -655,7 +661,6 @@ def fund_panel_lines(r, pos=None, plan=None, exit_method="MACD", conditions=None
             (f"  poprzedni kw.\t{v(r.get('dopm1'), ' pp')}", "val"), (f"Marża oper.\t{v(r.get('opm'), ' %')}", "val"),
             (f"Δ marży brutto r/r\t{v(r.get('dgm'), ' pp')}", "val"),
             (f"Wycena P/S\t{r['ps']:.1f}" if r.get("ps") else "Wycena P/S\t—", "val"),
-            (f"RS Rating (1–99)\t{'—' if r.get('rs_rating') is None else round(r['rs_rating'])}", "val"),
             (f"RS 52 tyg. vs S&P\t{v(r.get('rs'), ' pp')}", "val"),
             (f"Niespodzianka EPS\t{v(r.get('surp'), ' %')}", "val"), (f"Rewizja EPS 90 dni\t{v(r.get('eps_rev'), ' %')}", "val"),
             (f"Obrót dzienny\t{r['turnover'] / 1e6:.0f} mln $" if r.get("turnover") else "Obrót dzienny\t—", "val"),
@@ -722,7 +727,7 @@ def info_lines(data, i):
 class ChartWindow(tk.Toplevel):
     def __init__(self, app, ticker):
         super().__init__(app.root)
-        self.app, self.geom, self.drag = app, None, None
+        self.app, self.geom, self.drag, self.ruler = app, None, None, None
         self.n_show, self.end = None, None   # okno suwaka: długość zostaje między spółkami, koniec wraca do ostatniego tygodnia
         self.configure(bg=BG)
         hh = max(600, min(self.winfo_screenheight() - 90, 1150))   # okno wyższe niż szersze (użytkownik: „bardziej wysokie niż szerokie”)
@@ -832,7 +837,9 @@ class ChartWindow(tk.Toplevel):
         self.cv.bind("<ButtonPress-1>", self.press)
         self.cv.bind("<B1-Motion>", self.drag_line)
         self.cv.bind("<ButtonRelease-1>", self.release)
-        self.cv.bind("<Button-3>", self.right_click)
+        self.cv.bind("<ButtonPress-3>", self.right_click)
+        self.cv.bind("<B3-Motion>", self.ruler_move)
+        self.cv.bind("<ButtonRelease-3>", self.ruler_end)
         self.bind("<Delete>", lambda e: self.delete_selected())
         self.bind("<Control-space>", self.focus_ticker_entry)
         self.bind("m", lambda e: self.toggle_period("M"))
@@ -1176,9 +1183,41 @@ class ChartWindow(tk.Toplevel):
         self.tools()
         self.redraw()
 
+    def point(self, x, y):
+        """Punkt wykresu bez magnesu -> (cena, indeks świecy, x środka świecy)."""
+        g = self.geom["g"]
+        y0, y1 = g["price"]
+        lmin, lmax = self.geom["lmin"], self.geom["lmax"]
+        i = max(0, min(self.geom["n"] - 1, int((x - g["x0"]) / self.geom["step"])))
+        return math.exp(lmin + (y1 - y) / (y1 - y0) * (lmax - lmin)), self.geom["i0"] + i, g["x0"] + (i + 0.5) * self.geom["step"]
+
+    def ruler_move(self, e):
+        """Miarka: przytrzymany prawy przycisk — od punktu kliknięcia % zmiany ceny i liczba tygodni (sesji / miesięcy)."""
+        r = self.ruler
+        self.cv.delete("ruler", "tip")
+        if not r or not self.geom:
+            return
+        g = self.geom["g"]
+        y = max(g["price"][0], min(g["price"][1], e.y))
+        p, k, x = self.point(e.x, y)
+        color = "#26a65b" if p >= r["p"] else "#e5534b"
+        self.cv.create_rectangle(r["x"], r["y"], x, y, outline=color, dash=(3, 3), tags="ruler")
+        self.cv.create_line(r["x"], r["y"], x, y, fill=color, width=1.5, arrow="last", tags="ruler")
+        right = x < g["x1"] - 240
+        boxed(self.cv, x + 10 if right else x - 10, y + 12 if y > r["y"] else y - 12,
+              ruler_text(r["p"], p, r["k"], k, self.period), color, anchor="w" if right else "e", tags="ruler")
+
+    def ruler_end(self, e):
+        self.ruler = None
+        self.cv.delete("ruler")
+
     def right_click(self, e):
+        self.ruler = None
         hit = self.geom and L.hit_line(self.geom["segs"], e.x, e.y, 7)
         if not hit:
+            if self.geom and self.data() and self.geom["g"]["price"][0] <= e.y <= self.geom["g"]["price"][1]:
+                p, k, x = self.point(e.x, e.y)
+                self.ruler = {"p": p, "k": k, "x": x, "y": e.y}
             return
         self.gest = None
         self.sel = hit[0]

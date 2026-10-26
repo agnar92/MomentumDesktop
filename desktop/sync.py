@@ -5,7 +5,7 @@ import datetime as dt
 
 from . import calc, estimates, finviz, prices, sec
 
-BENCH = "SPY"   # RS Line / RS Rating (jak Deepvue) i siła względna 52 tyg.
+BENCH = "SPY"   # RS Line (jak Deepvue) i siła względna 52 tyg.
 
 # etapy i ich udział w pasku postępu (SEC trwa najdłużej: jedno zapytanie na spółkę)
 STAGES = (("Finviz — lista spółek", 0.15), ("yfinance — tygodniowe", 0.25), ("yfinance — miesięczne High", 0.2), ("SEC — fundamenty", 0.4))

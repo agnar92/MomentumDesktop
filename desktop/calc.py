@@ -256,9 +256,6 @@ def slowdown(row):
     return "HAMUJE+MB" if _ok(g) and g < 0 else "HAMUJE"
 
 
-RS_RATING_PERIODS = ((4, 0.40), (13, 0.30), (26, 0.20), (52, 0.10))   # Deepvue RS Rating: 1/3/6/12 mies., większa waga nowszych (jawne przybliżenie)
-
-
 def _latest_surprise(history, known_through):
     """Najnowsza procentowa niespodzianka z datą raportu nie późniejszą niż known_through."""
     values = [item for item in (history or [])
@@ -274,48 +271,12 @@ def _latest_surprise(history, known_through):
     return latest[1] if 0 <= age <= SURPRISE_DAYS else None
 
 
-def rs_rating_score(weekly, spy):
-    """Przybliżenie Deepvue RS Rating (jak w webowym Momentum): nadwyżkowa stopa zwrotu vs SPY za 1/3/6/12 miesięcy, wagi 40/30/20/10;
-    dokładne wagi Deepvue nie są publiczne. None, gdy brak danych."""
-    d, c = (weekly or {}).get("d") or [], (weekly or {}).get("c") or []
-    sd, sc = (spy or {}).get("d") or [], (spy or {}).get("c") or []
-    if not d or not c or not sd or not sc or not _ok(c[-1]) or c[-1] <= 0:
-        return None
-
-    def spy_at(day):
-        i = bisect.bisect_right(sd, day) - 1
-        return sc[i] if i >= 0 and _ok(sc[i]) and sc[i] > 0 else None
-
-    now = spy_at(d[-1])
-    if now is None:
-        return None
-    weighted = total = 0.0
-    for weeks, weight in RS_RATING_PERIODS:
-        i = len(c) - 1 - weeks
-        if i < 0 or not _ok(c[i]) or c[i] <= 0 or spy_at(d[i]) is None:
-            continue
-        weighted += ((c[-1] / c[i]) - (now / spy_at(d[i]))) * 100.0 * weight
-        total += weight
-    return weighted / total if total else None
-
-
 def price_ratio(closes, sessions=252):
     """C/C[52 tyg.]: aktualne zamknięcie / zamknięcie sprzed 252 sesji; przy krótszej historii najstarsze (jak w webowym Momentum)."""
     if len(closes or []) < 2:
         return None
     base = closes[max(0, len(closes) - (sessions + 1))]
     return closes[-1] / base if base else None
-
-
-def rank_rs_rating(rows):
-    """RS Rating 1–99 w obrębie listy skanera (jak w webowym Momentum) z `rs_rating_score`; brak wyniku -> None."""
-    ranked = sorted((r for r in rows if _ok(r.get("rs_rating_score"))), key=lambda r: r["rs_rating_score"])
-    for i, r in enumerate(ranked):
-        r["rs_rating"] = 50 if len(ranked) < 2 else max(1, min(99, round(1 + 98 * i / (len(ranked) - 1))))
-    for r in rows:
-        if not _ok(r.get("rs_rating_score")):
-            r["rs_rating"] = None
-    return rows
 
 
 def pegy_ratio(peg, forward_pe, dividend_yield_pct):
@@ -359,7 +320,6 @@ def build_row(base, weekly, months, fund, spy=None, est=None, conditions=None):
     row["ps"] = mcap / f["ttm_rev"] if _ok(mcap) and _ok(f.get("ttm_rev")) and f["ttm_rev"] > 0 else None
     row["pegy"] = pegy_ratio(row.get("peg"), row.get("forward_pe"), row.get("dividend_yield"))
     row["rs"] = rel_strength(weekly, spy)
-    row["rs_rating_score"] = rs_rating_score(weekly, spy)
     as_of = (weekly.get("d") or [""])[-1]
     # tydzień z danych zaczyna się w poniedziałek: raport z tego tygodnia (do piątku) też jest znany
     known_through = (dt.date.fromisoformat(as_of) + dt.timedelta(days=6)).isoformat() if as_of else ""
@@ -367,7 +327,6 @@ def build_row(base, weekly, months, fund, spy=None, est=None, conditions=None):
     row["rev_surp"] = _latest_surprise((est or {}).get("revenue_surp"), known_through) if known_through else None
     row["eps_q"] = (est or {}).get("eps_q") or []
     row["eps_rev"] = (est or {}).get("rev90")
-    row["upside"] = (est or {}).get("upside")
     row["ok"] = passes(row, conditions)
     row["slow"] = slowdown(row)
     return row

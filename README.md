@@ -15,7 +15,7 @@ Heurystyka z backtestu (spółki z dzisiejszej listy, bez spółek wycofanych z 
 
 ## Okno
 
-- **Lista**: ticker, spółka, sektor, cena, **Upside 12M %** (potencjał do średniego celu analityków na 12 miesięcy), Green Line, odległość od linii, stan GLB (*WYBICIE* = ten tydzień zamknął się nad linią, poprzedni nie;
+- **Lista**: ticker, spółka, sektor, cena, Green Line, odległość od linii, stan GLB (*WYBICIE* = ten tydzień zamknął się nad linią, poprzedni nie;
   *SYGNAŁ* = 0–10 % nad linią; *NAD* = dalej; *POD*), MACD (nad / pod sygnałem) i stop z ostatniego przecięcia, zmiana marży operacyjnej i brutto r/r,
   przychody r/r, kwartał danych, obrót. Zielone wiersze = warunki spełnione i sygnał GLB. Domyślnie widać wszystkie spółki; filtr „tylko spełniające warunki” jest wyłączony i można go włączyć na pasku.
   Klik w nagłówek sortuje; Enter / dwuklik = wykres; zaznaczenie na liście przełącza otwarty wykres.
@@ -23,7 +23,7 @@ Heurystyka z backtestu (spółki z dzisiejszej listy, bez spółek wycofanych z 
   P/S oraz RS 52 tyg. vs S&P 500; można też wyłączyć wymóg dwóch kolejnych niespodzianek EPS. Zmiany są zapisywane, działają od razu i obowiązują przy następnym Sync.
   Brak danych P/S nie odrzuca spółki, zgodnie z dotychczasową regułą.
 - **Filtry…** (pasek): kilka warunków naraz po kolumnach — stan GLB, MACD, warunki, sektor (zaznacz wartości), liczby od–do (np. do linii %, Δ marży,
-  obrót w mln $, **Upside 12M %** (potencjał do średniego celu analityków). Brak pokrycia analitycznego = puste pole; przy aktywnym filtrze takie spółki nie przejdą zakresu. Gotowe zestawy, np. „Nad GLB + MACD dodatni”. Filtry zostają zapamiętane w ustawieniach.
+  obrót w mln $). Gotowe zestawy, np. „Nad GLB + MACD dodatni”. Filtry zostają zapamiętane w ustawieniach.
 - **Wykres** (jeden, tygodniowy, 3 lata): słupki High–Low z kreską zamknięcia, SMA 10 i 30 tyg., **Green Line** (z ceną i górną granicą kupna +10 %),
   stop z MACD (czerwona przerywana), wolumen ze średnią 10 tyg., MACD z ▼ w tygodniach przecięcia w dół. ↑ / ↓ = następna / poprzednia spółka, ruch myszy = dane tygodnia.
   **E pod Low świecy** oznacza dzień publikacji wyników finansowych (dzienny: sesja raportu, tygodniowy: tydzień raportu). Po najechaniu na świecę E dymek podaje **Earnings Surprise** i **Revenue Surprise** w %; jeśli źródło nie udostępnia historycznego konsensusu przychodów, pokazuje N/D zamiast szacować wartość.
@@ -31,6 +31,7 @@ Heurystyka z backtestu (spółki z dzisiejszej listy, bez spółek wycofanych z 
   Przycisk **⟳ Sync** w oknie wykresu odświeża tylko aktualną spółkę (świece tygodniowe, fundamenty oraz dane dzienne i miesięczne) w tle, bez ponownego skanowania całego Finviz.
 - **Linie trendu**: na wykresie tygodniowym i dziennym przeciągnij myszą po panelu ceny, aby narysować linię (punkty przyciągają się do High / Low świecy).
   Chwyć koniec, aby zmienić punkt; chwyć środek, aby przesunąć. Prawy klik na linii otwiera menu **Dodaj/wyłącz alert linii** lub **Usuń linię**; Delete usuwa zaznaczoną linię.
+  **Miarka**: przytrzymaj prawy przycisk myszy na panelu ceny (poza linią) i przesuwaj — od punktu kliknięcia widać zmianę ceny w % i liczbę tygodni (sesji na D, miesięcy na M); puszczenie przycisku chowa miarkę.
   Linia jest przedłużona przerywaną kreską do ostatniej świecy. Linie dzienne i tygodniowe są przechowywane osobno; alert na linii dziennej sprawdza dzienne zamknięcia.
 - **🔔 Alerty** (pasek): zamknięcie tygodnia przecięło linię trendu oraz dla obserwowanych spółek (🔕 Obserwuj na wykresie): sygnał GLB, przecięcie MACD
   w dół, zamknięcie pod stopem MACD, spełnione warunki. Sprawdzane po starcie i po każdym Sync; zapis w `data/alerts.json`.
@@ -39,10 +40,9 @@ Heurystyka z backtestu (spółki z dzisiejszej listy, bez spółek wycofanych z 
   36,6 % rocznie (S&P 500 13,6 %), ale mało sygnałów naraz i spadek portfela do −55 %. **Hamuje ⚠**: tempo przychodów spadło o ≥ 10 pp (⚠⚠ z marżą brutto
   w dół). Liczby w 📖 Poradniku.
 - **RS jak w Deepvue** (zamiast panelu S&P 500): nad ceną RS Line = akcja / SPY ze średnią 52 tyg. (252 sesje na D), ● zielony = nowy szczyt RS i ceny, ● różowy = szczyt RS przed ceną;
-  na końcu linii „+x pp” (RS 52 tyg.). Kolumna **RS Rating** 1–99 = ranking w obrębie skanera z nadwyżki nad SPY za 1/3/6/12 mies. (wagi 40/30/20/10, jawne przybliżenie). Kolumna **C/C[52 tyg.]** = zamknięcie / zamknięcie sprzed 252 sesji.
+  na końcu linii „+x pp” (RS 52 tyg.). Kolumna **C/C[52 tyg.]** = zamknięcie / zamknięcie sprzed 252 sesji.
 - **Wejście:** zamknięcie tygodnia **0–10 % nad Green Line** (WYBICIE = tydzień przebicia, SYGNAŁ = kolejny tydzień w strefie). Dalej niż 10 % (także BLUE DOT)
   i Blue Line — tylko informacyjnie (w badaniu 2011–2025 dawały mniej).
-- **Prognozy analityków** (yfinance): **Upside 12M %** = (średni cel cenowy analityków / bieżąca cena − 1) × 100; wartość odświeżana co 7 dni. To potencjał implikowany celem konsensusu, a nie gwarantowany zwrot.
 - **Niespodzianki EPS** (warunek „2× nad konsensus”: 2 ostatnie raporty powyżej konsensusu EPS; kolumny Niesp. EPS % i Rewizja EPS 90 dni %, z yfinance,
   co 7 dni). W backteście warunek podniósł wynik z 36,6 do 42,4 % rocznie. Rewizja prognozy na przyszły rok (dziś vs 90 dni temu) to podgląd — bez historii do testu.
 - **Wolumen relatywny** (kolumny RVol tyg. / RVol dz. i opis panelu wolumenu): wolumen ostatniego tygodnia / średnia 10 poprzednich tygodni oraz

@@ -15,11 +15,11 @@ from .theme import BG, FG, PANEL, apply_dark, autowrap, setup_style
 
 COLUMNS = [  # (klucz, nagłówek, szerokość, format)
     ("ticker", "Ticker", 70, "s"), ("company", "Spółka", 200, "s"), ("sector", "Sektor", 140, "s"), ("price", "Cena", 80, "p"),
-    ("upside", "Upside 12M %", 110, "%"), ("glb", "Green Line", 90, "p"), ("glb_pct", "Do linii %", 85, "%"), ("glb_state", "GLB", 85, "s"), ("macd", "MACD", 60, "s"), ("trend", "SMA 10>30", 85, "b"),
+    ("glb", "Green Line", 90, "p"), ("glb_pct", "Do linii %", 85, "%"), ("glb_state", "GLB", 85, "s"), ("macd", "MACD", 60, "s"), ("trend", "SMA 10>30", 85, "b"),
     ("macd_stop", "Stop MACD", 85, "p"), ("dopm", "Δ marża oper. pp", 120, "%"), ("rev_rr", "Przychody r/r %", 115, "%"),
     ("dgm", "Δ marża brutto pp", 125, "%"), ("quarter", "Kwartał", 105, "s"), ("turnover", "Obrót mln $", 95, "m"),
     ("ps", "P/S", 60, "x"), ("peg", "PEG", 70, "x2"), ("pegy", "PEGY", 75, "x2"),
-    ("rs_rating", "RS Rating", 80, "rating"), ("rs", "RS 52 tyg. pp", 105, "%"), ("surp", "Niesp. EPS %", 95, "%"), ("beat2", "2× nad konsensus", 115, "b"), ("eps_rev", "Rewizja EPS 90 dni %", 140, "%"), ("rvol_w", "RVol tyg.", 80, "x"), ("rvol_d", "RVol dz.", 75, "x"), ("cc52w", "C/C[52 tyg.]", 95, "r"), ("ok", "Warunki", 75, "b"), ("slow", "Hamuje", 95, "w"),
+    ("rs", "RS 52 tyg. pp", 105, "%"), ("surp", "Niesp. EPS %", 95, "%"), ("beat2", "2× nad konsensus", 115, "b"), ("eps_rev", "Rewizja EPS 90 dni %", 140, "%"), ("rvol_w", "RVol tyg.", 80, "x"), ("rvol_d", "RVol dz.", 75, "x"), ("cc52w", "C/C[52 tyg.]", 95, "r"), ("ok", "Warunki", 75, "b"), ("slow", "Hamuje", 95, "w"),
 ]
 SIGNAL = ("WYBICIE", "SYGNAŁ")
 ENTRY_MAX = calc.ENTRY_MAX_PCT   # kupno: zamknięcie tygodnia 0–10 % nad Green Line (BLUE DOT i wyżej — tylko informacyjnie)
@@ -83,8 +83,6 @@ def cell(v, f):
         return f"{v:.2f}"
     if f == "w":
         return "⚠⚠ + marża" if v == "HAMUJE+MB" else "⚠ hamuje" if v else ""
-    if f == "rating":
-        return str(round(v))
     return str(v)
 
 
@@ -165,12 +163,7 @@ class App:
             display_columns = [k for k in display_columns if k in all_columns]
             # Nowe kolumny dodajemy też do zapisanych wcześniej układów.
             changed = False
-            if not self.store.settings.get("rs_rating_column"):   # RS Rating (Deepvue) — dodany raz, potem można go ukryć
-                self.store.settings["rs_rating_column"] = True
-                if "rs_rating" not in display_columns:
-                    display_columns.insert(display_columns.index("rs") if "rs" in display_columns else len(display_columns), "rs_rating")
-                changed = True
-            for key in ("upside", "peg", "pegy"):
+            for key in ("peg", "pegy"):
                 if key not in display_columns:
                     if key in ("peg", "pegy") and "ps" in display_columns:
                         index = display_columns.index("ps") + 1
@@ -1207,7 +1200,7 @@ Test 2015–2026: RWB + nad GLB + Blue Dot, stop pod Low kropki, wyjście MACD: 
 CZEGO NIE SZUKAĆ (nic nie wnosiło)
 ROE / ROI, Blue Dot jako wejście, stan MACD przy wejściu, trend S&P 500, wolumen wybicia, długość bazy, kup +0,1 % / sprzedaj −0,1 % przy linii
 (dziennie: −0,3 % rocznie), samo przyspieszenie przychodów, poziom marży brutto i operacyjnej, sam EPS, zmiana marży kwartał do kwartału.
-Wykres: nad ceną RS Line jak w Deepvue (akcja / SPY, średnia 52 tyg., ● zielony = nowy szczyt RS i ceny, ● różowy = RS przed ceną, RS Rating 1–99 w obrębie skanera); słupki przychodów pod wolumenem — zielony ≥ +25 % r/r, żółty ≥ +15 %.
+Wykres: nad ceną RS Line jak w Deepvue (akcja / SPY, średnia 52 tyg., ● zielony = nowy szczyt RS i ceny, ● różowy = RS przed ceną); słupki przychodów pod wolumenem — zielony ≥ +25 % r/r, żółty ≥ +15 %.
 
 Heurystyka z backtestu na spółkach notowanych dziś (bez wycofanych z giełdy), nie porada inwestycyjna."""
 

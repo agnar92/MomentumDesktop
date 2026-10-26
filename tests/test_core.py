@@ -122,8 +122,6 @@ def test_build_row():
     valued = calc.build_row({"ticker": "Z", "peg": 2.0, "forward_pe": 30.0, "dividend_yield": 2.0},
                             W, [50, 100, 90, 90, 90, 95], {"rev_rr": 30, "dopm": 5}, SPY, EST)
     assert valued["peg"] == 2.0 and valued["pegy"] == pytest.approx(1.76)
-    assert calc.build_row({"ticker": "UP"}, W, [50, 100, 90, 90, 90], {"rev_rr": 30, "dopm": 5},
-                          SPY, {**EST, "upside": 34.6})["upside"] == 34.6
 
 
 def test_pegy_ratio_adds_dividend_yield_to_implied_growth():
@@ -147,31 +145,13 @@ def test_peg_and_pegy_are_visible_scanner_columns():
     assert not pass_filters({"pegy": None}, {"pegy": {"max": 1.5}})
 
 
-def test_analyst_upside_uses_mean_target_and_current_price():
-    assert estimates.analyst_upside({"current": 100, "mean": 125, "median": 120}) == pytest.approx(25)
-    assert estimates.analyst_upside({"current": 100, "mean": 80}) == pytest.approx(-20)
-    assert estimates.analyst_upside({"current": 0, "mean": 120}) is None
-    assert estimates.analyst_upside({"current": 100, "mean": None}) is None
-    assert estimates.analyst_upside({"current": "nan", "mean": 120}) is None
-
-
-def test_estimates_refresh_legacy_cache_without_upside():
+def test_estimates_refresh_legacy_cache_without_revenue_surprises():
     today = dt.date(2026, 10, 22)
-    cache = {"A": {"at": today.isoformat(), "surp": [], "rev90": None}}
-    fetched = {"surp": [], "revenue_surp": [], "eps_q": [], "rev90": None, "upside": 27.5}
-    got = estimates.update(["A"], cache, today=today, pause=0, fetch_one=lambda ticker: fetched)
-    assert got == ["A"] and cache["A"]["upside"] == 27.5
-
-
-def test_upside_is_visible_and_supports_numeric_filter():
-    from desktop.app import COLUMNS, cell, pass_filters
-
-    col = next(c for c in COLUMNS if c[0] == "upside")
-    assert col[1] == "Upside 12M %" and col[3] == "%"
-    assert cell(32.45, col[3]) == "+32.5"
-    assert pass_filters({"upside": 35}, {"upside": {"min": 30, "max": 50}})
-    assert not pass_filters({"upside": 55}, {"upside": {"min": 30, "max": 50}})
-    assert not pass_filters({"upside": None}, {"upside": {"min": 30}})
+    cache = {"A": {"at": today.isoformat(), "surp": [], "rev90": None},
+             "B": {"at": today.isoformat(), "surp": [], "revenue_surp": [], "eps_q": [], "rev90": None}}   # stary wpis z upside nie wymusza pobrania
+    fetched = {"surp": [], "revenue_surp": [["2026-10-01", 3.0]], "eps_q": [], "rev90": None}
+    got = estimates.update(["A", "B"], cache, today=today, pause=0, fetch_one=lambda ticker: fetched)
+    assert got == ["A"] and cache["A"]["revenue_surp"] == [["2026-10-01", 3.0]]
 
 
 def test_rel_strength_vs_spy():
@@ -472,7 +452,6 @@ def test_build_row_exposes_latest_revenue_surprise_and_reported_eps_history():
         "revenue_surp": [["2026-02-09", 4.5], ["2026-03-10", 7.0]],
         "eps_q": [["2025-02-09", 1.0], ["2026-02-09", 2.0]],
         "rev90": 12.0,
-        "upside": 20.0,
     }
     row = calc.build_row(
         {"ticker": "DATA"},
@@ -500,19 +479,21 @@ def test_old_saved_conditions_reset_to_study_rules(tmp_path):
     assert Store(tmp_path).settings["strategy_conditions"]["rs"]["enabled"]
 
 
-def test_rs_rating_deepvue_weights_and_rank():
-    """RS Rating jak w webowym Momentum: nadwyżka nad SPY za 4/13/26/52 tyg. (wagi 40/30/20/10), ranking 1–99 w obrębie listy."""
-    d = [f"2025-{1 + i // 5:02d}-{1 + (i % 5) * 6:02d}" for i in range(60)]
-    spy = {"d": d, "c": [100.0] * 60}
-    fast = {"d": d, "c": [100.0 + i for i in range(60)]}
-    slow = {"d": d, "c": [100.0] * 60}
-    sf, ss = calc.rs_rating_score(fast, spy), calc.rs_rating_score(slow, spy)
-    exp = (159 / 155 - 1) * 40 + (159 / 146 - 1) * 30 + (159 / 133 - 1) * 20 + (159 / 107 - 1) * 10
-    assert sf == pytest.approx(exp) and ss == pytest.approx(0.0)
-    assert calc.rs_rating_score(fast, None) is None
-    rows = calc.rank_rs_rating([{"rs_rating_score": sf}, {"rs_rating_score": ss}, {"rs_rating_score": None}])
-    assert [r["rs_rating"] for r in rows] == [99, 1, None]
-    assert calc.rank_rs_rating([{"rs_rating_score": 5}])[0]["rs_rating"] == 50
+def test_upside_and_rs_rating_removed():
+    """Kolumny Upside 12M % i RS Rating usunięte (nie działały) razem z danymi, z których je liczono."""
+    from desktop.app import COLUMNS
+    keys = [c[0] for c in COLUMNS]
+    assert "upside" not in keys and "rs_rating" not in keys
+    row = calc.build_row({"ticker": "X"}, W, [50, 100, 90, 90, 90], {"rev_rr": 30, "dopm": 5}, SPY, EST)
+    assert "upside" not in row and "rs_rating_score" not in row
+    assert not hasattr(calc, "rank_rs_rating") and not hasattr(estimates, "analyst_upside")
+
+
+def test_ruler_text_percent_and_bars():
+    from desktop.chart import ruler_text
+    assert ruler_text(100, 150, 10, 22).startswith("+50.0 % · 12 tyg.")
+    assert ruler_text(100, 80, 5, 2, "D").startswith("-20.0 % · 3 sesji")
+    assert " mies." in ruler_text(10, 11, 0, 4, "M")
 
 
 def test_price_ratio_252_sessions():
@@ -522,7 +503,7 @@ def test_price_ratio_252_sessions():
     assert calc.price_ratio([5.0]) is None
 
 
-def test_store_migrates_cc250_and_ranks_rs(tmp_path):
+def test_store_migrates_cc250(tmp_path):
     import json
     d = [f"2025-{1 + i // 5:02d}-{1 + (i % 5) * 6:02d}" for i in range(60)]
     series = {"SPY": {"d": d, "c": [100.0] * 60}, "A": {"d": d, "c": [100.0 + i for i in range(60)]}, "B": {"d": d, "c": [100.0] * 60}}
@@ -530,4 +511,4 @@ def test_store_migrates_cc250_and_ranks_rs(tmp_path):
     (tmp_path / "scan.json").write_text(json.dumps({"at": "x", "rows": [{"ticker": "A", "cc250": 1.4}, {"ticker": "B"}]}), encoding="utf-8")
     st = Store(tmp_path)
     a, b = st.rows
-    assert a["cc52w"] == 1.4 and "cc250" not in a and a["rs_rating"] == 99 and b["rs_rating"] == 1
+    assert a["cc52w"] == 1.4 and "cc250" not in a and "rs_rating" not in a and "rs_rating" not in b

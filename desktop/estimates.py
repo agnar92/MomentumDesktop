@@ -40,21 +40,8 @@ def _revenue_surprise(row):
     return round((actual - estimate) / abs(estimate) * 100, 2)
 
 
-def analyst_upside(targets):
-    """Upside (%) od bieżącej ceny do średniego celu analityków, jeśli obie wartości istnieją."""
-    if not isinstance(targets, dict):
-        return None
-    try:
-        current, mean = float(targets.get("current")), float(targets.get("mean"))
-    except (TypeError, ValueError):
-        return None
-    if not (math.isfinite(current) and math.isfinite(mean)) or current <= 0 or mean <= 0:
-        return None
-    return round((mean / current - 1) * 100, 2)
-
-
 def fetch(t):
-    """-> niespodzianki EPS/przychodów, rewizja EPS i upside do średniego celu analityków."""
+    """-> niespodzianki EPS/przychodów i rewizja EPS."""
     tk = _yf().Ticker(t)
     surp, revenue_surp, earnings_dates, reported_eps = [], [], [], []
     try:
@@ -78,11 +65,6 @@ def fetch(t):
                     revenue_surp.append([report_date, rev_surp])
     except Exception:   # brak kalendarza wyników (ETF, spółka zagraniczna) — bez niespodzianek
         pass
-    upside = None
-    try:
-        upside = analyst_upside(tk.get_analyst_price_targets())
-    except Exception:   # brak pokrycia analitycznego nie blokuje pobrania reszty danych
-        pass
     rev90 = None
     try:
         tr = tk.eps_trend
@@ -93,16 +75,16 @@ def fetch(t):
     except Exception:
         pass
     return {"surp": surp[-24:], "revenue_surp": revenue_surp[-24:], "eps_q": reported_eps[-24:], "rev90": rev90,
-            "upside": upside, "earnings_dates": sorted(set(earnings_dates))[-24:]}
+            "earnings_dates": sorted(set(earnings_dates))[-24:]}
 
 
 def update(tickers, cache, log=print, today=None, pause=0.1, progress=None, fetch_one=None):
     """Uzupełnia `cache` dla spółek bez świeżych danych (co FRESH_DAYS dni); rewizję dopisuje do historii. -> lista pobranych."""
     today = today or dt.date.today()
     fetch_one = fetch_one or fetch
-    # Odśwież również stare wpisy, w których nie zapisywaliśmy jeszcze pola upside.
+    # Odśwież również stare wpisy bez niespodzianek przychodów / historii EPS.
     todo = [t for t in tickers if not (
-        cache.get(t) and "upside" in cache[t] and "revenue_surp" in cache[t] and "eps_q" in cache[t]
+        cache.get(t) and "revenue_surp" in cache[t] and "eps_q" in cache[t]
         and (today - dt.date.fromisoformat(cache[t]["at"])).days < FRESH_DAYS
     )]
     done = []

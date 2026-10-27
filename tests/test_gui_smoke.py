@@ -202,7 +202,7 @@ def test_progress_bar_text_and_visibility(app):
 def test_scanner_switch_and_settings_dialog(app):
     from desktop import app as A
     names = list(app.scanner_box["values"])
-    assert names[0] == "Bezpieczny (backtest)" and len(names) == 4
+    assert names[0] == "Sektory top 3 (RS)" and len(names) == 5
     app.select_scanner(names[1])
     assert app.tree.get_children() == () and app.store.settings["scanner"] == names[1]
     app.select_scanner(names[0])
@@ -324,11 +324,11 @@ def test_guide_position_and_ibd_panels(app):
 def test_monthly_chart_shows_green_line_history(app, monkeypatch):
     import time
     from desktop import calc as C, prices
-    h = [10, 12, 30, 20, 21, 22, 25, 28, 29, 31, 29, 28, 27]          # rekord 30 (3. mies.) stoi; 31 jeszcze nie przestał 3 zamkniętych miesięcy
+    h = [10, 12, 30, 20, 21, 22, 25, 28, 29, 31, 29, 28, 27]          # rekord 30 (3. mies.) + 2 zamknięte miesiące = linia; 31 (10. mies.) ma dopiero 2 kolejne świece
     d = [f"2025-{m:02d}-01" for m in range(1, 13)] + ["2026-01-01"]
     m = {"d": d, "o": h, "h": h, "l": [x * 0.9 for x in h], "c": h, "v": [1e6] * len(h)}
     monkeypatch.setattr(prices, "monthly_ohlc", lambda t: dict(m))
-    assert C.green_line_series(h)[:6] == [None, None, None, None, None, None] and C.green_line_series(h)[6] == 30
+    assert C.green_line_series(h)[:5] == [None] * 5 and C.green_line_series(h)[5] == 30
     app.open_chart("AAA")
     ch = app.chart
     ch.update()

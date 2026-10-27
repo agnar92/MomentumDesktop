@@ -14,10 +14,10 @@ from .store import DEFAULT_SCANNERS, Store, normalize_scanners
 from .theme import BG, FG, PANEL, apply_dark, autowrap, setup_style
 
 COLUMNS = [  # (klucz, nagłówek, szerokość, format)
-    ("ticker", "Ticker", 70, "s"), ("company", "Spółka", 200, "s"), ("sector", "Sektor", 140, "s"), ("price", "Cena", 80, "p"),
+    ("ticker", "Ticker", 70, "s"), ("company", "Spółka", 200, "s"), ("sector", "Sektor", 140, "s"), ("sector_rs", "RS sektora %", 105, "%"), ("price", "Cena", 80, "p"),
     ("glb", "Green Line", 90, "p"), ("glb_pct", "Do linii %", 85, "%"), ("glb_state", "GLB", 85, "s"), ("macd", "MACD", 60, "s"), ("trend", "SMA 10>30", 85, "b"),
     ("macd_stop", "Stop MACD", 85, "p"), ("dopm", "Δ marża oper. pp", 120, "%"), ("rev_rr", "Przychody r/r %", 115, "%"),
-    ("dgm", "Δ marża brutto pp", 125, "%"), ("quarter", "Kwartał", 105, "s"), ("turnover", "Obrót mln $", 95, "m"),
+    ("eps_rating", "EPS Rating", 90, "i"), ("dgm", "Δ marża brutto pp", 125, "%"), ("quarter", "Kwartał", 105, "s"), ("turnover", "Obrót mln $", 95, "m"),
     ("ps", "P/S", 60, "x"), ("peg", "PEG", 70, "x2"), ("pegy", "PEGY", 75, "x2"),
     ("rs", "RS 52 tyg. pp", 105, "%"), ("surp", "Niesp. EPS %", 95, "%"), ("beat2", "2× nad konsensus", 115, "b"), ("eps_rev", "Rewizja EPS 90 dni %", 140, "%"), ("rvol_w", "RVol tyg.", 80, "x"), ("rvol_d", "RVol dz.", 75, "x"), ("cc52w", "C/C[52 tyg.]", 95, "r"), ("ok", "Warunki", 75, "b"), ("slow", "Hamuje", 95, "w"),
 ]
@@ -33,6 +33,7 @@ FILTER_CHOICES = {"glb_state": ["WYBICIE", "SYGNAŁ", "BLUE DOT", "NAD", "POD", 
 FILTER_SCALE = {"turnover": 1e6}
 FILTER_PRESETS = [
     ("Reguły: sygnał GLB 0–10 % + warunki (przychody, marża)", {"ok": {"in": ["tak"]}, "glb_state": {"in": ["WYBICIE", "SYGNAŁ"]}, "glb_pct": {"min": 0, "max": 10}}),
+    ("EPS Rating ≥ 80 + sygnał GLB 0–10 %", {"eps_rating": {"min": 80}, "glb_state": {"in": ["WYBICIE", "SYGNAŁ"]}, "glb_pct": {"min": 0, "max": 10}}),
     ("Liderzy: RS 52 tyg. ≥ 50 pp + nad GLB", {"rs": {"min": 50}, "glb_state": {"in": ["WYBICIE", "SYGNAŁ", "BLUE DOT", "NAD"]}}),
     ("Przebicie GLB + SMA 10 > 30 (dowolnie wysoko)", {"trend": {"in": ["tak"]}, "glb_state": {"in": ["WYBICIE", "SYGNAŁ", "BLUE DOT", "NAD"]}}),
     ("Aktywne: RVol tyg. ≥ 1,5 + nad GLB", {"rvol_w": {"min": 1.5}, "glb_state": {"in": ["WYBICIE", "SYGNAŁ", "BLUE DOT", "NAD"]}}),
@@ -75,6 +76,8 @@ def cell(v, f):
         return f"{v / 1e6:,.0f}"
     if f == "b":
         return "✓" if v else ""
+    if f == "i":
+        return f"{v:.0f}"
     if f == "x2":
         return f"{v:.2f}"
     if f == "x":
@@ -285,7 +288,9 @@ class App:
         if cfg["beat2"]["enabled"]:
             required.append("2× EPS nad konsensusem")
         condition_text = ", ".join(required) if required else "brak obowiązkowych kryteriów"
-        self.status.config(text=f"  Skaner: {self.store.settings['scanner']}   Dane: {self.store.at or 'brak — kliknij ⟳ Sync'}   Na liście: {len(self.tree.get_children())} z {len(self.store.rows)}   spełnia warunki: {n_ok}   sygnał GLB: {n_sig}"
+        top = ", ".join(f"{x['etf']} {x['pct']:+.1f} %" for x in self.store.sectors if x.get("selected"))
+        sectors = f"   Sektory top (RS nad SMA 52 tyg.): {top}" if top else ""
+        self.status.config(text=f"  Skaner: {self.store.settings['scanner']}{sectors}   Dane: {self.store.at or 'brak — kliknij ⟳ Sync'}   Na liście: {len(self.tree.get_children())} z {len(self.store.rows)}   spełnia warunki: {n_ok}   sygnał GLB: {n_sig}"
                                 f"   (warunki konieczne: {condition_text};"
                                 f" sygnał: zamknięcie tyg. 0–{calc.ENTRY_MAX_PCT:g} % nad Green Line; wyjście: MACD tyg. + stop {calc.STOP_PCT:g} %)")
 
@@ -1146,61 +1151,37 @@ class AlertsDialog(tk.Toplevel):
 
 
 GUIDE = """REGUŁY (badanie 2011–2025: ≈5600 spółek USA, fundamenty SEC znane 50/80 dni po kwartale, portfel 10 pozycji, koszt 0,1 %/stronę)
+   skaner sektorowy	3 sektory z najsilniejszym RS (ETF / SPY nad SMA 52 tyg.) × zapytanie Finviz: sektor + cena > 15 $ + Sales Q/Q > 15 % (domyślny)
+   EPS Rating	przybliżenie IBD: wzrost EPS 2 kw. + 3 lata + stabilność, percentyl 1–99 wśród spółek listy (informacyjnie)
    skaner Finviz	ind_stocksonly, cena > 10, śr. wolumen > 300 tys., Sales Q/Q > 15 % (skaner „Bezpieczny (backtest)”)
    warunki	przychody kw. ≥ +15 % r/r i marża operacyjna ≥ +3 pp r/r; RS, P/S i niespodzianki EPS domyślnie wyłączone (RS ≥ 50 pp obniżał wynik — za mało sygnałów)
-   kupno	zamknięcie tygodnia 0–10 % nad Green Line (WYBICIE / SYGNAŁ); dalej niż 10 % i BLUE DOT — nie kupuj; Blue Line tylko informacyjnie
-   wyjście	zamknięcie tygodnia ≤ −10 % od kupna albo pod Low tygodnia przecięcia MACD w dół PO wejściu (przecięcia sprzed wejścia: ≈ 13 % zamiast ≈ 21 % rocznie)
+   kupno	zamknięcie tygodnia 0–10 % nad Green Line PO PRZEBICIU OD DOŁU (WYBICIE / SYGNAŁ), na otwarciu następnego tygodnia; dalej niż 10 %, BLUE DOT i po rajdzie > 10 % nad linią ta linia wygasa do powstania nowej (powrót w strefę = kupowanie spadku po wyższym rekordzie) — nie kupuj
+   stop	początkowy −10 % od ceny kupna (nie pod linią); zamknięcie tygodnia ≤ −10 % = wyjście
+   wyjście	albo pod Low tygodnia przecięcia MACD w dół PO wejściu (przecięcia sprzed wejścia: ≈ 13 % zamiast ≈ 21 % rocznie)
    portfel	8–10 pozycji po równo; najpierw wyjścia, potem wejścia; przy nadmiarze sygnałów najbliżej Green Line (domyślna kolejność);
 	nie sprzedawaj pozycji dla nowego sygnału, bez dokładek, trailing stopów i stopu czasowego (wszystko gorsze); wolne miejsca = gotówka w SPY
-   wynik	≈ 21 % rocznie (2011–17 ≈ 13 %, 2018–25 ≈ 28 %), DD ≈ −37 %; z gotówką w SPY ≈ 25 %; dane bez spółek zdelistowanych (zawyżone)
+   wynik	≈ 9 % rocznie (2011–17 ≈ 10 %, 2018–25 ≈ 8 %), DD ≈ −40 %; z gotówką w SPY ≈ 16 %; dane bez spółek zdelistowanych (zawyżone)
 	wynik robią nieliczne duże ruchy — nie pomijaj sygnałów i trzymaj zwycięzców do wyjścia; ½ przy −20 % od szczytu opcjonalnie (wynik bez zmian)
 
-STARSZE NOTATKI — WARUNKI (październik 2026, backtest 2015–2026 płynnego rynku, ceny bez korekty)
-   przychody kwartału ≥ +15 % r/r	bez tego 34,9 % rocznie
-   marża operacyjna ≥ +3 pp r/r	bez tego 28,9 %
-   wycena P/S < 20	bez tego 31,5 % (drogie tracą; odpada też RGTI)
-   siła względna 52 tyg. ≥ +50 pp nad S&P 500 (kolumna RS)	bez tego 21,4 %
-   2 ostatnie raporty powyżej konsensusu EPS (kolumna „2× nad konsensus”)	bez tego 36,6 % (z nim 42,4 %)
-Niespodzianki EPS (konsensus vs wynik, yfinance, od 2014): z warunkiem 42,4 % rocznie (2015–20 48,7 / 2021–26 36,4; 2020–26 53,7 %), +19,2 % na transakcję,
-DD −51 %; spółki, które ostatnio zawiodły rynek: 3 % rocznie. Progi ≥ 5 / 10 % i przyspieszenie przychodów przez 2 kwartały — bez poprawy.
-Rewizja EPS 90 dni (prognoza na przyszły rok dziś vs 90 dni temu) — tylko podgląd: brak historii do testu, zapisujemy ją co tydzień.
-Razem (z niespodziankami EPS): +19,2 % na transakcję, portfel wszystkich sygnałów 42,4 % rocznie (2015–20: 48,7 %, 2021–26: 36,4 %; 2020–26: 53,7 %), S&P 500 13,6 %.
-Cena za to: mało sygnałów naraz (średnio 2–4) i głębszy spadek portfela (−51 %).
-Wspólny mianownik dużych ruchów po GLB: rosnące przychody i marża (fundamenty) + akcja już jest liderem rynku (siła względna).
-Sama technika (GLB, średnie, RS bez fundamentów, wybicia dzienne w stylu Qullamaggie) w 2020–26 nie pobiła S&P 500.
-Obrót nie jest warunkiem — płynność ustawiasz filtrem skanera w Finviz (np. średni wolumen). Backtest liczono na spółkach z obrotem ≥ 100 mln $
-dziennie; przy mniej płynnych wyniki mogą być inne (sam obrót ≥ 50 mln $: +9,4 % zamiast +15,6 % na transakcję).
-Usunięte, bo przy tych warunkach nic nie zmieniały: przychody kw. ≥ 25 mln $, zysk oper. w $ ↑, „Mocne” (Δ marży ≥ 10 pp), rozwodnienie, potencjał ★.
-
-JAK WYGLĄDA DUŻY RUCH W RAPORTACH
-Start: w dołku fundamenty są słabe (mediana: przychody +5 %, EPS −6 %, marża oper. −1 pp); poprawę widać 2–3 raporty później. Od wyprzedzenia jest Green Line.
-Szczyt: kurs kończy ruch przy raporcie z najwyższym tempem wzrostu (EPS +33 %); kolejne raporty dalej dobre, ale wolniejsze (EPS +27 → +15 → +11 %).
-
-WYJŚCIE — DWIE METODY (przycisk 🚪 na wykresie) + SPRZEDAŻ POŁOWY
-   MACD (domyślna)	po przecięciu MACD tyg. w dół stop pod Low tego tygodnia (czerwona przerywana)
-   pod GLB (jak Dr Wish)	sprzedaj, gdy tydzień zamknie się pod Green Line; linia stoi na poziomie wybicia, dopóki akcja robi nowe rekordy,
-	a gdy szczyt przestoi 3 mies., staje się nową linią — trzymasz, póki trend trwa
-   zawsze	stop 10 % pod ceną kupna; spadek 20 % od szczytu (zamknięcie tyg. od wejścia) = sprzedaj połowę (📌 alert, żółta przerywana „½ przy”)
-Test 2015–2026 (pozycje po 20 % kapitału): metoda pod GLB trzyma największe ruchy (SNDK 09/25 +2409 %, MU 10/25 +472 %, NVDA 05/23 +221 %, PLTR 11/24
-+169 %; z MACD +1833 / +115 / +3 / +28 %), ale 77–82 % transakcji to małe straty. Najlepiej z wejściem „przebicie GLB dowolnie wysoko” + warunki:
-19,7 % rocznie (2020–26: 37,8 %), DD −51 %. Przy wejściu 0–10 % nad linią lepszy jest MACD: 22,2 % rocznie, DD −35 % (pod GLB 15,8 %, DD −41 %).
-Sprzedaż połowy przy −20 % od szczytu: płytsze spadki portfela (MACD: −35 → −31 %, pod GLB: −51 → −45 %) za 1–3 pp rocznie (20,6 % i 17,2 %).
-
-WEJŚCIE I WYJŚCIE
-Kupno: tydzień przebicia GLB (poprzedni pod linią) przy dowolnej wysokości albo zamknięcie tyg. 0–10 % nad linią, na otwarciu następnego tygodnia;
-gdy to kolejny tydzień i cena > 10 % nad linią — wejście po Blue Dot na dziennym (stan BLUE DOT; nie testowane wstecz w tym połączeniu). Stop 10 % pod wejściem — zleceniem (stop „na zamknięciu tygodnia”
-dawał podobny wynik, ale straty 15–35 %). Po przecięciu MACD tyg. w dół stop pod Low tego tygodnia. Po wybiciu stopem wchodzisz ponownie przy następnym sygnale.
+WYJŚCIE — PRZYCISK 🚪 NA WYKRESIE
+   MACD (domyślna, reguła)	po przecięciu MACD tyg. w dół stop pod Low tego tygodnia (czerwona przerywana)
+   pod GLB (podgląd)	sprzedaj, gdy tydzień zamknie się pod Green Line — trzyma największe ruchy, ale przy wejściu 0–10 % gorsza od MACD
+   zawsze	stop −10 % od ceny kupna; ½ przy spadku 20 % od szczytu (opcjonalnie; 📌 alert, żółta przerywana „½ przy”)
 ⚠ Hamowanie (kolumna Hamuje, alert dla 📌 pozycji): tempo przychodów spadło o ≥ 10 pp — spadek ≥ 20 % w 6 mies. w 44 % przypadków (normalnie 33 %);
-⚠⚠ z marżą brutto spadającą r/r — 50 %, średnio −1,8 % po 3 i 6 mies. Wtedy zacieśnij stop albo nie dokładaj.
+⚠⚠ z marżą brutto spadającą r/r — 50 %. Tylko ostrzeżenie, nie zmienia reguł wyjścia.
 
-RWB + BLUE DOT (wykres dzienny, przycisk D / klawisz d) — do podglądu, NIE jako sygnał
-Linia zamknięć, GMMA (6 szybkich EMA czerwonych / 6 wolnych niebieskich, jasne tło = RWB), ● Blue Dot (Stochastic 10,1 ↑ 20 przy RWB nad Green Line) i Green Line.
-Test 2015–2026: RWB + nad GLB + Blue Dot, stop pod Low kropki, wyjście MACD: tylko +1,0…+1,2 % na transakcję, trafność 14–15 %.
+KOLUMNY TYLKO INFORMACYJNE
+RS 52 tyg. vs S&P 500, P/S, niespodzianki EPS (2× nad konsensus), rewizja EPS 90 dni, PEG / PEGY, C/C[52 tyg.], RVol, obrót — do podglądu, nie warunki.
+Płynność ustawiasz filtrem skanera w Finviz (np. średni wolumen).
+
+WYKRES
+Nad ceną RS Line jak w Deepvue (akcja / SPY, średnia 52 tyg., ● zielony = nowy szczyt RS i ceny, ● różowy = RS przed ceną); E = raport wyników;
+słupki przychodów pod wolumenem — zielony ≥ +25 % r/r, żółty ≥ +15 %; prawy przycisk myszy = miarka (% i liczba świec).
+Dzienny (przycisk D / klawisz d) — RWB, GMMA i ● Blue Dot tylko do podglądu (test: +1,0…+1,2 % na transakcję, trafność 14–15 %), NIE jako sygnał.
 
 CZEGO NIE SZUKAĆ (nic nie wnosiło)
-ROE / ROI, Blue Dot jako wejście, stan MACD przy wejściu, trend S&P 500, wolumen wybicia, długość bazy, kup +0,1 % / sprzedaj −0,1 % przy linii
-(dziennie: −0,3 % rocznie), samo przyspieszenie przychodów, poziom marży brutto i operacyjnej, sam EPS, zmiana marży kwartał do kwartału.
-Wykres: nad ceną RS Line jak w Deepvue (akcja / SPY, średnia 52 tyg., ● zielony = nowy szczyt RS i ceny, ● różowy = RS przed ceną); słupki przychodów pod wolumenem — zielony ≥ +25 % r/r, żółty ≥ +15 %.
+ROE / ROI, Blue Dot jako wejście, stan MACD przy wejściu, trend S&P 500, wolumen wybicia, długość bazy, kup +0,1 % / sprzedaj −0,1 % przy linii,
+samo przyspieszenie przychodów, poziom marży brutto i operacyjnej, sam EPS, zmiana marży kwartał do kwartału, rotacja, dokładki, trailing stop.
 
 Heurystyka z backtestu na spółkach notowanych dziś (bez wycofanych z giełdy), nie porada inwestycyjna."""
 

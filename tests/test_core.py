@@ -12,12 +12,12 @@ EST = {"surp": [["2025-11-10", 4.0], ["2026-02-09", 8.0]], "rev90": 12.0}   # 2 
 SPY = {"d": _D, "o": [1] * 60, "h": [1] * 60, "l": [1] * 60, "c": [400.0] * 60, "v": [1e7] * 60}
 
 
-def test_green_line_needs_three_closed_months_and_keeps_old_line():
-    assert calc.green_line([10, 12, 11, 11]) == (None, None)            # rekord 12 stoi dopiero 2 miesiące
-    assert calc.green_line([10, 12, 11, 11, 11]) == (12, 1)             # ≥ 3 miesiące -> linia
-    assert calc.green_line([10, 12, 11, 11, 11, 15, 14]) == (12, 1)     # nowy rekord 15 jeszcze nie stoi 3 miesięcy: obowiązuje stara linia
-    assert calc.green_line([10, 12, 11, 11, 11, 15, 14, 14, 14]) == (15, 5)
-    assert calc.green_line([10, 12, 11, 11, 11, 11, 11, 11, 11])[0] == 12   # „3 lub więcej” — rekord stojący dłużej nadal jest linią
+def test_green_line_needs_peak_plus_two_closed_months_and_keeps_old_line():
+    assert calc.green_line([10, 12, 11]) == (None, None)                # rekord 12 + 1 miesiąc = 2 świece
+    assert calc.green_line([10, 12, 11, 11]) == (12, 1)                 # szczyt + 2 zamknięte miesiące = 3 świece -> linia
+    assert calc.green_line([10, 12, 11, 11, 11, 15, 14]) == (12, 1)     # nowy rekord 15 ma szczyt + 1 miesiąc: obowiązuje stara linia
+    assert calc.green_line([10, 12, 11, 11, 11, 15, 14, 14]) == (15, 5)  # nowy rekord 15 + 2 miesiące: zastępuje starą linię
+    assert calc.green_line([10, 12, 11, 11, 11, 11, 11, 11, 11])[0] == 12   # rekord stojący dłużej nadal jest linią
 
 
 def test_glb_state():
@@ -26,6 +26,22 @@ def test_glb_state():
     assert calc.glb_state(110, 103, 100) == "SYGNAŁ"
     assert calc.glb_state(111, 103, 100) == "NAD"
     assert calc.glb_state(125, 99, 100) == "WYBICIE"                    # tydzień przebicia: dowolnie wysoko = mocne wybicie
+    assert calc.glb_state(105, 103, 100, armed=False) == "NAD"          # powrót w strefę po wyjściu wyżej: kupowanie spadku, nie sygnał
+
+
+def test_glb_armed_only_after_breakout_from_below_and_expires_after_a_run():
+    assert calc.glb_armed([90, 95, 101, 104], 100)                       # zamknięcie pod linią, potem przebicie i kolejny tydzień w strefie
+    assert calc.glb_armed([90, 105, 95, 103], 100)                       # zeszła pod linię i przebiła ponownie bez rajdu > 10 %: nadal sygnał
+    assert not calc.glb_armed([90, 101, 115, 108], 100)                  # wyszła > 10 % nad linię i wróciła w strefę (CDLX 03/2020)
+    assert not calc.glb_armed([90, 101, 115, 98], 100)                   # po rajdzie > 10 % linia wygasa także po zejściu pod nią
+    assert not calc.glb_armed([105, 108, 104], 100)                      # nigdy pod linią w oknie
+    assert not calc.glb_armed([90, 95], None)
+    row = calc.build_row({"ticker": "X"}, {"d": [f"2026-01-{i + 1:02d}" for i in range(4)], "o": [0] * 4, "h": [0] * 4, "l": [1] * 4,
+                                           "c": [90, 115, 108, 106], "v": [1] * 4}, [100] * 5, None)
+    assert row["glb"] == 100 and row["glb_state"] == "NAD"
+    row = calc.build_row({"ticker": "X"}, {"d": [f"2026-01-{i + 1:02d}" for i in range(3)], "o": [0] * 3, "h": [0] * 3, "l": [1] * 3,
+                                           "c": [90, 95, 104], "v": [1] * 3}, [100] * 5, None)
+    assert row["glb_state"] == "WYBICIE"
 
 
 def test_fresh_blue_dot_only_in_last_sessions():
@@ -353,6 +369,7 @@ def test_weekly_fetches_only_recent_weeks_for_cached(monkeypatch):
 
 def test_sync_run_with_fake_sources(tmp_path):
     store = Store(tmp_path)
+    store.select("Bezpieczny (backtest)")
     w = W
 
     def monthly(ts, cache, log, progress=None):
@@ -379,7 +396,7 @@ def test_sync_run_with_fake_sources(tmp_path):
 def test_scanners_have_own_lists_and_share_weekly(tmp_path):
     store = Store(tmp_path)
     names = [x["name"] for x in store.settings["scanners"]]
-    assert names[0] == "Bezpieczny (backtest)" and store.settings["scanner"] == names[0] and len(names) == 4
+    assert names[0] == "Sektory top 3 (RS)" and store.settings["scanner"] == names[0] and names[1] == "Bezpieczny (backtest)" and len(names) == 5
     w = {"d": ["2026-01-05"] * 40, "o": [1] * 40, "h": [1] * 40, "l": [1] * 40, "c": [100.0] * 40, "v": [5e6] * 40}
     store.save_scan([{"ticker": "A"}], {"A": w}, "x")
     store.select(names[1])
@@ -512,3 +529,56 @@ def test_store_migrates_cc250(tmp_path):
     st = Store(tmp_path)
     a, b = st.rows
     assert a["cc52w"] == 1.4 and "cc250" not in a and "rs_rating" not in a and "rs_rating" not in b
+
+
+def _etf(mult):
+    """ETF rosnący szybciej niż SPY (stały): 60 tygodni."""
+    return {**SPY, "c": [100.0 * (1 + 0.01 * mult) ** i for i in range(60)]}
+
+
+def test_sector_rs_ranks_and_picks_only_positive_top():
+    d = [(dt.date(2025, 1, 6) + dt.timedelta(weeks=i)).isoformat() for i in range(60)]
+    spy = {"d": d, "c": [100.0] * 60}
+    sectors = {"XLK": {"d": d, "c": [100.0 * 1.01 ** i for i in range(60)]}, "XLE": {"d": d, "c": [100.0 * 1.005 ** i for i in range(60)]},
+               "XLU": {"d": d, "c": [100.0 * 0.99 ** i for i in range(60)]}}
+    ranked = calc.sector_rs(sectors, spy)
+    assert [x["etf"] for x in ranked] == ["XLK", "XLE", "XLU"] and ranked[0]["pct"] > ranked[1]["pct"] > 0 > ranked[2]["pct"]
+    assert [x["etf"] for x in calc.top_sectors(ranked, 3)] == ["XLK", "XLE"]
+    assert calc.sector_filter("sh_price_o15", ranked[0]) == "sec_technology,sh_price_o15"
+
+
+def test_eps_rating_is_percentile_of_raw_score():
+    days = [(dt.date(2022, 1, 15) + dt.timedelta(days=91 * i)).isoformat() for i in range(16)]
+    grow = [[d, 1.0 + 0.3 * i] for i, d in enumerate(days)]
+    flat = [[d, 1.0] for d in days]
+    f = calc.eps_features(grow)
+    assert f and f["raw"] > calc.eps_features(flat)["raw"]
+    assert calc.eps_features([]) is None
+    rows = [{"eps_raw": 10}, {"eps_raw": 50}, {"eps_raw": 90}, {"eps_raw": None}]
+    calc.assign_eps_rating(rows)
+    assert rows[0]["eps_rating"] < rows[1]["eps_rating"] < rows[2]["eps_rating"] and rows[3]["eps_rating"] is None
+    assert all(1 <= r["eps_rating"] <= 99 for r in rows[:3])
+
+
+def test_sync_sector_scanner_runs_one_query_per_top_sector(tmp_path):
+    store = Store(tmp_path)
+    assert store.scanner.get("top_sectors") == 3
+    queries = []
+
+    def fetch(f, max_tickers, log, progress):
+        queries.append(f)
+        return [{"ticker": "A", "sector": "Technology"}], 1
+
+    def weekly(ts, log, cache, progress):
+        out = {t: _etf(1.0) for t in ts}
+        out["SPY"] = {**SPY, "c": [100.0] * 60}
+        out["A"] = W
+        return out
+
+    def monthly(ts, cache, log, progress=None):
+        for t in ts:
+            cache[t] = {"h": [["2025-01", 50], ["2025-02", 100], ["2025-03", 90], ["2025-04", 90], ["2025-05", 90]], "upto": "2025-05", "raw": 1}
+    rows = sync.run(store, log=lambda s: None, fetch_list=fetch, weekly=weekly, monthly=monthly,
+                    fund=lambda ts, cache, ua, log, progress=None: None, est=lambda ts, cache, log: None, daily=lambda ts, log, **kw: {})
+    assert len(queries) == 3 and all(q.startswith("sec_") and "sh_price_o15" in q for q in queries)
+    assert [r["ticker"] for r in rows] == ["A"] and Store(tmp_path).sectors and sum(x["selected"] for x in Store(tmp_path).sectors) == 3

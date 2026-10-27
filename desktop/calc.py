@@ -1,17 +1,18 @@
 """Obliczenia (czyste funkcje, bez sieci i GUI): Green Line z miesięcznych High (jak w oryginale Dr. Wisha), stan GLB na zamknięciu tygodnia, MACD tygodniowy,
 średnie, obrót i warunki strategii (badanie 2011–2025, szeroki rynek USA, portfel 10 pozycji — jak w aplikacji webowej Momentum):
   - przychody kw. ≥ +15 % r/r i marża operacyjna ≥ +3 pp r/r (z SEC); skaner Finviz: cena > 10, śr. wolumen > 300 tys., Sales Q/Q > 15 %,
-  - wejście: zamknięcie tygodnia 0–10 % nad Green Line (rekord wszech czasów miesięcznego High, który stoi ≥ 3 zamknięte miesiące),
+  - wejście: zamknięcie tygodnia 0–10 % nad Green Line (rekord wszech czasów miesięcznego High, który stoi 3 miesiące łącznie: miesiąc szczytu + 2 zamknięte kolejne),
   - wyjście: stop 10 % pod wejściem i tygodniowy MACD (12, 26, 9) — stop pod Low tygodnia przecięcia w dół PO wejściu (lines.position_plan).
 Heurystyka z backtestu, nie porada inwestycyjna."""
 import bisect
 import datetime as dt
 import math
 
-CONFIRM_MONTHS = 3      # rekord musi stać co najmniej tyle zamkniętych miesięcy
+CONFIRM_MONTHS = 2      # zamknięte miesiące PO miesiącu szczytu; razem ze szczytem 3 miesiące (Dr Wish: „at least 3 months”, użytkownik: „dwie świeczki po szczycie”)
 ENTRY_MAX_PCT = 10.0    # wejście do 10 % nad linią
 # Badanie 2011–2025 (≈5600 spółek, fundamenty SEC znane 50/80 dni po kwartale, portfel 10 pozycji, koszt 0,1 %/stronę): GLB bez warunków ≈ 12 % rocznie,
-# z przychodami ≥ 15 % i Δ marży ≥ 3 pp ≈ 21 % (2011–17 ≈ 13 %, 2018–25 ≈ 28 %), DD ≈ −37 %; z wolną gotówką w SPY ≈ 25 %. RS ≥ 50 pp jako warunek obniżał
+# z przychodami ≥ 15 % i Δ marży ≥ 3 pp, sygnał po przebiciu od dołu i linia potwierdzana po szczycie + 2 miesiące: ≈ 9 % rocznie (2011–17 ≈ 10 %, 2018–25 ≈ 8 %), DD ≈ −40 %; z wolną gotówką w SPY ≈ 16 %
+# (poprzednio, bez reguły przebicia i z 3 zamkniętymi miesiącami: ≈ 21 % / 25 %). RS ≥ 50 pp jako warunek obniżał
 # wynik (za mało sygnałów), P/S i beat2 nie dało się sprawdzić historycznie — domyślnie wyłączone (można włączyć w ustawieniach warunków).
 # Usunięte, bo przy tych warunkach nic nie zmieniały: przychody kw. ≥ 25 mln $, zysk oper. w $ ↑, „Mocne” (Δ marży ≥ 10 pp), rozwodnienie, Potencjał.
 # Obrót nie jest warunkiem (użytkownik: „usuń limit obrotu w ogóle, sam będę filtrował w Finviz po wolumenie”); backtest liczono na obrocie ≥ 100 mln $.
@@ -39,7 +40,7 @@ def _ok(v):
 
 def green_line(months, confirm=CONFIRM_MONTHS):
     """months = High ZAMKNIĘTYCH miesięcy (od najstarszego). -> (poziom, indeks miesiąca rekordu) albo (None, None).
-    Rekord wszech czasów jest linią, gdy stoi ≥ `confirm` miesięcy; nowszy rekord zastępuje ją dopiero po swoich `confirm` miesiącach."""
+    Rekord wszech czasów jest linią, gdy po jego miesiącu zamknęły się ≥ `confirm` miesięcy (domyślnie 2 = 3 świece łącznie ze szczytem); nowszy rekord zastępuje ją dopiero po swoich `confirm` miesiącach."""
     level = at = None
     mx, mi = -math.inf, None
     for i, c in enumerate(months):
@@ -109,16 +110,34 @@ def fresh_blue_dot(daily, level, sessions=5):
     return daily["d"][dots[-1]] if dots and dots[-1] >= len(daily["c"]) - sessions else None
 
 
-def glb_state(price, prev, level, max_pct=ENTRY_MAX_PCT):
-    """Stan na zamknięciu tygodnia: WYBICIE (tydzień przebicia — poprzedni pod linią — przy dowolnej wysokości), SYGNAŁ (0–max_pct % nad linią),
-    NAD (dalej; wejście dopiero po Blue Dot na dziennym — stan „BLUE DOT”, `fresh_blue_dot`), POD, BRAK."""
+def glb_armed(closes, level, max_pct=ENTRY_MAX_PCT):
+    """Czy ta linia nadal daje sygnał: zamknięcie pod linią uzbraja (przebicie OD DOŁU), ale gdy cena zamknęła się > max_pct % nad linią,
+    linia WYGASA aż do powstania nowej Green Line — powrót do niej po dużym rajdzie to kupowanie spadku po wyższym rekordzie
+    (cena nad linią o ≤ max_pct % nie bywa pod SMA 200 / 50, bo linia jest wtedy aktualnym ATH). `closes` = zamknięcia tygodni BEZ bieżącego."""
+    armed = retired = False
+    if not (_ok(level) and level > 0):
+        return armed
+    for x in closes:
+        if not _ok(x):
+            continue
+        if x < level:
+            armed = not retired
+        elif x > level * (1 + max_pct / 100):
+            armed, retired = False, True
+    return armed
+
+
+def glb_state(price, prev, level, max_pct=ENTRY_MAX_PCT, armed=True):
+    """Stan na zamknięciu tygodnia: WYBICIE (tydzień przebicia — poprzedni pod linią — przy dowolnej wysokości), SYGNAŁ (0–max_pct % nad linią
+    po przebiciu od dołu, `glb_armed`), NAD (dalej albo linia wygasła po rajdzie; wejście tylko po Blue Dot na dziennym — stan „BLUE DOT”,
+    `fresh_blue_dot`), POD, BRAK. `armed` liczone z zamknięć sprzed bieżącego tygodnia."""
     if not (_ok(price) and _ok(level) and level > 0):
         return "BRAK"
     if price < level:
         return "POD"
     if _ok(prev) and prev < level:   # tydzień przebicia: mocne wybicie przy dowolnej wysokości nad linią
-        return "WYBICIE"
-    return "NAD" if price > level * (1 + max_pct / 100) else "SYGNAŁ"
+        return "WYBICIE" if armed else "NAD"
+    return "NAD" if price > level * (1 + max_pct / 100) or not armed else "SYGNAŁ"
 
 
 def sma(values, n):
@@ -297,6 +316,102 @@ def pegy_ratio(peg, forward_pe, dividend_yield_pct):
     return round(float(forward_pe) / denominator, 2)
 
 
+# --- Sektory (skaner „Sektory top 3”): RS sektora = cena ETF sektora / SPY (tygodniowo); sektor jest „dodatni”, gdy RS leży nad własną SMA 52 tyg.;
+# ranking po % RS nad tą średnią, bierzemy 3 najsilniejsze (użytkownik: „weź sektory i ten RS co wcześniej i weź top 3 sektory”).
+# Badanie 2011–2025 (GLB bez fundamentów, 10 pozycji, wolne miejsca SPY/QQQ): top 3 sektory ≈ 11–12 % rocznie, DD ≈ −28 % vs wszystkie sektory ≈ 9 %, DD ≈ −38 %.
+SECTOR_ETFS = [   # (ETF SPDR, sektor w Finviz, kod filtra Finviz `sec_...`)
+    ("XLB", "Basic Materials", "basicmaterials"), ("XLC", "Communication Services", "communicationservices"), ("XLY", "Consumer Cyclical", "consumercyclical"),
+    ("XLP", "Consumer Defensive", "consumerdefensive"), ("XLE", "Energy", "energy"), ("XLF", "Financial", "financial"), ("XLV", "Healthcare", "healthcare"),
+    ("XLI", "Industrials", "industrials"), ("XLRE", "Real Estate", "realestate"), ("XLK", "Technology", "technology"), ("XLU", "Utilities", "utilities"),
+]
+SECTOR_MA = 52
+TOP_SECTORS = 3
+# filtr Finviz dla każdego z trzech zapytań (obok `sec_<sektor>`): tylko akcje, cena > 15 $, śr. wolumen > 300 tys. i przychody kw. > 15 % r/r
+# (jedyny fundament z istotnym efektem w badaniu: +1,8 pp na transakcję, przedział [0,2; 3,4]; marża, EPS, ROE, wycena — bez wykrywalnego efektu)
+SECTOR_FILTERS = "ind_stocksonly,sh_price_o15,sh_avgvol_o300,fa_salesqoq_o15"
+
+
+def sector_rs(sectors, bench, ma=SECTOR_MA):
+    """sectors {ETF: tygodniowe {d, c}}, bench = SPY -> [{etf, sector, code, rs, ma, pct}] malejąco po pct (% RS nad własną SMA `ma` tygodni).
+    ETF bez `ma` wspólnych tygodni z benchmarkiem pomijamy."""
+    bc = dict(zip(bench.get("d") or [], bench.get("c") or []))
+    out = []
+    for etf, name, code in SECTOR_ETFS:
+        s = sectors.get(etf)
+        if not s:
+            continue
+        rs = [c / bc[d] for d, c in zip(s.get("d") or [], s.get("c") or []) if _ok(c) and _ok(bc.get(d)) and bc[d] > 0]
+        if len(rs) < ma:
+            continue
+        avg = sum(rs[-ma:]) / ma
+        out.append({"etf": etf, "sector": name, "code": code, "rs": rs[-1], "ma": avg, "pct": (rs[-1] / avg - 1) * 100})
+    return sorted(out, key=lambda x: -x["pct"])
+
+
+def top_sectors(ranked, n=TOP_SECTORS):
+    """n najsilniejszych sektorów z RS nad SMA (pct > 0); mniej, gdy tyle dodatnich nie ma."""
+    return [x for x in ranked if x["pct"] > 0][:n]
+
+
+def sector_filter(base_filters, sector):
+    """Filtr Finviz jednego zapytania: sektor + wspólne warunki."""
+    return f"sec_{sector['code']},{base_filters}"
+
+
+# --- EPS Rating w stylu IBD (przybliżenie): IBD podaje tylko, że łączy wzrost EPS z 2 ostatnich kwartałów z 3-letnim wzrostem (z naciskiem na ostatnie wyniki)
+# i porównuje z innymi spółkami (1–99); dokładnej formuły nie publikuje. Tu: wzrost r/r EPS ostatnich 2 kwartałów (waga 0,5), 3-letni wzrost EPS TTM (0,3),
+# stabilność = odsetek ostatnich 8 kwartałów z dodatnim wzrostem r/r (0,2); wynik to percentyl 1–99 wśród spółek w skanerach (nie wszystkich akcji USA).
+EPS_WEIGHTS = (0.5, 0.3, 0.2)
+
+
+def _eps_growth(now, then):
+    """Wzrost % względem |bazy| (też przy ujemnej bazie: z −1 do +1 = +200 %); baza 0 -> None; obcięcie −300…+1000 %."""
+    if not (_ok(now) and _ok(then)) or then == 0:
+        return None
+    return max(-300.0, min(1000.0, (now - then) / abs(then) * 100))
+
+
+def eps_features(eps_q):
+    """eps_q = [[data, EPS kwartału], …] (yfinance) -> {g2, cagr3, stab, raw} albo None (brak 2 kwartałów r/r)."""
+    q = sorted((dt.date.fromisoformat(str(d)[:10]), float(v)) for d, v in eps_q or [] if _ok(v))
+    gs = []
+    for i in range(len(q) - 1, -1, -1):
+        j = next((k for k in range(i - 1, -1, -1) if 330 <= (q[i][0] - q[k][0]).days <= 400), None)
+        if j is None:
+            continue
+        gs.append(_eps_growth(q[i][1], q[j][1]))
+        if len(gs) >= 8:
+            break
+    recent = [g for g in gs[:2] if g is not None]
+    if not recent:
+        return None
+    g2 = sum(recent) / len(recent)
+    ok = [g for g in gs if g is not None]
+    stab = sum(1 for g in ok if g > 0) / len(ok) if len(ok) >= 4 else None
+    cagr3 = None
+    if len(q) >= 16 and 1000 <= (q[-1][0] - q[-13][0]).days <= 1190:
+        now, then = sum(v for _, v in q[-4:]), sum(v for _, v in q[-16:-12])
+        cagr3 = ((now / then) ** (1 / 3) - 1) * 100 if now > 0 and then > 0 else 100.0 if now > 0 else -100.0
+    parts = [(EPS_WEIGHTS[0], max(-100.0, min(200.0, g2)) / 200),
+             (EPS_WEIGHTS[1], None if cagr3 is None else max(-50.0, min(100.0, cagr3)) / 100),
+             (EPS_WEIGHTS[2], stab)]
+    parts = [(w, x) for w, x in parts if x is not None]
+    raw = sum(w * x for w, x in parts) / sum(w for w, _ in parts)
+    return {"g2": round(g2, 1), "cagr3": None if cagr3 is None else round(cagr3, 1), "stab": None if stab is None else round(stab, 2), "raw": round(raw, 4)}
+
+
+def assign_eps_rating(rows, pool=None):
+    """Ustawia row["eps_rating"] (1–99) = percentyl `eps_raw` wiersza wśród wierszy `pool` (domyślnie `rows`); bez danych EPS -> None."""
+    raws = sorted(r["eps_raw"] for r in (rows if pool is None else pool) if _ok(r.get("eps_raw")))
+    for r in rows:
+        x = r.get("eps_raw")
+        if not raws or not _ok(x):
+            r["eps_rating"] = None
+            continue
+        pct = (bisect.bisect_left(raws, x) + bisect.bisect_right(raws, x)) / 2 / len(raws)
+        r["eps_rating"] = max(1, min(99, round(1 + 98 * pct)))
+
+
 def build_row(base, weekly, months, fund, spy=None, est=None, conditions=None):
     """Wiersz listy: base (z Finviz), weekly {d, o, h, l, c, v}, months (High zamkniętych miesięcy), fund (z SEC albo None), spy (tygodniowe {d, c}),
     est (prognozy z yfinance: niespodzianki EPS i rewizja 90 dni)."""
@@ -305,7 +420,7 @@ def build_row(base, weekly, months, fund, spy=None, est=None, conditions=None):
     price = c[-1] if c else None
     prev = c[-2] if len(c) > 1 else None
     level, _ = green_line(months)
-    row.update(price=price, glb=level, glb_state=glb_state(price, prev, level),
+    row.update(price=price, glb=level, glb_state=glb_state(price, prev, level, armed=glb_armed(c[:-1], level)),
                glb_pct=(price / level - 1) * 100 if _ok(price) and _ok(level) and level else None,
                turnover=turnover(c, v))
     m = macd_info(c, lo)
@@ -327,6 +442,8 @@ def build_row(base, weekly, months, fund, spy=None, est=None, conditions=None):
     row["rev_surp"] = _latest_surprise((est or {}).get("revenue_surp"), known_through) if known_through else None
     row["eps_q"] = (est or {}).get("eps_q") or []
     row["eps_rev"] = (est or {}).get("rev90")
+    ef = eps_features(row["eps_q"]) or {}
+    row.update(eps_g2=ef.get("g2"), eps_cagr3=ef.get("cagr3"), eps_stab=ef.get("stab"), eps_raw=ef.get("raw"), eps_rating=None)   # ocena 1–99: assign_eps_rating po zbudowaniu listy
     row["ok"] = passes(row, conditions)
     row["slow"] = slowdown(row)
     return row

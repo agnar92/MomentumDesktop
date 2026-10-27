@@ -4,10 +4,12 @@ Prosta aplikacja okienkowa (Python + Tkinter, ciemny motyw) z **jedną strategi�
 
 | Etap | Reguła |
 |---|---|
-| Lista do pobrania | **Skaner Finviz** do wyboru na pasku (*Skanery / ustawienia…*: własne skanery = nazwa + filtr + limit; domyślnie Bezpieczny (backtest), Trend 50/200, Blisko rekordu (ATH), CANSLIM). Pierwszy = bezpieczny filtr wstępny `ind_stocksonly,sh_price_o10,sh_avgvol_o300,fa_salesqoq_o15` (tylko akcje, cena > 10 $, śr. wolumen > 300 tys., przychody kw. > 15 % r/r). W teście nie odciął żadnego z dużych zwycięzców |
+| Skaner sektorowy (podstawowy) | RS sektora = cena ETF sektora (XLB, XLC, XLY, XLP, XLE, XLF, XLV, XLI, XLRE, XLK, XLU) / SPY, tygodniowo; sektor jest dodatni, gdy RS jest nad własną SMA 52 tyg.; ranking po % nad SMA. 3 najsilniejsze dodatnie sektory = 3 zapytania Finviz (`sec_<sektor>` + `ind_stocksonly,sh_price_o15,sh_avgvol_o300,fa_salesqoq_o15`), wyniki bez powtórzeń. Kolumna *RS sektora %*, ranking w pasku statusu. Test 2011–25 (bez fundamentów): top 3 sektory ≈ 11,8 %/rok, DD −28 % wobec ≈ 9,3 % / −38 % bez sektorów — bez walidacji statystycznej |
+| EPS Rating | Przybliżenie IBD (formuła IBD nie jest publiczna): 0,5 × średni wzrost EPS r/r z 2 ostatnich kwartałów + 0,3 × 3-letni wzrost EPS TTM + 0,2 × stabilność (udział z 8 kwartałów ze wzrostem r/r); wynik = percentyl 1–99 **wśród spółek aktualnej listy** (nie wszystkich akcji USA). Kolumna informacyjna, nie warunek |
+| Lista do pobrania | **Skaner Finviz** do wyboru na pasku (*Skanery / ustawienia…*: własne skanery = nazwa + filtr + limit; domyślnie **Sektory top 3 (RS)**, Bezpieczny (backtest), Trend 50/200, Blisko rekordu (ATH), CANSLIM). Pierwszy = bezpieczny filtr wstępny `ind_stocksonly,sh_price_o10,sh_avgvol_o300,fa_salesqoq_o15` (tylko akcje, cena > 10 $, śr. wolumen > 300 tys., przychody kw. > 15 % r/r). W teście nie odciął żadnego z dużych zwycięzców |
 | Warunki | przychody kw. **≥ +15 % r/r** i marża operacyjna **≥ +3 pp r/r** (SEC EDGAR); P/S, RS i niespodzianki EPS domyślnie wyłączone (badanie 2011–2025: RS ≥ 50 pp obniżał wynik — za mało sygnałów) |
 | Kolejność | warunki + sygnał, potem **najbliżej Green Line** (przy nadmiarze sygnałów: ten sam wynik, mniejsze obsunięcie) |
-| Wejście | **Green Line**: rekord wszech czasów **miesięcznego High** (jak w oryginale Dr. Wisha), który stoi **≥ 3 zamknięte miesiące** (po nowym rekordzie obowiązuje stara linia, dopóki nowy nie przestoi 3 miesięcy); kupno, gdy tydzień zamknie się **0–10 % nad linią** |
+| Wejście | **Green Line**: rekord wszech czasów **miesięcznego High** (jak w oryginale Dr. Wisha), który stoi **3 miesiące łącznie** (szczyt + 2 zamknięte kolejne; po nowym rekordzie obowiązuje stara linia, dopóki nowy nie przestoi tyle samo); kupno, gdy tydzień zamknie się **0–10 % nad linią po przebiciu od dołu** (cena zeszła pod linię i wróciła; po rajdzie > 10 % nad linią ta linia wygasa do powstania nowej — powrót w strefę to kupowanie spadku, nie sygnał) |
 | Wyjście | stop **10 %** pod wejściem i **tygodniowy MACD (12, 26, 9)**: stop pod Low tygodnia przecięcia w dół **po wejściu** (zamknięcie tygodnia) |
 | Portfel | 8–10 pozycji po równo; najpierw wyjścia, potem wejścia; nie sprzedawaj pozycji dla nowego sygnału; bez dokładek, trailing stopów i stopu czasowego; wolne miejsca = gotówka w SPY. Badanie 2011–2025 (≈5600 spółek, bez zdelistowanych): ≈ 21 % rocznie, DD ≈ −37 %; z gotówką w SPY ≈ 25 % |
 
@@ -16,7 +18,7 @@ Heurystyka z backtestu (spółki z dzisiejszej listy, bez spółek wycofanych z 
 ## Okno
 
 - **Lista**: ticker, spółka, sektor, cena, Green Line, odległość od linii, stan GLB (*WYBICIE* = ten tydzień zamknął się nad linią, poprzedni nie;
-  *SYGNAŁ* = 0–10 % nad linią; *NAD* = dalej; *POD*), MACD (nad / pod sygnałem) i stop z ostatniego przecięcia, zmiana marży operacyjnej i brutto r/r,
+  *SYGNAŁ* = 0–10 % nad linią po przebiciu od dołu; *NAD* = dalej albo linia wygasła po rajdzie; *POD*), MACD (nad / pod sygnałem) i stop z ostatniego przecięcia, zmiana marży operacyjnej i brutto r/r,
   przychody r/r, kwartał danych, obrót. Zielone wiersze = warunki spełnione i sygnał GLB. Domyślnie widać wszystkie spółki; filtr „tylko spełniające warunki” jest wyłączony i można go włączyć na pasku.
   Klik w nagłówek sortuje; Enter / dwuklik = wykres; zaznaczenie na liście przełącza otwarty wykres.
 - **Warunki…** (obok checkboxa „tylko spełniające warunki”): wybór, które kryteria są obowiązkowe, i edycja progów dla przychodów kw. r/r, zmiany marży operacyjnej,
@@ -41,7 +43,7 @@ Heurystyka z backtestu (spółki z dzisiejszej listy, bez spółek wycofanych z 
   w dół). Liczby w 📖 Poradniku.
 - **RS jak w Deepvue** (zamiast panelu S&P 500): nad ceną RS Line = akcja / SPY ze średnią 52 tyg. (252 sesje na D), ● zielony = nowy szczyt RS i ceny, ● różowy = szczyt RS przed ceną;
   na końcu linii „+x pp” (RS 52 tyg.). Kolumna **C/C[52 tyg.]** = zamknięcie / zamknięcie sprzed 252 sesji.
-- **Wejście:** zamknięcie tygodnia **0–10 % nad Green Line** (WYBICIE = tydzień przebicia, SYGNAŁ = kolejny tydzień w strefie). Dalej niż 10 % (także BLUE DOT)
+- **Wejście:** zamknięcie tygodnia **0–10 % nad Green Line** po przebiciu od dołu (WYBICIE = tydzień przebicia, SYGNAŁ = kolejny tydzień w strefie; po rajdzie > 10 % nad linią kolejne wejście dopiero na nowej Green Line). Dalej niż 10 % (także BLUE DOT)
   i Blue Line — tylko informacyjnie (w badaniu 2011–2025 dawały mniej).
 - **Niespodzianki EPS** (warunek „2× nad konsensus”: 2 ostatnie raporty powyżej konsensusu EPS; kolumny Niesp. EPS % i Rewizja EPS 90 dni %, z yfinance,
   co 7 dni). W backteście warunek podniósł wynik z 36,6 do 42,4 % rocznie. Rewizja prognozy na przyszły rok (dziś vs 90 dni temu) to podgląd — bez historii do testu.

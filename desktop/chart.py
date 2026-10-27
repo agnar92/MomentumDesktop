@@ -628,7 +628,7 @@ def draw_glb_history(cv, data, i0, i1, xf, yf, g, pmin, pmax, level):
         cv.create_text(x - 9 if right else x + 9, y + 16, text=f"rekord {data['d'][at][:7]} · High {fmt(hs[at])} · stoi {stood} mies.",
                        anchor="e" if right else "w", fill=GLB_COLOR, font=FONT)
     cmp = f"Green Line z wykresu {fmt(lv)}" + (f" · z listy {fmt(level)}" + ("" if level and lv and abs(lv / level - 1) < 0.005 else "  ⚠ różnica") if level else "")
-    cv.create_text(x0 + 4, g["price"][1] - 8, text=cmp + " · przerywana = linia w czasie (rekord High, który stoi ≥ 3 zamknięte mies.)",
+    cv.create_text(x0 + 4, g["price"][1] - 8, text=cmp + " · przerywana = linia w czasie (rekord High, który stoi 3 mies. łącznie: szczyt + 2 zamknięte)",
                    anchor="w", fill=GLB_COLOR, font=FONT)
 
 
@@ -662,6 +662,10 @@ def fund_panel_lines(r, pos=None, plan=None, exit_method="MACD", conditions=None
             (f"Δ marży brutto r/r\t{v(r.get('dgm'), ' pp')}", "val"),
             (f"Wycena P/S\t{r['ps']:.1f}" if r.get("ps") else "Wycena P/S\t—", "val"),
             (f"RS 52 tyg. vs S&P\t{v(r.get('rs'), ' pp')}", "val"),
+            (f"RS sektora (ETF / SPY nad SMA 52)\t{v(r.get('sector_rs'), ' %')}", "val"),
+            (f"EPS Rating (1–99, przybliżenie IBD)\t{'—' if r.get('eps_rating') is None else r['eps_rating']}", "val"),
+            (f"  wzrost EPS 2 ost. kw. r/r\t{v(r.get('eps_g2'), ' %', 0)}", "val"), (f"  EPS 3 lata (TTM, rocznie)\t{v(r.get('eps_cagr3'), ' %', 0)}", "val"),
+            (f"  stabilność (kw. ze wzrostem r/r)\t{'—' if r.get('eps_stab') is None else format(r['eps_stab'], '.0%')}", "val"),
             (f"Niespodzianka EPS\t{v(r.get('surp'), ' %')}", "val"), (f"Rewizja EPS 90 dni\t{v(r.get('eps_rev'), ' %')}", "val"),
             (f"Obrót dzienny\t{r['turnover'] / 1e6:.0f} mln $" if r.get("turnover") else "Obrót dzienny\t—", "val"),
             (f"Do Green Line\t{v(r.get('glb_pct'), ' %')}", "val")]
@@ -698,7 +702,7 @@ def fund_panel_lines(r, pos=None, plan=None, exit_method="MACD", conditions=None
     st = r.get("glb_state")
     pct = r.get("glb_pct")
     sig = st in ("WYBICIE", "SYGNAŁ") and (pct is None or pct <= 10)
-    item(True if sig else None if st in ("NAD", "BLUE DOT", "WYBICIE") else False, f"Green Line: {st or '—'} (kupno: zamknięcie tygodnia 0–10 % nad linią)")
+    item(True if sig else None if st in ("NAD", "BLUE DOT", "WYBICIE") else False, f"Green Line: {st or '—'} (kupno: zamknięcie tygodnia 0–10 % nad linią po przebiciu od dołu)")
     item(r.get("macd") == "nad", f"MACD tyg. {r.get('macd') or '—'} sygnałem" + (f" · stop {r['macd_stop']:.2f}" if r.get("macd_stop") else ""))
     item(False if r.get("slow") else None if r.get("accel") is None else True, "brak hamowania przychodów")
     glb, price = r.get("glb"), r.get("price")

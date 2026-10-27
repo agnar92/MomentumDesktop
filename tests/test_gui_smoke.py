@@ -718,3 +718,25 @@ def test_zanger_bars_are_single_colour(app):
     from desktop.theme import FG
     cols = {ch.cv.itemcget(i, "fill") for i in ch.cv.find_all() if ch.cv.type(i) == "line" and float(ch.cv.itemcget(i, "width")) <= 4}
     assert FG in cols and UP not in cols and DOWN not in cols   # żadnych słupków w kolorze wzrost / spadek
+
+
+def test_new_trend_line_has_no_alert_and_no_extension_until_alert_is_enabled(app):
+    app.open_chart("AAA")
+    ch = app.chart
+    ch.update()
+    ch.redraw()
+    g = ch.geom["g"]
+    E = lambda x, y: type("E", (), {"x": x, "y": y})()   # noqa: E731
+    w, y = g["x1"] - g["x0"], sum(g["price"]) / 2
+    ch.press(E(g["x0"] + w * 0.2, y))
+    ch.drag_line(E(g["x0"] + w * 0.4, y - 30))
+    ch.drag_line(E(g["x0"] + w * 0.5, y - 40))
+    ch.release(E(g["x0"] + w * 0.5, y - 40))
+    ln = app.store.alerts["lines"]["AAA"][0]
+    assert ln["alert"] is False
+    s = ch.geom["segs"][0]
+    assert s["xe"] == s["x2"] and s["ye"] == s["y2"]          # bez przedłużenia
+    ch.toggle_line_alert()
+    ch.redraw()
+    s = ch.geom["segs"][0]
+    assert app.store.alerts["lines"]["AAA"][0]["alert"] is True and s["xe"] > s["x2"]   # z alarmem: przedłużenie do ostatniego tygodnia

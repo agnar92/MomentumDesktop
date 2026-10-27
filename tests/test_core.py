@@ -611,15 +611,87 @@ def test_flat_base_flag_and_parabola():
     flag = [50 + i * 0.5 for i in range(32)] + [66, 72, 80, 88, 94] + [91, 90, 90.5]   # drążek ok. +40 % i pauza
     fp = calc.find_patterns(_weekly(flag, [1e6] * 32 + [3e6] * 5 + [8e5] * 3))
     assert any(p["name"] == "Flaga/Proporzec" for p in fp)
-    para = [20 * math.exp(0.004 * i + 0.0009 * i * i) for i in range(45)]
-    r = calc.parabola(_weekly(para))
-    assert r and r["gain"] >= 100 and r["r2"] >= 0.9 and r["exit"] > 0
-    assert calc.parabola(_weekly([20 * 1.01 ** i for i in range(45)])) is None   # wzrost liniowy (w skali log.) nie jest parabolą
+
+
+def _steps(n=60, c2=0.0004, amp=0.08):
+    """Schodkowy, przyspieszający wzrost: wypukła krzywa (log) z oscylacją co 7 tyg. — dołki leżą na coraz bardziej stromych liniach."""
+    return [20 * math.exp(0.004 * i + c2 * i * i) * (1 + amp * math.sin(2 * math.pi * i / 7)) for i in range(n)]
+
+
+def test_parabolic_curve_needs_three_steepening_lines_and_flags_the_break():
+    r = calc.parabola(_weekly(_steps()))
+    assert r and r["state"] == "TRWA" and r["n"] == 3 and r["gain"] >= 100 and r["exit"] > 0
+    assert [ln["p2"] for ln in r["lines"]] == sorted(ln["p2"] for ln in r["lines"])                       # każda następna linia kończy wyżej
+    assert calc.parabola(_weekly([20 * 1.02 ** i * (1 + 0.08 * math.sin(2 * math.pi * i / 7)) for i in range(60)])) is None   # stałe tempo = jedna linia, nie parabola
+    c = _steps(58) + [_steps(58)[-1] * 0.8, _steps(58)[-1] * 0.7]                                                  # załamanie pod najbardziej stromą linią
+    broken = calc.parabola(_weekly(c, [1e6] * 59 + [4e6]))
+    assert broken and broken["state"] == "ZŁAMANA" and broken["broken"] and broken["vol_x"] == 4.0
 
 
 def test_build_row_carries_patterns_and_position_status_warns_on_parabola():
     from desktop import lines
-    para = [20 * math.exp(0.004 * i + 0.0009 * i * i) for i in range(60)]
+    para = _steps()
     row = calc.build_row({"ticker": "P"}, _weekly(para), [], None)
     assert row["parabola"] and "patterns" in row and "pattern" in row
     assert any("PARABOLA" in m for m in lines.position_status({"last": para[-1]}, row))
+    row["parabola"]["state"] = "ZŁAMANA"
+    assert any("złamana" in m for m in lines.position_status({"last": para[-1]}, row))
+
+
+def _pts_weekly(pts, vols=None, spread=0.01):
+    """Seria tygodniowa z punktów (tydzień, cena) interpolowanych liniowo — do kształtów wzorców."""
+    c = []
+    for (i0, p0), (i1, p1) in zip(pts, pts[1:]):
+        c += [p0 + (p1 - p0) * (i - i0) / (i1 - i0) for i in range(i0, i1)]
+    c.append(pts[-1][1])
+    return _weekly(c, vols, spread)
+
+
+def _zigzag(lows, highs, last, start=30, leg=3):
+    pts, i = [(0, 50), (start, 100)], start
+    for lo, hi in zip(lows, highs):
+        pts += [(i + leg, hi), (i + 2 * leg, lo)]
+        i += 2 * leg
+    return pts + [(i + leg, last)]
+
+
+def _only(w, name):
+    return next((p for p in calc.find_patterns(w) if p["name"] == name), None)
+
+
+def test_line_based_zanger_patterns_buy_side():
+    sym = _only(_pts_weekly(_zigzag([100 + 3 * k for k in range(5)], [130 - 3 * k for k in range(5)], 116)), "Symmetrical Triangle")
+    assert sym and sym["side"] == "buy" and sym["state"] == "BUDUJE SIĘ" and -8 <= sym["pct"] < 0
+    assert [s["kind"] for s in sym["shapes"]] == ["line", "line"]
+    ch = _only(_pts_weekly(_zigzag([100] * 6, [118] * 6, 117.5)), "Channel")
+    assert ch and ch["side"] == "buy"
+    fw = _only(_pts_weekly(_zigzag([100 - k for k in range(5)], [130 - 4 * k for k in range(5)], 108)), "Falling Wedge")
+    assert fw and fw["side"] == "buy" and fw["state"] == "BUDUJE SIĘ"
+    fw_up = _only(_pts_weekly(_zigzag([100 - k for k in range(5)], [130 - 4 * k for k in range(5)], 113)), "Falling Wedge")
+    assert fw_up and fw_up["state"] == "WYBICIE" and fw_up["pct"] > 0   # cena nad opadającą linią
+
+
+def test_head_and_shoulders_is_a_sell_warning_and_inverted_is_a_buy():
+    hs = [(0, 50), (30, 100), (36, 120), (40, 105), (46, 135), (50, 106), (56, 121), (60, 112)]
+    warn = _only(_pts_weekly(hs), "Head & Shoulders")
+    assert warn and warn["side"] == "sell" and warn["state"] == "OSTRZEŻENIE" and [s["text"] for s in warn["shapes"] if s["kind"] == "mark"] == ["LS", "H", "RS"]
+    broken = _only(_pts_weekly(hs[:-1] + [(60, 103)]), "Head & Shoulders")
+    assert broken and broken["state"] == "ZŁAMANA" and broken["pct"] < 0
+    inv = _only(_pts_weekly([(0, 130), (30, 100), (36, 88), (40, 97), (46, 80), (50, 98), (56, 88), (60, 95)]), "Inverted H&S")
+    assert inv and inv["side"] == "buy" and inv["state"] == "BUDUJE SIĘ"
+
+
+def test_rising_wedge_warns_and_buy_patterns_come_first_in_row_columns():
+    rw = _only(_pts_weekly(_zigzag([100 + 4 * k for k in range(5)], [120 + 2 * k for k in range(5)], 120)), "Rising Wedge")
+    assert rw and rw["side"] == "sell"
+    pats = calc.find_patterns(_pts_weekly(_zigzag([100 + 3 * k for k in range(5)], [130 - 3 * k for k in range(5)], 116)))
+    sides = [p["side"] for p in pats]
+    assert sides == sorted(sides, key=lambda x: x == "sell")                      # kupno przed ostrzeżeniami
+    row = calc.build_row({"ticker": "S"}, _pts_weekly(_zigzag([100 + 3 * k for k in range(5)], [130 - 3 * k for k in range(5)], 116)), [], None)
+    assert row["pattern"] == "Symmetrical Triangle" and row["pattern_pct"] < 0 and all(p["side"] == "buy" or row["pattern_exit"] for p in row["patterns"])
+
+
+def test_flag_buys_over_the_descending_trend_line():
+    w = _pts_weekly([(0, 50), (30, 66), (32, 80), (34, 94), (35, 91), (37, 88), (39, 85.5)], [1e6] * 30 + [3e6] * 5 + [8e5] * 5)
+    f = _only(w, "Flaga/Proporzec")
+    assert f and f["state"] == "BUDUJE SIĘ" and any(s["kind"] == "line" and s["d2"] == w["d"][-1] for s in f["shapes"][2:])   # linia opadająca przedłużona do ostatniego tygodnia

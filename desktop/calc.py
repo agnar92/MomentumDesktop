@@ -316,6 +316,102 @@ def pegy_ratio(peg, forward_pe, dividend_yield_pct):
     return round(float(forward_pe) / denominator, 2)
 
 
+# --- Sektory (skaner „Sektory top 3”): RS sektora = cena ETF sektora / SPY (tygodniowo); sektor jest „dodatni”, gdy RS leży nad własną SMA 52 tyg.;
+# ranking po % RS nad tą średnią, bierzemy 3 najsilniejsze (użytkownik: „weź sektory i ten RS co wcześniej i weź top 3 sektory”).
+# Badanie 2011–2025 (GLB bez fundamentów, 10 pozycji, wolne miejsca SPY/QQQ): top 3 sektory ≈ 11–12 % rocznie, DD ≈ −28 % vs wszystkie sektory ≈ 9 %, DD ≈ −38 %.
+SECTOR_ETFS = [   # (ETF SPDR, sektor w Finviz, kod filtra Finviz `sec_...`)
+    ("XLB", "Basic Materials", "basicmaterials"), ("XLC", "Communication Services", "communicationservices"), ("XLY", "Consumer Cyclical", "consumercyclical"),
+    ("XLP", "Consumer Defensive", "consumerdefensive"), ("XLE", "Energy", "energy"), ("XLF", "Financial", "financial"), ("XLV", "Healthcare", "healthcare"),
+    ("XLI", "Industrials", "industrials"), ("XLRE", "Real Estate", "realestate"), ("XLK", "Technology", "technology"), ("XLU", "Utilities", "utilities"),
+]
+SECTOR_MA = 52
+TOP_SECTORS = 3
+# filtr Finviz dla każdego z trzech zapytań (obok `sec_<sektor>`): tylko akcje, cena > 15 $, śr. wolumen > 300 tys. i przychody kw. > 15 % r/r
+# (jedyny fundament z istotnym efektem w badaniu: +1,8 pp na transakcję, przedział [0,2; 3,4]; marża, EPS, ROE, wycena — bez wykrywalnego efektu)
+SECTOR_FILTERS = "ind_stocksonly,sh_price_o15,sh_avgvol_o300,fa_salesqoq_o15"
+
+
+def sector_rs(sectors, bench, ma=SECTOR_MA):
+    """sectors {ETF: tygodniowe {d, c}}, bench = SPY -> [{etf, sector, code, rs, ma, pct}] malejąco po pct (% RS nad własną SMA `ma` tygodni).
+    ETF bez `ma` wspólnych tygodni z benchmarkiem pomijamy."""
+    bc = dict(zip(bench.get("d") or [], bench.get("c") or []))
+    out = []
+    for etf, name, code in SECTOR_ETFS:
+        s = sectors.get(etf)
+        if not s:
+            continue
+        rs = [c / bc[d] for d, c in zip(s.get("d") or [], s.get("c") or []) if _ok(c) and _ok(bc.get(d)) and bc[d] > 0]
+        if len(rs) < ma:
+            continue
+        avg = sum(rs[-ma:]) / ma
+        out.append({"etf": etf, "sector": name, "code": code, "rs": rs[-1], "ma": avg, "pct": (rs[-1] / avg - 1) * 100})
+    return sorted(out, key=lambda x: -x["pct"])
+
+
+def top_sectors(ranked, n=TOP_SECTORS):
+    """n najsilniejszych sektorów z RS nad SMA (pct > 0); mniej, gdy tyle dodatnich nie ma."""
+    return [x for x in ranked if x["pct"] > 0][:n]
+
+
+def sector_filter(base_filters, sector):
+    """Filtr Finviz jednego zapytania: sektor + wspólne warunki."""
+    return f"sec_{sector['code']},{base_filters}"
+
+
+# --- EPS Rating w stylu IBD (przybliżenie): IBD podaje tylko, że łączy wzrost EPS z 2 ostatnich kwartałów z 3-letnim wzrostem (z naciskiem na ostatnie wyniki)
+# i porównuje z innymi spółkami (1–99); dokładnej formuły nie publikuje. Tu: wzrost r/r EPS ostatnich 2 kwartałów (waga 0,5), 3-letni wzrost EPS TTM (0,3),
+# stabilność = odsetek ostatnich 8 kwartałów z dodatnim wzrostem r/r (0,2); wynik to percentyl 1–99 wśród spółek w skanerach (nie wszystkich akcji USA).
+EPS_WEIGHTS = (0.5, 0.3, 0.2)
+
+
+def _eps_growth(now, then):
+    """Wzrost % względem |bazy| (też przy ujemnej bazie: z −1 do +1 = +200 %); baza 0 -> None; obcięcie −300…+1000 %."""
+    if not (_ok(now) and _ok(then)) or then == 0:
+        return None
+    return max(-300.0, min(1000.0, (now - then) / abs(then) * 100))
+
+
+def eps_features(eps_q):
+    """eps_q = [[data, EPS kwartału], …] (yfinance) -> {g2, cagr3, stab, raw} albo None (brak 2 kwartałów r/r)."""
+    q = sorted((dt.date.fromisoformat(str(d)[:10]), float(v)) for d, v in eps_q or [] if _ok(v))
+    gs = []
+    for i in range(len(q) - 1, -1, -1):
+        j = next((k for k in range(i - 1, -1, -1) if 330 <= (q[i][0] - q[k][0]).days <= 400), None)
+        if j is None:
+            continue
+        gs.append(_eps_growth(q[i][1], q[j][1]))
+        if len(gs) >= 8:
+            break
+    recent = [g for g in gs[:2] if g is not None]
+    if not recent:
+        return None
+    g2 = sum(recent) / len(recent)
+    ok = [g for g in gs if g is not None]
+    stab = sum(1 for g in ok if g > 0) / len(ok) if len(ok) >= 4 else None
+    cagr3 = None
+    if len(q) >= 16 and 1000 <= (q[-1][0] - q[-13][0]).days <= 1190:
+        now, then = sum(v for _, v in q[-4:]), sum(v for _, v in q[-16:-12])
+        cagr3 = ((now / then) ** (1 / 3) - 1) * 100 if now > 0 and then > 0 else 100.0 if now > 0 else -100.0
+    parts = [(EPS_WEIGHTS[0], max(-100.0, min(200.0, g2)) / 200),
+             (EPS_WEIGHTS[1], None if cagr3 is None else max(-50.0, min(100.0, cagr3)) / 100),
+             (EPS_WEIGHTS[2], stab)]
+    parts = [(w, x) for w, x in parts if x is not None]
+    raw = sum(w * x for w, x in parts) / sum(w for w, _ in parts)
+    return {"g2": round(g2, 1), "cagr3": None if cagr3 is None else round(cagr3, 1), "stab": None if stab is None else round(stab, 2), "raw": round(raw, 4)}
+
+
+def assign_eps_rating(rows, pool=None):
+    """Ustawia row["eps_rating"] (1–99) = percentyl `eps_raw` wiersza wśród wierszy `pool` (domyślnie `rows`); bez danych EPS -> None."""
+    raws = sorted(r["eps_raw"] for r in (rows if pool is None else pool) if _ok(r.get("eps_raw")))
+    for r in rows:
+        x = r.get("eps_raw")
+        if not raws or not _ok(x):
+            r["eps_rating"] = None
+            continue
+        pct = (bisect.bisect_left(raws, x) + bisect.bisect_right(raws, x)) / 2 / len(raws)
+        r["eps_rating"] = max(1, min(99, round(1 + 98 * pct)))
+
+
 def build_row(base, weekly, months, fund, spy=None, est=None, conditions=None):
     """Wiersz listy: base (z Finviz), weekly {d, o, h, l, c, v}, months (High zamkniętych miesięcy), fund (z SEC albo None), spy (tygodniowe {d, c}),
     est (prognozy z yfinance: niespodzianki EPS i rewizja 90 dni)."""
@@ -346,6 +442,8 @@ def build_row(base, weekly, months, fund, spy=None, est=None, conditions=None):
     row["rev_surp"] = _latest_surprise((est or {}).get("revenue_surp"), known_through) if known_through else None
     row["eps_q"] = (est or {}).get("eps_q") or []
     row["eps_rev"] = (est or {}).get("rev90")
+    ef = eps_features(row["eps_q"]) or {}
+    row.update(eps_g2=ef.get("g2"), eps_cagr3=ef.get("cagr3"), eps_stab=ef.get("stab"), eps_raw=ef.get("raw"), eps_rating=None)   # ocena 1–99: assign_eps_rating po zbudowaniu listy
     row["ok"] = passes(row, conditions)
     row["slow"] = slowdown(row)
     return row

@@ -662,6 +662,10 @@ def fund_panel_lines(r, pos=None, plan=None, exit_method="MACD", conditions=None
             (f"Δ marży brutto r/r\t{v(r.get('dgm'), ' pp')}", "val"),
             (f"Wycena P/S\t{r['ps']:.1f}" if r.get("ps") else "Wycena P/S\t—", "val"),
             (f"RS 52 tyg. vs S&P\t{v(r.get('rs'), ' pp')}", "val"),
+            (f"RS sektora (ETF / SPY nad SMA 52)\t{v(r.get('sector_rs'), ' %')}", "val"),
+            (f"EPS Rating (1–99, przybliżenie IBD)\t{'—' if r.get('eps_rating') is None else r['eps_rating']}", "val"),
+            (f"  wzrost EPS 2 ost. kw. r/r\t{v(r.get('eps_g2'), ' %', 0)}", "val"), (f"  EPS 3 lata (TTM, rocznie)\t{v(r.get('eps_cagr3'), ' %', 0)}", "val"),
+            (f"  stabilność (kw. ze wzrostem r/r)\t{'—' if r.get('eps_stab') is None else format(r['eps_stab'], '.0%')}", "val"),
             (f"Niespodzianka EPS\t{v(r.get('surp'), ' %')}", "val"), (f"Rewizja EPS 90 dni\t{v(r.get('eps_rev'), ' %')}", "val"),
             (f"Obrót dzienny\t{r['turnover'] / 1e6:.0f} mln $" if r.get("turnover") else "Obrót dzienny\t—", "val"),
             (f"Do Green Line\t{v(r.get('glb_pct'), ' %')}", "val")]

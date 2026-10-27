@@ -11,7 +11,9 @@ from . import calc, finviz, sec
 
 # skanery do wyboru: każdy = nazwa + filtr Finviz (+ limit spółek); wszystkie liczą tę samą strategię
 RULES_VERSION = 2   # podnieś, gdy zmienią się domyślne warunki strategii (stare zapisane ustawienia warunków są wtedy resetowane)
+SECTOR_SCANNER = {"name": "Sektory top 3 (RS)", "filters": calc.SECTOR_FILTERS, "max_tickers": 500, "top_sectors": calc.TOP_SECTORS}
 DEFAULT_SCANNERS = [
+    SECTOR_SCANNER,   # podstawowy skaner: 3 sektory z najsilniejszym RS (ETF / SPY nad SMA 52 tyg.) × 3 zapytania Finviz (sektor + cena > 15 $ + przychody kw. > 15 %)
     {"name": "Bezpieczny (backtest)", "filters": finviz.DEFAULT_FILTERS, "max_tickers": 1500},
     {"name": "Trend 50/200", "filters": "ta_sma50_pa,ta_sma200_pa,cap_midover,sh_avgvol_o300", "max_tickers": 1500},
     {"name": "Blisko rekordu (ATH)", "filters": "cap_smallover,sh_avgvol_o100,ta_alltime_b0to10h", "max_tickers": 1500},
@@ -40,7 +42,10 @@ def normalize_scanners(settings):
         while name in seen:
             name += " 2"
         seen.add(name)
-        out.append({"name": name, "filters": str(x["filters"]).strip(), "max_tickers": int(x.get("max_tickers") or finviz.MAX_TICKERS)})
+        item = {"name": name, "filters": str(x["filters"]).strip(), "max_tickers": int(x.get("max_tickers") or finviz.MAX_TICKERS)}
+        if x.get("top_sectors"):   # skaner sektorowy: 1 zapytanie Finviz na każdy z N najsilniejszych sektorów
+            item["top_sectors"] = max(1, min(len(calc.SECTOR_ETFS), int(x["top_sectors"])))
+        out.append(item)
     settings.pop("filters", None)
     settings["scanners"] = out
     if settings.get("scanner") not in seen:
@@ -84,6 +89,11 @@ class Store:
             self.settings["strategy_conditions"] = calc.normalize_conditions(None)
             self.settings["rules_version"] = RULES_VERSION
         self.settings["strategy_conditions"] = calc.normalize_conditions(self.settings.get("strategy_conditions"))
+        if not self.settings.get("sector_scanner_v1"):   # istniejące ustawienia: dołóż skaner sektorowy na początek i wybierz go (raz)
+            if not any(x.get("top_sectors") for x in self.settings["scanners"]):
+                self.settings["scanners"].insert(0, dict(SECTOR_SCANNER))
+                self.settings["scanner"] = SECTOR_SCANNER["name"]
+            self.settings["sector_scanner_v1"] = True
         (self.dir / "scans").mkdir(exist_ok=True)
         self.series = read(self.dir / "weekly.json", None)
         if self.series is None:   # dane sprzed skanerów: świece ze starego scan.json
@@ -112,6 +122,7 @@ class Store:
         if not scan and self.settings["scanner"] == self.settings["scanners"][0]["name"]:
             scan = read(self.dir / "scan.json", {})   # stara lista (jeden skaner) jako pierwszy skaner
         self.rows, self.at = scan.get("rows", []), scan.get("at")
+        self.sectors = scan.get("sectors") or []   # ranking RS sektorów z ostatniego Sync skanera sektorowego [{etf, sector, pct, selected}]
         # Indeks pozostałych skanerów pozwala otworzyć ticker z już zapisanymi danymi
         # bez ponownego pobierania tylko dlatego, że zmienił się aktywny skaner.
         self._other_rows = {}
@@ -134,9 +145,9 @@ class Store:
             self.save_settings()
             self.reload()
 
-    def save_scan(self, rows, series, at):
-        """Lista wybranego skanera + świece (dopisane do wspólnego weekly.json; zostają tylko spółki z list skanerów i symbole)."""
-        write(self.scan_path(), {"at": at, "rows": rows})
+    def save_scan(self, rows, series, at, sectors=None):
+        """Lista wybranego skanera (+ ranking sektorów) i świece (dopisane do wspólnego weekly.json; zostają tylko spółki z list skanerów i symbole)."""
+        write(self.scan_path(), {"at": at, "rows": rows, **({"sectors": sectors} if sectors else {})})
         keep = set(series)
         for sc in self.settings["scanners"]:
             keep.update(r["ticker"] for r in read(self.scan_path(sc["name"]), {}).get("rows", []))
@@ -154,7 +165,7 @@ class Store:
         found_current = any(r.get("ticker") == ticker for r in self.rows)
         if found_current:
             self.rows = [row if r.get("ticker") == ticker else r for r in self.rows]
-            write(self.scan_path(current), {"at": self.at, "rows": self.rows})
+            write(self.scan_path(current), {"at": self.at, "rows": self.rows, **({"sectors": self.sectors} if self.sectors else {})})
         for scanner in self.settings["scanners"]:
             if scanner["name"] == current:
                 continue

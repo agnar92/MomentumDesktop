@@ -14,10 +14,10 @@ from .store import DEFAULT_SCANNERS, Store, normalize_scanners
 from .theme import BG, FG, PANEL, apply_dark, autowrap, setup_style
 
 COLUMNS = [  # (klucz, nagłówek, szerokość, format)
-    ("ticker", "Ticker", 70, "s"), ("company", "Spółka", 200, "s"), ("sector", "Sektor", 140, "s"), ("price", "Cena", 80, "p"),
+    ("ticker", "Ticker", 70, "s"), ("company", "Spółka", 200, "s"), ("sector", "Sektor", 140, "s"), ("sector_rs", "RS sektora %", 105, "%"), ("price", "Cena", 80, "p"),
     ("glb", "Green Line", 90, "p"), ("glb_pct", "Do linii %", 85, "%"), ("glb_state", "GLB", 85, "s"), ("macd", "MACD", 60, "s"), ("trend", "SMA 10>30", 85, "b"),
     ("macd_stop", "Stop MACD", 85, "p"), ("dopm", "Δ marża oper. pp", 120, "%"), ("rev_rr", "Przychody r/r %", 115, "%"),
-    ("dgm", "Δ marża brutto pp", 125, "%"), ("quarter", "Kwartał", 105, "s"), ("turnover", "Obrót mln $", 95, "m"),
+    ("eps_rating", "EPS Rating", 90, "i"), ("dgm", "Δ marża brutto pp", 125, "%"), ("quarter", "Kwartał", 105, "s"), ("turnover", "Obrót mln $", 95, "m"),
     ("ps", "P/S", 60, "x"), ("peg", "PEG", 70, "x2"), ("pegy", "PEGY", 75, "x2"),
     ("rs", "RS 52 tyg. pp", 105, "%"), ("surp", "Niesp. EPS %", 95, "%"), ("beat2", "2× nad konsensus", 115, "b"), ("eps_rev", "Rewizja EPS 90 dni %", 140, "%"), ("rvol_w", "RVol tyg.", 80, "x"), ("rvol_d", "RVol dz.", 75, "x"), ("cc52w", "C/C[52 tyg.]", 95, "r"), ("ok", "Warunki", 75, "b"), ("slow", "Hamuje", 95, "w"),
 ]
@@ -33,6 +33,7 @@ FILTER_CHOICES = {"glb_state": ["WYBICIE", "SYGNAŁ", "BLUE DOT", "NAD", "POD", 
 FILTER_SCALE = {"turnover": 1e6}
 FILTER_PRESETS = [
     ("Reguły: sygnał GLB 0–10 % + warunki (przychody, marża)", {"ok": {"in": ["tak"]}, "glb_state": {"in": ["WYBICIE", "SYGNAŁ"]}, "glb_pct": {"min": 0, "max": 10}}),
+    ("EPS Rating ≥ 80 + sygnał GLB 0–10 %", {"eps_rating": {"min": 80}, "glb_state": {"in": ["WYBICIE", "SYGNAŁ"]}, "glb_pct": {"min": 0, "max": 10}}),
     ("Liderzy: RS 52 tyg. ≥ 50 pp + nad GLB", {"rs": {"min": 50}, "glb_state": {"in": ["WYBICIE", "SYGNAŁ", "BLUE DOT", "NAD"]}}),
     ("Przebicie GLB + SMA 10 > 30 (dowolnie wysoko)", {"trend": {"in": ["tak"]}, "glb_state": {"in": ["WYBICIE", "SYGNAŁ", "BLUE DOT", "NAD"]}}),
     ("Aktywne: RVol tyg. ≥ 1,5 + nad GLB", {"rvol_w": {"min": 1.5}, "glb_state": {"in": ["WYBICIE", "SYGNAŁ", "BLUE DOT", "NAD"]}}),
@@ -75,6 +76,8 @@ def cell(v, f):
         return f"{v / 1e6:,.0f}"
     if f == "b":
         return "✓" if v else ""
+    if f == "i":
+        return f"{v:.0f}"
     if f == "x2":
         return f"{v:.2f}"
     if f == "x":
@@ -285,7 +288,9 @@ class App:
         if cfg["beat2"]["enabled"]:
             required.append("2× EPS nad konsensusem")
         condition_text = ", ".join(required) if required else "brak obowiązkowych kryteriów"
-        self.status.config(text=f"  Skaner: {self.store.settings['scanner']}   Dane: {self.store.at or 'brak — kliknij ⟳ Sync'}   Na liście: {len(self.tree.get_children())} z {len(self.store.rows)}   spełnia warunki: {n_ok}   sygnał GLB: {n_sig}"
+        top = ", ".join(f"{x['etf']} {x['pct']:+.1f} %" for x in self.store.sectors if x.get("selected"))
+        sectors = f"   Sektory top (RS nad SMA 52 tyg.): {top}" if top else ""
+        self.status.config(text=f"  Skaner: {self.store.settings['scanner']}{sectors}   Dane: {self.store.at or 'brak — kliknij ⟳ Sync'}   Na liście: {len(self.tree.get_children())} z {len(self.store.rows)}   spełnia warunki: {n_ok}   sygnał GLB: {n_sig}"
                                 f"   (warunki konieczne: {condition_text};"
                                 f" sygnał: zamknięcie tyg. 0–{calc.ENTRY_MAX_PCT:g} % nad Green Line; wyjście: MACD tyg. + stop {calc.STOP_PCT:g} %)")
 
@@ -1146,6 +1151,8 @@ class AlertsDialog(tk.Toplevel):
 
 
 GUIDE = """REGUŁY (badanie 2011–2025: ≈5600 spółek USA, fundamenty SEC znane 50/80 dni po kwartale, portfel 10 pozycji, koszt 0,1 %/stronę)
+   skaner sektorowy	3 sektory z najsilniejszym RS (ETF / SPY nad SMA 52 tyg.) × zapytanie Finviz: sektor + cena > 15 $ + Sales Q/Q > 15 % (domyślny)
+   EPS Rating	przybliżenie IBD: wzrost EPS 2 kw. + 3 lata + stabilność, percentyl 1–99 wśród spółek listy (informacyjnie)
    skaner Finviz	ind_stocksonly, cena > 10, śr. wolumen > 300 tys., Sales Q/Q > 15 % (skaner „Bezpieczny (backtest)”)
    warunki	przychody kw. ≥ +15 % r/r i marża operacyjna ≥ +3 pp r/r; RS, P/S i niespodzianki EPS domyślnie wyłączone (RS ≥ 50 pp obniżał wynik — za mało sygnałów)
    kupno	zamknięcie tygodnia 0–10 % nad Green Line PO PRZEBICIU OD DOŁU (WYBICIE / SYGNAŁ), na otwarciu następnego tygodnia; dalej niż 10 %, BLUE DOT i po rajdzie > 10 % nad linią ta linia wygasa do powstania nowej (powrót w strefę = kupowanie spadku po wyższym rekordzie) — nie kupuj

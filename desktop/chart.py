@@ -504,14 +504,18 @@ def draw_patterns(cv, row, dates, xf, yf, g, step, pmin, pmax):
                     cv.create_line(a, yf(sh["p1"]), b, yf(sh["p2"]), fill=col, width=2)
 
     used = []
-    for n, p in enumerate((row or {}).get("patterns") or []):
+    for p in (row or {}).get("patterns") or []:
         col = PATTERN_COLORS.get(p["name"], FG)
         shapes(p["shapes"], col)
         if pmin < p["buy"] < pmax:
             y = yf(p["buy"])
             a = px(p["end"])
             cv.create_line(a if a is not None else x0, y, x1, y, fill=col, dash=(6, 3), width=2)
-            ly = y - 9 if all(abs(y - 9 - u) >= 16 for u in used) else y + 9 + 16 * n
+            ly = y - 9
+            for t in range(6):   # podpisy kolejnych wzorców jeden pod drugim
+                if all(abs(ly - u) >= 16 for u in used):
+                    break
+                ly = y + 9 + 16 * t
             used.append(ly)
             boxed(cv, x1 - 6, ly, f"{p['name']} · kupno > {fmt(p['buy'])} · {p['state']} ({p['pct']:+.1f} %)", col, anchor="e")
     para = (row or {}).get("parabola")

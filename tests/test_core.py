@@ -613,7 +613,7 @@ def test_flat_base_flag_and_parabola():
     assert any(p["name"] == "Flaga/Proporzec" for p in fp)
 
 
-def _steps(n=60, c2=0.0004, amp=0.08):
+def _steps(n=60, c2=0.0003, amp=0.08):
     """Schodkowy, przyspieszający wzrost: wypukła krzywa (log) z oscylacją co 7 tyg. — dołki leżą na coraz bardziej stromych liniach."""
     return [20 * math.exp(0.004 * i + c2 * i * i) * (1 + amp * math.sin(2 * math.pi * i / 7)) for i in range(n)]
 
@@ -622,6 +622,8 @@ def test_parabolic_curve_needs_three_steepening_lines_and_flags_the_break():
     r = calc.parabola(_weekly(_steps()))
     assert r and r["state"] == "TRWA" and r["n"] == 3 and r["gain"] >= 100 and r["exit"] > 0
     assert [ln["p2"] for ln in r["lines"]] == sorted(ln["p2"] for ln in r["lines"])                       # każda następna linia kończy wyżej
+    gap = _steps(56) + [x * 1.6 for x in _steps(60)[56:]]                                                        # luka w górę: cena daleko nad najbardziej stromą linią
+    assert calc.parabola(_weekly(gap)) is None
     assert calc.parabola(_weekly([20 * 1.02 ** i * (1 + 0.08 * math.sin(2 * math.pi * i / 7)) for i in range(60)])) is None   # stałe tempo = jedna linia, nie parabola
     c = _steps(58) + [_steps(58)[-1] * 0.8, _steps(58)[-1] * 0.7]                                                  # załamanie pod najbardziej stromą linią
     broken = calc.parabola(_weekly(c, [1e6] * 59 + [4e6]))

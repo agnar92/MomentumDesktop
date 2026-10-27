@@ -740,11 +740,12 @@ def _support_lines(lo, start, end):
 
 
 PARABOLA_WEEKS, PARABOLA_MIN_LINES, PARABOLA_STEEPER = 60, 3, 1.15
+PARABOLA_CONNECT, PARABOLA_MAX_ABOVE = 0.02, 0.20   # kolejna linia startuje na poprzedniej (±2 %); cena ≤ 20 % nad najbardziej stromą
 
 
 def parabola(w):
     """Parabolic Curve (chartpattern.com: „schodkowa formacja” kilku baz, każda wyżej i bardziej stroma; ≥ +100 %; sprzedaż po złamaniu NAJBARDZIEJ stromej
-    linii, na dużym wolumenie). Szukam łańcucha 3 rosnących linii podparcia na tygodniowych Low z nachyleniem rosnącym o ≥ 15 % i kotwicami coraz późniejszymi.
+    linii, na dużym wolumenie). Szukam łańcucha 3 rosnących linii podparcia na tygodniowych Low z nachyleniem rosnącym o ≥ 15 %, **połączonych** (kotwica każdej kolejnej leży na poprzedniej) i z ceną blisko najbardziej stromej.
     Ostrzeżenie przy wyjściu, nie sygnał kupna: stan TRWA (poziom wyjścia = najbardziej stroma linia dziś) albo ZŁAMANA (zamknięcie tygodnia pod nią w ostatnich 3 tyg.).
     -> {state, n, gain, exit, broken, vol_x, lines: [{d1, p1, d2, p2}], shapes, note} albo None. Progi to przybliżenie opisu (strona nie podaje liczb)."""
     c, h, lo, v, d = (w or {}).get("c") or [], (w or {}).get("h") or [], (w or {}).get("l") or [], (w or {}).get("v") or [], (w or {}).get("d") or []
@@ -761,10 +762,14 @@ def parabola(w):
     live = [ln for ln in cand if ln["b"] >= n - 22]            # najbardziej stroma musi być świeża (kotwica w ostatnich ~5 miesiącach)
     if not live:
         return None
+    def starts_on(prev, ln):
+        """Wachlarz jak na schemacie Zangera: kotwica bardziej stromej linii `prev` leży na wcześniejszej, mniej stromej linii `ln` (w granicach 2 %)."""
+        return abs(math.log(lo[prev["a"]]) - math.log(at(ln, prev["a"]))) <= PARABOLA_CONNECT
+
     chain = [max(live, key=lambda ln: ln["slope"])]
     while len(chain) < 3:
         prev = chain[0]
-        pool = [ln for ln in cand if ln["a"] < prev["a"] and ln["slope"] * PARABOLA_STEEPER <= prev["slope"]]
+        pool = [ln for ln in cand if ln["a"] < prev["a"] and ln["slope"] * PARABOLA_STEEPER <= prev["slope"] and starts_on(prev, ln)]
         if not pool:
             break
         chain.insert(0, max(pool, key=lambda ln: (ln["touches"], ln["slope"])))
@@ -776,6 +781,8 @@ def parabola(w):
         return None
     broken = next((i for i in range(n - 3, n) if c[i] < at(steep, i)), None)
     if broken is None and c[-1] < max(h[-52:]) * 0.85:       # ani złamana, ani blisko szczytu -> to już nie jest końcówka wzrostu
+        return None
+    if broken is None and c[-1] > at(steep, n - 1) * (1 + PARABOLA_MAX_ABOVE):   # cena daleko nad najbardziej stromą linią (np. po luce) — poziom wyjścia bez sensu
         return None
     base_v = [x for x in v[(broken or n) - 10:(broken or n)] if _ok(x)]
     volx = round(v[broken] / (sum(base_v) / len(base_v)), 2) if broken is not None and base_v and _ok(v[broken]) and sum(base_v) > 0 else None

@@ -517,7 +517,7 @@ def draw_patterns(cv, row, dates, xf, yf, g, step, pmin, pmax):
                     break
                 ly = y + 9 + 16 * t
             used.append(ly)
-            boxed(cv, x1 - 6, ly, f"{p['name']} · kupno > {fmt(p['buy'])} · {p['state']} ({p['pct']:+.1f} %)", col, anchor="e")
+            boxed(cv, x1 - 6, ly, f"{p['name']} · kupno > {fmt(p['buy'])} · {p['state']} ({p['pct']:+.1f} %)" + (f" · wol. {p['vol_x']:.1f}×" if p.get("vol_x") is not None else ""), col, anchor="e")
     para = (row or {}).get("parabola")
     if para:
         shapes(para["shapes"], PARABOLA_COLOR)

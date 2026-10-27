@@ -5,6 +5,7 @@ Suwak nad wykresem (minimapa całej historii): przeciągnij ramkę = przesuń ok
 Linie trendu (lines.py): przeciągnij myszą po wykresie ceny = nowa linia (koniec przyciąga się do High / Low tygodnia), chwyć koniec = zmień punkt,
 chwyć środek = przesuń, klik = zaznacz, Delete / prawy przycisk = usuń. 🔔 Obserwuj = alerty strategii dla spółki."""
 import datetime as dt
+import json
 from bisect import bisect_left, bisect_right
 import math
 import threading
@@ -347,7 +348,7 @@ def draw(cv, data, row=None, w=None, h=None, n_show=None, end=None, tlines=(), s
     for i in range(n if period != "D" or daily_style == "bars" else 0):
         if hi[i] is None or lo[i] is None or c[i] is None:
             continue
-        col = UP if i == 0 or c[i - 1] is None or c[i] >= c[i - 1] else DOWN
+        col = FG if zanger else UP if i == 0 or c[i - 1] is None or c[i] >= c[i - 1] else DOWN   # widok Zangera: słupki jednokolorowe
         x = xf(i)
         cv.create_line(x, yf(hi[i]), x, yf(lo[i]), fill=col, width=max(1, step * 0.25))
         if period == "D" and daily_style == "bars":
@@ -826,6 +827,9 @@ class ChartWindow(tk.Toplevel):
             b = tk.Button(top, text=lab, width=2, command=lambda x=per: self.toggle_period(x), relief="flat")
             b.pack(side="right", padx=1, pady=2)
             self.per_btns[per] = b
+        self.undo_stack = {}   # ticker -> poprzednie stany linii (JSON), do ↶ / Ctrl+Z
+        self.undo_btn = tk.Button(top, text="↶", width=2, command=self.undo_line, relief="flat", state="disabled")
+        self.undo_btn.pack(side="right", padx=1, pady=2)
         self.zanger = False
         self.zanger_btn = tk.Button(top, text="Z", width=2, command=self.toggle_zanger, relief="flat")
         self.zanger_btn.pack(side="right", padx=1, pady=2)
@@ -939,6 +943,7 @@ class ChartWindow(tk.Toplevel):
         self.bind("<plus>", lambda e: self.zoom(0.85))
         self.bind("<minus>", lambda e: self.zoom(1.18))
         self.bind("<Escape>", lambda e: self.unselect() if self.sel else self.destroy())
+        self.bind("<Control-z>", lambda e: self.undo_line())
         self.set_ticker(ticker)
 
     def submit_ticker(self, event=None):
@@ -1222,12 +1227,12 @@ class ChartWindow(tk.Toplevel):
         if not self.geom or not self.data() or self.period not in ("W", "D"):  # linie trendu: tygodniowy i dzienny
             return
         self.cv.focus_set()
-        hit = L.hit_line(self.geom["segs"], e.x, e.y, 7)
+        hit = L.hit_line(self.geom["segs"], e.x, e.y, 9)
         if hit:
             self.sel = hit[0]
             ln, d = self.find(hit[0]), self.data()["d"]
             self.gest = {"mode": hit[1], "x": e.x, "y": e.y, "orig": dict(ln), "ka": d.index(ln["d1"]) if ln["d1"] in d else -1,
-                         "kb": d.index(ln["d2"]) if ln["d2"] in d else -1}
+                         "kb": d.index(ln["d2"]) if ln["d2"] in d else -1, "snap": self.lines_json()}
             self.tools()
             self.redraw()
         elif self.geom["g"]["price"][0] <= e.y <= self.geom["g"]["price"][1]:
@@ -1241,6 +1246,7 @@ class ChartWindow(tk.Toplevel):
             if math.hypot(e.x - gs["x"], e.y - gs["y"]) <= 4:
                 return
             d, p, _ = self.value(gs["x"], gs["y"])
+            gs["snap"] = self.lines_json()   # stan sprzed nowej linii (do ↶)
             lid = format(int(time.time() * 1000), "x")
             self.app.store.alerts["lines"][self.ticker] = self.app.store.alerts["lines"].get(self.ticker, []) + [
                 {"id": lid, "period": self.period, "d1": d, "p1": p, "d2": d, "p2": p,
@@ -1250,9 +1256,23 @@ class ChartWindow(tk.Toplevel):
         ln = self.find(self.sel)
         if not ln:
             return
+        hint = None
         if gs["mode"] in ("p1", "p2"):
-            d, p, _ = self.value(e.x, e.y)
-            ln["d" + gs["mode"][1]], ln["p" + gs["mode"][1]] = d, p
+            me = gs["mode"][1]
+            other = "2" if me == "1" else "1"
+            d, p, k = self.value(e.x, e.y)
+            g, geo = self.geom["g"], self.geom
+            y0, y1 = g["price"]
+
+            def yf(v):
+                return y1 - (math.log(v) - geo["lmin"]) / (geo["lmax"] - geo["lmin"]) * (y1 - y0)
+            flat = L.snap_horizontal(p, ln["p" + other], yf, e.y, 5) == ln["p" + other] and ln["d" + other] != d   # blisko poziomu drugiego końca -> poziomo
+            if flat:
+                p = ln["p" + other]
+            ln["d" + me], ln["p" + me] = d, p
+            dates = self.data()["d"]
+            k1 = dates.index(ln["d" + other]) if ln["d" + other] in dates else k
+            hint = (g["x0"] + (k - geo["i0"] + 0.5) * geo["step"], yf(p), flat, ruler_text(ln["p" + other], p, k1, k, self.period) + (" · poziomo" if flat else ""))
         elif gs["mode"] == "body" and gs["ka"] >= 0 and gs["kb"] >= 0:
             dates, g = self.data()["d"], self.geom["g"]
             db = round((e.x - gs["x"]) / self.geom["step"])
@@ -1260,15 +1280,24 @@ class ChartWindow(tk.Toplevel):
             ratio = math.exp(-(e.y - gs["y"]) / (g["price"][1] - g["price"][0]) * (self.geom["lmax"] - self.geom["lmin"]))
             ln.update(d1=dates[gs["ka"] + db], d2=dates[gs["kb"] + db], p1=float(f"{gs['orig']['p1'] * ratio:.6g}"), p2=float(f"{gs['orig']['p2'] * ratio:.6g}"))
         self.redraw()
+        if hint:   # podgląd: kółko w punkcie + „% · tygodnie · cena"
+            x, y, flat, txt = hint
+            col = "#f0b429" if flat else "#4da3ff"
+            self.cv.create_oval(x - 9, y - 9, x + 9, y + 9, outline=col, width=2, tags="hint")
+            right = x < self.geom["g"]["x1"] - 240
+            boxed(self.cv, x + 12 if right else x - 12, max(self.geom["g"]["price"][0] + 12, y - 14), txt, col, anchor="w" if right else "e", tags="hint")
 
     def release(self, e):
         gs, self.gest = self.gest, None
         if not gs:
             return
+        self.cv.delete("hint")
         if gs["mode"] == "pend":   # klik obok linii = odznacz
             self.unselect()
             return
         self.save_lines()
+        if gs.get("snap") is not None and gs["snap"] != self.lines_json():
+            self.push_undo(gs["snap"])   # zmiana -> można cofnąć
         if not self.find(self.sel):
             self.sel = None
         self.tools()
@@ -1304,7 +1333,7 @@ class ChartWindow(tk.Toplevel):
 
     def right_click(self, e):
         self.ruler = None
-        hit = self.geom and L.hit_line(self.geom["segs"], e.x, e.y, 7)
+        hit = self.geom and L.hit_line(self.geom["segs"], e.x, e.y, 9)
         if not hit:
             if self.geom and self.data() and self.geom["g"]["price"][0] <= e.y <= self.geom["g"]["price"][1]:
                 p, k, x = self.point(e.x, e.y)
@@ -1334,9 +1363,34 @@ class ChartWindow(tk.Toplevel):
         self.tools()
         self.redraw()
 
+    def lines_json(self):
+        return json.dumps(self.app.store.alerts["lines"].get(self.ticker, []), sort_keys=True)
+
+    def push_undo(self, snap):
+        st = self.undo_stack.setdefault(self.ticker, [])
+        st.append(snap)
+        del st[:-30]
+        self.undo_btn.config(state="normal")
+
+    def undo_line(self):
+        st = self.undo_stack.get(self.ticker) or []
+        if not st:
+            return
+        ls = json.loads(st.pop())
+        if ls:
+            self.app.store.alerts["lines"][self.ticker] = ls
+        else:
+            self.app.store.alerts["lines"].pop(self.ticker, None)
+        self.sel = None
+        self.app.store.save_alerts()
+        self.undo_btn.config(state="normal" if st else "disabled")
+        self.tools()
+        self.redraw()
+
     def delete_selected(self):
         if not self.sel:
             return
+        self.push_undo(self.lines_json())
         all_lines = self.app.store.alerts["lines"].get(self.ticker, [])
         self.app.store.alerts["lines"][self.ticker] = [x for x in all_lines if x["id"] != self.sel]
         self.sel = None
@@ -1407,6 +1461,7 @@ class ChartWindow(tk.Toplevel):
 
     def tools(self):
         self.mark_period()
+        self.undo_btn.config(state="normal" if self.undo_stack.get(self.ticker) else "disabled")
         held = self.ticker in self.app.store.alerts["pos"]
         self.pos_btn.config(text="📌 Mam pozycję" if held else "📌 Pozycja", bg="#1f3b5c" if held else self.del_btn.cget("bg"))
         self.exit_btn.config(text="🚪 Wyjście: pod GLB" if self.app.store.settings.get("exit", "MACD") == "GLB" else "🚪 Wyjście: MACD")

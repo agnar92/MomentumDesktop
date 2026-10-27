@@ -684,3 +684,37 @@ def test_zanger_view_draws_patterns_and_hides_indicators(app):
     assert not any(t.startswith("MACD") or t.startswith("Przychody") for t in texts) and ch.geom["g"]["rs"] is None
     ch.toggle_period("D")
     assert not ch.zanger and C.PATTERN_NAMES
+
+
+def test_trend_line_horizontal_snap_hint_and_undo(app):
+    app.open_chart("AAA")
+    ch = app.chart
+    ch.update()
+    ch.redraw()
+    g = ch.geom["g"]
+    E = lambda x, y: type("E", (), {"x": x, "y": y})()   # noqa: E731
+    w = g["x1"] - g["x0"]
+    y = sum(g["price"]) / 2
+    ch.press(E(g["x0"] + w * 0.2, y))
+    ch.drag_line(E(g["x0"] + w * 0.5, y - 40))
+    ch.drag_line(E(g["x0"] + w * 0.7, y + 1))           # prawie poziomo -> magnes poziomy
+    hint = [ch.cv.itemcget(i, "text") for i in ch.cv.find_withtag("hint") if ch.cv.type(i) == "text"]
+    assert hint and "poziomo" in hint[0]
+    ch.release(E(g["x0"] + w * 0.7, y + 1))
+    ln = app.store.alerts["lines"]["AAA"][0]
+    assert ln["p1"] == ln["p2"] and not ch.cv.find_withtag("hint")
+    assert str(ch.undo_btn.cget("state")) == "normal"
+    ch.undo_line()                                      # ↶ usuwa nową linię
+    assert "AAA" not in app.store.alerts["lines"] and str(ch.undo_btn.cget("state")) == "disabled"
+
+
+def test_zanger_bars_are_single_colour(app):
+    app.open_chart("AAA")
+    ch = app.chart
+    ch.update()
+    ch.toggle_zanger()
+    ch.update()
+    from desktop.chart import DOWN, UP
+    from desktop.theme import FG
+    cols = {ch.cv.itemcget(i, "fill") for i in ch.cv.find_all() if ch.cv.type(i) == "line" and float(ch.cv.itemcget(i, "width")) <= 4}
+    assert FG in cols and UP not in cols and DOWN not in cols   # żadnych słupków w kolorze wzrost / spadek

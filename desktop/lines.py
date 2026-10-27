@@ -77,6 +77,11 @@ def snap_price(price, hi, lo, yf, y, tol):
     return best
 
 
+def snap_horizontal(price, other, yf, y, tol):
+    """Magnes poziomy: cena przyciągana do ceny drugiego końca linii, gdy kursor jest bliżej niż tol px od jej poziomu (-> linia dokładnie pozioma)."""
+    return other if other is not None and abs(yf(other) - y) <= tol else price
+
+
 def state_alerts(prev, row):
     """Zmiany stanu obserwowanej spółki (prev = stan z poprzedniego sprawdzenia) -> lista komunikatów."""
     out = []

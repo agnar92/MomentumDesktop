@@ -470,7 +470,8 @@ def draw(cv, data, row=None, w=None, h=None, n_show=None, end=None, tlines=(), s
     return {"g": g, "step": step, "n": n, "i0": i0, "lmin": lmin, "lmax": lmax, "segs": segs}
 
 
-PATTERN_COLORS = {"Cup & Handle": "#4da3ff", "Flat Base": "#f0b429", "Ascending Triangle": "#b084f5", "Flaga/Proporzec": "#2ec4b6"}
+PATTERN_COLORS = {"Cup & Handle": "#4da3ff", "Flat Base": "#f0b429", "Ascending Triangle": "#b084f5", "Flaga/Proporzec": "#2ec4b6", "Channel": "#5fd0ff", "Symmetrical Triangle": "#e879f9",
+                  "Descending Triangle": "#fb923c", "Falling Wedge": "#34d399", "Inverted H&S": "#a3e635", "Head & Shoulders": "#ff6b6b", "Rising Wedge": "#f87171"}
 PARABOLA_COLOR = "#ff4d8d"
 
 
@@ -499,6 +500,10 @@ def draw_patterns(cv, row, dates, xf, yf, g, step, pmin, pmax):
                 a, b = px(sh["d1"]), px(sh["d2"])
                 if a is not None and b is not None:
                     cv.create_rectangle(a - step * 0.45, yf(min(sh["hi"], pmax)), b + step * 0.45, yf(max(sh["lo"], pmin)), outline=col, width=2, dash=(4, 3))
+            elif sh["kind"] == "mark":   # LS / H / RS przy szczytach (dołkach) Head & Shoulders
+                a = px(sh["d"])
+                if a is not None and pmin < sh["p"] < pmax:
+                    boxed(cv, a, yf(sh["p"]) + (14 if sh.get("below") else -14), sh["text"], col, anchor="center", font=("Segoe UI", 10, "bold"))
             elif sh["kind"] == "line":
                 a, b = px(sh["d1"]), px(sh["d2"])
                 if a is not None and b is not None:
@@ -514,13 +519,15 @@ def draw_patterns(cv, row, dates, xf, yf, g, step, pmin, pmax):
             y = yf(p["buy"])
             a = px(p["end"])
             cv.create_line(a if a is not None else x0, y, x1, y, fill=col, dash=(6, 3), width=2)
-            ly = y - 9
+            top = g["price"][0] + 32   # pod legendą u góry wykresu
+            ly = max(y - 9, top)
             for t in range(6):   # podpisy kolejnych wzorców jeden pod drugim
                 if all(abs(ly - u) >= 16 for u in used):
                     break
-                ly = y + 9 + 16 * t
+                ly = max(y + 9 + 16 * t, top)
             used.append(ly)
-            boxed(cv, x1 - 6, ly, f"{p['name']} · kupno > {fmt(p['buy'])} · {p['state']} ({p['pct']:+.1f} %)" + (f" · wol. {p['vol_x']:.1f}×" if p.get("vol_x") is not None else ""), col, anchor="e")
+            what = f"linia {fmt(p['buy'])}" if p.get("side") == "sell" else f"kupno > {fmt(p['buy'])}"
+            boxed(cv, x1 - 6, ly, f"{'⚠ ' if p.get('side') == 'sell' else ''}{p['name']} · {what} · {p['state']} ({p['pct']:+.1f} %)" + (f" · wol. {p['vol_x']:.1f}×" if p.get("vol_x") is not None else ""), col, anchor="e")
     para = (row or {}).get("parabola")
     if para:
         shapes(para["shapes"], PARABOLA_COLOR)
@@ -738,6 +745,7 @@ def fund_panel_lines(r, pos=None, plan=None, exit_method="MACD", conditions=None
             (f"RS 52 tyg. vs S&P\t{v(r.get('rs'), ' pp')}", "val"),
             (f"RS sektora (ETF / SPY nad SMA 52)\t{v(r.get('sector_rs'), ' %')}", "val"),
             (f"Wzorzec Zangera\t{r['pattern'] + ' · ' + r['pattern_state'] + ' · ' + v(r.get('pattern_pct'), ' % do kupna') if r.get('pattern') else '—'}", "val"),
+            (f"Ostrzeżenie wzorca\t{r['pattern_exit'] if r.get('pattern_exit') else '—'}", "val"),
             (f"Parabolic Curve (wyjście)\t{r['parabola']['note'] if r.get('parabola') else '—'}", "val"),
             (f"EPS Rating (1–99, przybliżenie IBD)\t{'—' if r.get('eps_rating') is None else r['eps_rating']}", "val"),
             (f"  wzrost EPS 2 ost. kw. r/r\t{v(r.get('eps_g2'), ' %', 0)}", "val"), (f"  EPS 3 lata (TTM, rocznie)\t{v(r.get('eps_cagr3'), ' %', 0)}", "val"),

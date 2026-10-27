@@ -17,7 +17,7 @@ COLUMNS = [  # (klucz, nagłówek, szerokość, format)
     ("ticker", "Ticker", 70, "s"), ("company", "Spółka", 200, "s"), ("sector", "Sektor", 140, "s"), ("sector_rs", "RS sektora %", 105, "%"), ("price", "Cena", 80, "p"),
     ("glb", "Green Line", 90, "p"), ("glb_pct", "Do linii %", 85, "%"), ("glb_state", "GLB", 85, "s"), ("macd", "MACD", 60, "s"), ("trend", "SMA 10>30", 85, "b"),
     ("macd_stop", "Stop MACD", 85, "p"), ("dopm", "Δ marża oper. pp", 120, "%"), ("rev_rr", "Przychody r/r %", 115, "%"),
-    ("eps_rating", "EPS Rating", 90, "i"), ("dgm", "Δ marża brutto pp", 125, "%"), ("pattern", "Wzorzec Zangera", 130, "s"), ("pattern_pct", "Do kupna wzorca %", 115, "%"), ("quarter", "Kwartał", 105, "s"), ("turnover", "Obrót mln $", 95, "m"),
+    ("eps_rating", "EPS Rating", 90, "i"), ("dgm", "Δ marża brutto pp", 125, "%"), ("pattern", "Wzorzec Zangera", 130, "s"), ("pattern_pct", "Do kupna wzorca %", 115, "%"), ("pattern_exit", "Ostrzeżenie wzorca", 125, "s"), ("quarter", "Kwartał", 105, "s"), ("turnover", "Obrót mln $", 95, "m"),
     ("ps", "P/S", 60, "x"), ("peg", "PEG", 70, "x2"), ("pegy", "PEGY", 75, "x2"),
     ("rs", "RS 52 tyg. pp", 105, "%"), ("surp", "Niesp. EPS %", 95, "%"), ("beat2", "2× nad konsensus", 115, "b"), ("eps_rev", "Rewizja EPS 90 dni %", 140, "%"), ("rvol_w", "RVol tyg.", 80, "x"), ("rvol_d", "RVol dz.", 75, "x"), ("cc52w", "C/C[52 tyg.]", 95, "r"), ("ok", "Warunki", 75, "b"), ("slow", "Hamuje", 95, "w"),
 ]
@@ -29,7 +29,7 @@ def is_signal(r):
     """Sygnał kupna wg badania 2011–2025: Green Line, zamknięcie tygodnia 0–10 % nad linią (szersza strefa i Blue Dot dawały mniej)."""
     return r.get("glb_state") in SIGNAL and (r.get("glb_pct") is None or r["glb_pct"] <= ENTRY_MAX)
 # filtry listy (wszystkie naraz, ORAZ): {kolumna: {"in": [wartości]} | {"min", "max"}}; liczby w jednostkach tabeli (obrót w mln $)
-FILTER_CHOICES = {"glb_state": ["WYBICIE", "SYGNAŁ", "BLUE DOT", "NAD", "POD", "BRAK"], "macd": ["nad", "pod"], "ok": ["tak", "nie"], "trend": ["tak", "nie"], "beat2": ["tak", "nie"], "slow": ["HAMUJE", "HAMUJE+MB", "—"], "pattern": list(calc.PATTERN_NAMES)}
+FILTER_CHOICES = {"glb_state": ["WYBICIE", "SYGNAŁ", "BLUE DOT", "NAD", "POD", "BRAK"], "macd": ["nad", "pod"], "ok": ["tak", "nie"], "trend": ["tak", "nie"], "beat2": ["tak", "nie"], "slow": ["HAMUJE", "HAMUJE+MB", "—"], "pattern": list(calc.PATTERN_NAMES), "pattern_exit": list(calc.SELL_PATTERNS) + ["Parabolic Curve"]}
 FILTER_SCALE = {"turnover": 1e6}
 FILTER_PRESETS = [
     ("Reguły: sygnał GLB 0–10 % + warunki (przychody, marża)", {"ok": {"in": ["tak"]}, "glb_state": {"in": ["WYBICIE", "SYGNAŁ"]}, "glb_pct": {"min": 0, "max": 10}}),

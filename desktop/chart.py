@@ -154,6 +154,10 @@ def geometry(w, h, period="W"):
     ph = h - top - 22
     s1 = top + ph * 0.10
     p0 = s1 + 8
+    if period == "Z":   # widok Zangera: sama cena (log) i wolumen, bez RS / przychodów / MACD
+        p0 = top
+        p1 = p0 + ph * 0.80
+        return {"rs": None, "price": (p0, p1), "vol": (p1 + 6, h - 22), "rev": None, "macd": (h - 22, h - 22), "x0": LEFT, "x1": w - RIGHT}
     if period == "D":
         p1 = p0 + ph * 0.74
         return {"rs": (top, s1), "price": (p0, p1), "vol": (p1 + 6, h - 22), "rev": None, "macd": (h - 22, h - 22), "x0": LEFT, "x1": w - RIGHT}
@@ -253,7 +257,7 @@ def draw_slider(cv, closes, n_show, end, unit="tyg."):
     cv.create_text(x1 - 6 if right else x1 + 6, 4, text=f"{i1 - i0} {unit}", fill=FG, font=FONT, anchor="ne" if right else "nw")
 
 
-def draw(cv, data, row=None, w=None, h=None, n_show=None, end=None, tlines=(), sel=None, spx=None, period="W", daily_style="line", earnings_dates=()):
+def draw(cv, data, row=None, w=None, h=None, n_show=None, end=None, tlines=(), sel=None, spx=None, period="W", daily_style="line", earnings_dates=(), zanger=False):
     """Rysuje wykres okna (n_show tygodni kończące się na `end`, domyślnie cała historia) na canvas `cv`; data = {d, o, h, l, c, v};
     tlines = linie trendu, sel = id zaznaczonej. -> geometria (do dymka i linii; `i0` = indeks pierwszego tygodnia okna w pełnej serii, segs = linie w px)."""
     cv.delete("all")
@@ -265,7 +269,7 @@ def draw(cv, data, row=None, w=None, h=None, n_show=None, end=None, tlines=(), s
     i0, i1 = window(total, n_show, end)
     earnings_local = {i - i0 for i in earnings_indices(data.get("d", []), earnings_dates, period) if i0 <= i < i1}
     cfull = [v if v is not None else 0 for v in data["c"]]
-    smas = {} if period == "D" else {k: calc.sma(cfull, k)[i0:i1] for k in ((4, 10, 30) if period == "W" else (10, 30))}
+    smas = {} if period == "D" or zanger else {k: calc.sma(cfull, k)[i0:i1] for k in ((4, 10, 30) if period == "W" else (10, 30))}
     daily_mas = {}
     if period == "D" and daily_style == "bars":
         daily_mas = {name: (calc.ema(cfull, n) if name.startswith("EMA") else calc.sma(cfull, n))[i0:i1]
@@ -277,7 +281,7 @@ def draw(cv, data, row=None, w=None, h=None, n_show=None, end=None, tlines=(), s
     rv = calc.rel_volume(data["v"], nv)
     c, hi, lo, vol, dates = (data[k][i0:i1] for k in ("c", "h", "l", "v", "d"))
     n = len(c)
-    g = geometry(w, h, period)
+    g = geometry(w, h, "Z" if zanger else period)
     x0, x1 = g["x0"], g["x1"]
     step = (x1 - x0) / n
 
@@ -286,6 +290,9 @@ def draw(cv, data, row=None, w=None, h=None, n_show=None, end=None, tlines=(), s
 
     level = (row or {}).get("glb")
     vals = [v for v in hi + lo if v] + ([level] if level and min(x for x in lo if x) * 0.5 < level < max(x for x in hi if x) * 2 else [])
+    if zanger:   # punkty kupna wzorców i poziom wyjścia z paraboli mają się zmieścić na wykresie
+        top_px = max(x for x in hi if x)
+        vals += [x for x in pattern_levels(row) if top_px * 0.6 < x < top_px * 1.25]
     # Dodatkowy margines pod ceną tylko wtedy, gdy trzeba narysować E poniżej Low świecy.
     pmin, pmax = min(vals) * (0.92 if earnings_local else 0.97), max(vals) * 1.03
     y0, y1 = g["price"]
@@ -393,6 +400,8 @@ def draw(cv, data, row=None, w=None, h=None, n_show=None, end=None, tlines=(), s
                 label_y = max(y0 + 38, min(y1 - 10, label_y + 17))
             position_labels.append(label_y)
             boxed(cv, x0 + 4, label_y, lab, col)
+    if zanger:
+        draw_patterns(cv, row, dates, xf, yf, g, step, pmin, pmax)
     segs = draw_lines(cv, data, tlines, sel, i0, i1, xf, yf, g, step, w)
     last = c[-1]
     if last:
@@ -417,7 +426,7 @@ def draw(cv, data, row=None, w=None, h=None, n_show=None, end=None, tlines=(), s
     def ym(v):
         return mid - v / rng * (m1 - m0) / 2
 
-    if period != "D":   # dzienny: bez dolnego panelu (wyjście i tak po tygodniowym MACD)
+    if period != "D" and not zanger:   # dzienny i widok Zangera: bez dolnego panelu (wyjście i tak po tygodniowym MACD)
         cv.create_line(x0, mid, x1, mid, fill=GRID)
         for i in range(n):
             cv.create_rectangle(xf(i) - step * 0.3, ym(hist[i]), xf(i) + step * 0.3, mid, fill="#2f9e5a" if hist[i] >= 0 else "#a33a3e", outline="")
@@ -430,11 +439,14 @@ def draw(cv, data, row=None, w=None, h=None, n_show=None, end=None, tlines=(), s
     legend = (("  ".join(DAILY_MA_COLORS) + " · ● Blue Dot") if daily_style == "bars" else "GMMA: szybkie EMA (czerwone) / wolne (niebieskie) · jasne tło = RWB · ● Blue Dot") if period == "D" else "  ".join(f"SMA {k} {u}" for k in ((4, 10, 30) if period == "W" else (10, 30)))
     if period == "M":
         draw_glb_history(cv, data, i0, i1, xf, yf, g, pmin, pmax, level)
+    if zanger:
+        legend = "Widok Zangera: cena (skala log.) + wolumen · wzorce: " + (", ".join(p["name"] for p in (row or {}).get("patterns") or []) or "brak")
     boxed(cv, x0 + 4, y1 - 10 if period == "D" else y0 + 10, legend, FG)
     # RS Line jak w Deepvue nad wykresem (zastępuje panel S&P 500)
-    draw_rs_panel(cv, data, i0, i1, xf, g, spx, row, period)
+    if not zanger:
+        draw_rs_panel(cv, data, i0, i1, xf, g, spx, row, period)
     # przychody kwartalne (słupki w okresie kwartału) z dynamiką r/r: zielony ≥ +25 %, żółty ≥ +15 % (dzienny: bez)
-    if period == "D":
+    if period == "D" or zanger:
         return {"g": g, "step": step, "n": n, "i0": i0, "lmin": lmin, "lmax": lmax, "segs": segs}
     q0, q1 = g["rev"]
     qs = (row or {}).get("qs") or []
@@ -455,6 +467,60 @@ def draw(cv, data, row=None, w=None, h=None, n_show=None, end=None, tlines=(), s
     cv.create_text(x0 + 4, q0 + 4, text=(f"Przychody kw. · r/r % (zielony ≥ 25 %, żółty ≥ 15 %) · ostatni {fmt_big(qs[-1]['rev'])} $" if qs
                                          else "Przychody kw. — brak danych SEC"), anchor="w", fill=DIM, font=FONT)
     return {"g": g, "step": step, "n": n, "i0": i0, "lmin": lmin, "lmax": lmax, "segs": segs}
+
+
+PATTERN_COLORS = {"Cup & Handle": "#4da3ff", "Flat Base": "#f0b429", "Ascending Triangle": "#b084f5", "Flaga/Proporzec": "#2ec4b6"}
+PARABOLA_COLOR = "#ff4d8d"
+
+
+def pattern_levels(row):
+    """Poziomy do uwzględnienia w skali ceny: punkty kupna wzorców i wyjście z paraboli."""
+    r = row or {}
+    return [p["buy"] for p in r.get("patterns") or []] + ([r["parabola"]["exit"]] if r.get("parabola") else [])
+
+
+def draw_patterns(cv, row, dates, xf, yf, g, step, pmin, pmax):
+    """Wzorce Zangera na wykresie tygodniowym: kontur (miseczka / uchwyt / baza / trójkąt / flaga), linia i podpis punktu kupna;
+    Parabolic Curve = krzywa i poziom wyjścia (zamknięcie tygodnia pod SMA 10). Daty z `shapes` mapowane na tygodnie okna."""
+    x0, x1 = g["x0"], g["x1"]
+
+    def px(d):
+        j = L.date_index(dates, d)
+        return None if j < 0 else xf(min(j, len(dates) - 1))
+
+    def shapes(items, col):
+        for sh in items:
+            if sh["kind"] == "curve":
+                pts = [(px(d), yf(p)) for d, p in sh["pts"] if px(d) is not None and pmin < p < pmax]
+                if len(pts) > 1:
+                    cv.create_line(*[v for xy in pts for v in xy], fill=col, width=2, smooth=True)
+            elif sh["kind"] == "box":
+                a, b = px(sh["d1"]), px(sh["d2"])
+                if a is not None and b is not None:
+                    cv.create_rectangle(a - step * 0.45, yf(min(sh["hi"], pmax)), b + step * 0.45, yf(max(sh["lo"], pmin)), outline=col, width=2, dash=(4, 3))
+            elif sh["kind"] == "line":
+                a, b = px(sh["d1"]), px(sh["d2"])
+                if a is not None and b is not None:
+                    cv.create_line(a, yf(sh["p1"]), b, yf(sh["p2"]), fill=col, width=2)
+
+    used = []
+    for n, p in enumerate((row or {}).get("patterns") or []):
+        col = PATTERN_COLORS.get(p["name"], FG)
+        shapes(p["shapes"], col)
+        if pmin < p["buy"] < pmax:
+            y = yf(p["buy"])
+            a = px(p["end"])
+            cv.create_line(a if a is not None else x0, y, x1, y, fill=col, dash=(6, 3), width=2)
+            ly = y - 9 if all(abs(y - 9 - u) >= 16 for u in used) else y + 9 + 16 * n
+            used.append(ly)
+            boxed(cv, x1 - 6, ly, f"{p['name']} · kupno > {fmt(p['buy'])} · {p['state']} ({p['pct']:+.1f} %)", col, anchor="e")
+    para = (row or {}).get("parabola")
+    if para:
+        shapes(para["shapes"], PARABOLA_COLOR)
+        if pmin < para["exit"] < pmax:
+            y = yf(para["exit"])
+            cv.create_line(x0, y, x1, y, fill=PARABOLA_COLOR, dash=(2, 3))
+            boxed(cv, x0 + 4, y + 9, f"PARABOLA · wyjście: zamknięcie tyg. pod SMA 10 {fmt(para['exit'])}", PARABOLA_COLOR)
 
 
 def rs_line(closes, spx_closes):
@@ -663,6 +729,8 @@ def fund_panel_lines(r, pos=None, plan=None, exit_method="MACD", conditions=None
             (f"Wycena P/S\t{r['ps']:.1f}" if r.get("ps") else "Wycena P/S\t—", "val"),
             (f"RS 52 tyg. vs S&P\t{v(r.get('rs'), ' pp')}", "val"),
             (f"RS sektora (ETF / SPY nad SMA 52)\t{v(r.get('sector_rs'), ' %')}", "val"),
+            (f"Wzorzec Zangera\t{r['pattern'] + ' · ' + r['pattern_state'] + ' · ' + v(r.get('pattern_pct'), ' % do kupna') if r.get('pattern') else '—'}", "val"),
+            (f"Parabolic Curve (wyjście)\t{r['parabola']['note'] if r.get('parabola') else '—'}", "val"),
             (f"EPS Rating (1–99, przybliżenie IBD)\t{'—' if r.get('eps_rating') is None else r['eps_rating']}", "val"),
             (f"  wzrost EPS 2 ost. kw. r/r\t{v(r.get('eps_g2'), ' %', 0)}", "val"), (f"  EPS 3 lata (TTM, rocznie)\t{v(r.get('eps_cagr3'), ' %', 0)}", "val"),
             (f"  stabilność (kw. ze wzrostem r/r)\t{'—' if r.get('eps_stab') is None else format(r['eps_stab'], '.0%')}", "val"),
@@ -754,6 +822,9 @@ class ChartWindow(tk.Toplevel):
             b = tk.Button(top, text=lab, width=2, command=lambda x=per: self.toggle_period(x), relief="flat")
             b.pack(side="right", padx=1, pady=2)
             self.per_btns[per] = b
+        self.zanger = False
+        self.zanger_btn = tk.Button(top, text="Z", width=2, command=self.toggle_zanger, relief="flat")
+        self.zanger_btn.pack(side="right", padx=1, pady=2)
         self.pos_btn = tk.Button(top, text="📌 Pozycja", command=self.toggle_pos, relief="flat")
         self.pos_btn.pack(side="right", padx=2, pady=2)
         self.exit_btn = tk.Button(top, text="🚪 Wyjście: MACD", command=self.toggle_exit, relief="flat")
@@ -849,6 +920,7 @@ class ChartWindow(tk.Toplevel):
         self.bind("m", lambda e: self.toggle_period("M"))
         self.bind("d", lambda e: self.toggle_period("D"))
         self.bind("w", lambda e: self.toggle_period("W"))
+        self.bind("z", lambda e: self.toggle_zanger())
         # R przełącza RWB/słupki tylko na wykresie dziennym.
         self.bind("r", lambda e: self.toggle_daily_style() if self.period == "D" else None)
         self.bind("R", lambda e: self.toggle_daily_style() if self.period == "D" else None)
@@ -912,10 +984,21 @@ class ChartWindow(tk.Toplevel):
         self.daily_style = "bars" if self.daily_style == "line" else "line"
         self.redraw()
 
+    def toggle_zanger(self):
+        """Z: widok Zangera (tylko wykres tygodniowy) — cena, wolumen i wzorce kupna / parabola, bez wskaźników."""
+        self.zanger = not self.zanger
+        if self.zanger and self.period != "W":
+            self.toggle_period("W")
+        self.zanger_btn.config(bg="#1f3b5c" if self.zanger else self.del_btn.cget("bg"), fg="#ffffff" if self.zanger else FG)
+        self.redraw()
+
     def toggle_period(self, to=None):
         """M / T / D (bez argumentu: tygodniowy → dzienny → miesięczny). Dzienny (2 lata) i miesięczny (pełna historia) z yfinance (ceny bez korekty),
         raz na spółkę w tle."""
         self.period = to or {"W": "D", "D": "M", "M": "W"}[self.period]
+        if self.period != "W" and self.zanger:
+            self.zanger = False
+            self.zanger_btn.config(bg=self.del_btn.cget("bg"), fg=FG)
         self.n_show, self.end, self.sel = (260 if self.period == "D" else None), None, None   # dzienny: domyślnie ostatni rok
         self.mark_period()
         self.load_period()
@@ -1006,7 +1089,7 @@ class ChartWindow(tk.Toplevel):
                                     text="D: RWB" if self.daily_style == "bars" else "D: słupki")
         self.geom = draw(self.cv, data, self.row_for_chart(), n_show=self.n_show, end=self.end, tlines=self.lines(), sel=self.sel,
                          spx=(self.period == "D" and self.app.store.daily("SPY")) or self.app.store.weekly("SPY"), period=self.period, daily_style=self.daily_style,
-                         earnings_dates=self.earnings_dates)
+                         earnings_dates=self.earnings_dates, zanger=self.zanger and self.period == "W")
 
     def plan(self):
         st = self.app.store
@@ -1077,7 +1160,7 @@ class ChartWindow(tk.Toplevel):
         i = int((e.x - g["x0"]) / self.geom["step"])
         if not 0 <= i < self.geom["n"]:
             return
-        self.cv.create_line(e.x, g["rs"][0], e.x, g["macd"][1], fill="#3a4654", tags="tip")
+        self.cv.create_line(e.x, (g["rs"] or g["price"])[0], e.x, g["macd"][1], fill="#3a4654", tags="tip")
         index = self.geom["i0"] + i
         lines = [s for s in info_lines(data, index) if s]
         if self.period in ("D", "W"):

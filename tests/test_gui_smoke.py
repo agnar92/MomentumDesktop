@@ -665,3 +665,22 @@ def test_rs_markers_deepvue():
     rs = [1.0, 1.0, 1.0, 1.2, 1.3]
     highs = [10, 10, 10, 11, 9]
     assert A_chart.rs_markers(rs, highs, 3) == {3: True, 4: False}
+
+
+def test_zanger_view_draws_patterns_and_hides_indicators(app):
+    from desktop import calc as C
+    w = app.store.weekly("AAA")
+    row = app.store.row("AAA")
+    row["patterns"] = [{"name": "Flat Base", "state": "BUDUJE SIĘ", "buy": w["c"][-1] * 1.02, "pct": -2.0, "start": w["d"][-10], "end": w["d"][-1], "vol_x": None, "note": "",
+                        "shapes": [{"kind": "box", "d1": w["d"][-10], "d2": w["d"][-1], "lo": w["c"][-1] * 0.95, "hi": w["c"][-1] * 1.02}]}]
+    row["parabola"] = {"exit": w["c"][-1] * 0.9, "shapes": [{"kind": "curve", "d1": w["d"][-20], "pts": [[w["d"][-20 + k], w["c"][-1] * (0.8 + 0.01 * k)] for k in range(20)]}], "note": "x"}
+    app.open_chart("AAA")
+    ch = app.chart
+    ch.update()
+    ch.toggle_zanger()
+    ch.update()
+    texts = [ch.cv.itemcget(i, "text") for i in ch.cv.find_all() if ch.cv.type(i) == "text"]
+    assert ch.zanger and any("kupno >" in t and "Flat Base" in t for t in texts) and any(t.startswith("PARABOLA") for t in texts)
+    assert not any(t.startswith("MACD") or t.startswith("Przychody") for t in texts) and ch.geom["g"]["rs"] is None
+    ch.toggle_period("D")
+    assert not ch.zanger and C.PATTERN_NAMES

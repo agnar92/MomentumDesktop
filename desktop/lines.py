@@ -160,7 +160,8 @@ def position_status(plan, row, exit_method="MACD"):
     if pl.get("half"):
         out.append("SPRZEDAJ ½ (−20 % od szczytu)")
     if r.get("parabola"):
-        out.append("⚠ PARABOLA: wyjście przy zamknięciu tygodnia pod SMA 10")
+        out.append("⚠ PARABOLA: złamana najbardziej stroma linia — sprzedaż" if r["parabola"].get("state") == "ZŁAMANA"
+                   else "⚠ PARABOLA: wyjście przy zamknięciu tygodnia pod najbardziej stromą linią")
     if r.get("slow"):
         out.append("⚠ hamuje" + (" + marża brutto" if r["slow"] == "HAMUJE+MB" else ""))
     return out

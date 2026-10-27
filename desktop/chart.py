@@ -503,6 +503,8 @@ def draw_patterns(cv, row, dates, xf, yf, g, step, pmin, pmax):
                 a, b = px(sh["d1"]), px(sh["d2"])
                 if a is not None and b is not None:
                     cv.create_line(a, yf(sh["p1"]), b, yf(sh["p2"]), fill=col, width=2)
+                    if sh.get("label"):   # numer linii (1, 2, 3) przy lewym końcu, jak na schemacie Zangera
+                        boxed(cv, a + 4, yf(sh["p1"]) + 10, sh["label"], col, font=("Segoe UI", 9, "bold"))
 
     used = []
     for p in (row or {}).get("patterns") or []:
@@ -525,7 +527,8 @@ def draw_patterns(cv, row, dates, xf, yf, g, step, pmin, pmax):
         if pmin < para["exit"] < pmax:
             y = yf(para["exit"])
             cv.create_line(x0, y, x1, y, fill=PARABOLA_COLOR, dash=(2, 3))
-            boxed(cv, x0 + 4, y + 9, f"PARABOLA · wyjście: zamknięcie tyg. pod SMA 10 {fmt(para['exit'])}", PARABOLA_COLOR)
+            boxed(cv, x0 + 4, y + 9, ("PARABOLA · ZŁAMANA najbardziej stroma linia — sprzedaż" + (f" · wol. {para['vol_x']:.1f}×" if para.get("vol_x") else "")
+                                      if para.get("state") == "ZŁAMANA" else f"PARABOLA · wyjście: zamknięcie tyg. pod linią 3 ({fmt(para['exit'])})"), PARABOLA_COLOR)
 
 
 def rs_line(closes, spx_closes):

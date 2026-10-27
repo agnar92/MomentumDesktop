@@ -420,8 +420,7 @@ PATTERN_NAMES = ("Cup & Handle", "Flat Base", "Ascending Triangle", "Flaga/Propo
 CUP_DEPTH, CUP_WEEKS, HANDLE_WEEKS = (0.20, 0.35), (8, 30), (1, 3)
 BREAKOUT_MAX_PCT = 10.0   # wybicie dalej niż 10 % nad punktem kupna nie jest już podpowiedzią
 PATTERN_LOOKBACK = 4      # wzorzec musi kończyć się w jednym z tylu ostatnich tygodni
-PARABOLA_MIN_GAIN = 1.0   # Parabolic Curve: min. +100 % w oknie
-PARABOLA_MIN_R2 = 0.9
+PARABOLA_MIN_GAIN = 1.0   # Parabolic Curve: min. +100 % od początku najflatszej linii
 
 
 def _finish(name, buy, e, w, shapes, note):
@@ -559,53 +558,73 @@ def find_patterns(w):
     return sorted(out, key=lambda x: (x["state"] != "WYBICIE", PATTERN_NAMES.index(x["name"])))
 
 
-def parabola(w, lo_n=12, hi_n=30):
-    """Parabolic Curve (koniec dużego wzrostu → ostrzeżenie przy wyjściu): log-cena w ostatnich 12–30 tygodniach pasuje do paraboli wypukłej w górę
-    (R² ≥ 0,9, przyspieszenie > 0), zysk ≥ +100 %, cena powyżej SMA 10. -> {n, gain, r2, shapes, note} albo None."""
-    c, d = (w or {}).get("c") or [], (w or {}).get("d") or []
-    if len(c) < hi_n + 10 or not all(_ok(x) and x > 0 for x in c[-hi_n:]):
-        return None
-    s10 = sma(c, 10)
-    if s10[-1] is None or c[-1] < s10[-1]:
-        return None
-    best = None
-    for n in range(lo_n, hi_n + 1):
-        y = [math.log(x) for x in c[-n:]]
-        t = list(range(n))
-        coef = _polyfit2(t, y)
-        if not coef or coef[2] <= 0 or c[-1] / c[-n] - 1 < PARABOLA_MIN_GAIN:
-            continue
-        mean = sum(y) / n
-        ss_tot = sum((v - mean) ** 2 for v in y)
-        ss_res = sum((v - (coef[0] + coef[1] * k + coef[2] * k * k)) ** 2 for k, v in zip(t, y))
-        r2 = 1 - ss_res / ss_tot if ss_tot else 0
-        if r2 >= PARABOLA_MIN_R2 and (best is None or n > best[0]):
-            best = (n, r2, coef)
-    if not best:
-        return None
-    n, r2, coef = best
-    curve = [[d[len(c) - n + k], round(math.exp(coef[0] + coef[1] * k + coef[2] * k * k), 4)] for k in range(n)]
-    gain = (c[-1] / c[-n] - 1) * 100
-    return {"n": n, "gain": round(gain, 1), "r2": round(r2, 3), "shapes": [{"kind": "curve", "d1": curve[0][0], "pts": curve}],
-            "note": f"+{gain:.0f} % w {n} tyg., przyspieszający wzrost (R² {r2:.2f}); wyjście: zamknięcie tygodnia pod SMA 10 {s10[-1]:.2f}", "exit": round(s10[-1], 4)}
+def _support_lines(lo, start, end):
+    """Rosnące linie podparcia przez pary dołków (pivotów) tygodniowych Low w [start, end]: wszystkie Low między kotwicami a `end` leżą nad linią
+    (tolerancja 2 %). -> [{a, b, slope (log/tydz.), touches}] — kotwice a < b, linia przedłużona do `end`."""
+    piv = [i for i in range(start + 2, end - 1) if lo[i] == min(lo[i - 2:i + 3])]
+    out = []
+    for x, a in enumerate(piv):
+        for b in piv[x + 1:]:
+            if b - a < 4:
+                continue
+            slope = (math.log(lo[b]) - math.log(lo[a])) / (b - a)
+            if slope <= 0:
+                continue
+            if all(math.log(lo[k]) >= math.log(lo[a]) + slope * (k - a) - 0.02 for k in range(a, end + 1)):
+                touches = sum(1 for q in piv if q >= a and abs(math.log(lo[q]) - (math.log(lo[a]) + slope * (q - a))) <= 0.03)
+                out.append({"a": a, "b": b, "slope": slope, "touches": touches})
+    return out
 
 
-def _polyfit2(x, y):
-    """Najmniejsze kwadraty y ≈ a + b·x + c·x² (równania normalne, bez numpy) -> (a, b, c) albo None."""
-    n = len(x)
-    s = [sum(xi ** k for xi in x) for k in range(5)]
-    t = [sum(yi * xi ** k for xi, yi in zip(x, y)) for k in range(3)]
-    m = [[s[0], s[1], s[2], t[0]], [s[1], s[2], s[3], t[1]], [s[2], s[3], s[4], t[2]]]
-    for i in range(3):
-        piv = max(range(i, 3), key=lambda r: abs(m[r][i]))
-        if abs(m[piv][i]) < 1e-12 or n < 3:
-            return None
-        m[i], m[piv] = m[piv], m[i]
-        for r in range(3):
-            if r != i:
-                f = m[r][i] / m[i][i]
-                m[r] = [a - f * b for a, b in zip(m[r], m[i])]
-    return tuple(m[i][3] / m[i][i] for i in range(3))
+PARABOLA_WEEKS, PARABOLA_MIN_LINES, PARABOLA_STEEPER = 60, 3, 1.15
+
+
+def parabola(w):
+    """Parabolic Curve (chartpattern.com: „schodkowa formacja” kilku baz, każda wyżej i bardziej stroma; ≥ +100 %; sprzedaż po złamaniu NAJBARDZIEJ stromej
+    linii, na dużym wolumenie). Szukam łańcucha 3 rosnących linii podparcia na tygodniowych Low z nachyleniem rosnącym o ≥ 15 % i kotwicami coraz późniejszymi.
+    Ostrzeżenie przy wyjściu, nie sygnał kupna: stan TRWA (poziom wyjścia = najbardziej stroma linia dziś) albo ZŁAMANA (zamknięcie tygodnia pod nią w ostatnich 3 tyg.).
+    -> {state, n, gain, exit, broken, vol_x, lines: [{d1, p1, d2, p2}], shapes, note} albo None. Progi to przybliżenie opisu (strona nie podaje liczb)."""
+    c, h, lo, v, d = (w or {}).get("c") or [], (w or {}).get("h") or [], (w or {}).get("l") or [], (w or {}).get("v") or [], (w or {}).get("d") or []
+    n = len(c)
+    if n < 40 or not all(_ok(x) and x > 0 for x in c[-PARABOLA_WEEKS:] + lo[-PARABOLA_WEEKS:]):
+        return None
+    start = max(0, n - PARABOLA_WEEKS)
+    cand = [ln for ln in _support_lines(lo[:n - 1], start, n - 2)]   # podparcie liczone do przedostatniego tygodnia; ostatni tydzień to test złamania
+    if not cand:
+        return None
+
+    def at(ln, i):
+        return math.exp(math.log(lo[ln["a"]]) + ln["slope"] * (i - ln["a"]))
+    live = [ln for ln in cand if ln["b"] >= n - 22]            # najbardziej stroma musi być świeża (kotwica w ostatnich ~5 miesiącach)
+    if not live:
+        return None
+    chain = [max(live, key=lambda ln: ln["slope"])]
+    while len(chain) < 3:
+        prev = chain[0]
+        pool = [ln for ln in cand if ln["a"] < prev["a"] and ln["slope"] * PARABOLA_STEEPER <= prev["slope"]]
+        if not pool:
+            break
+        chain.insert(0, max(pool, key=lambda ln: (ln["touches"], ln["slope"])))
+    if len(chain) < PARABOLA_MIN_LINES:
+        return None
+    steep = chain[-1]
+    gain = (max(h[chain[0]["a"]:]) / lo[chain[0]["a"]] - 1) * 100
+    if gain < PARABOLA_MIN_GAIN * 100:
+        return None
+    broken = next((i for i in range(n - 3, n) if c[i] < at(steep, i)), None)
+    if broken is None and c[-1] < max(h[-52:]) * 0.85:       # ani złamana, ani blisko szczytu -> to już nie jest końcówka wzrostu
+        return None
+    base_v = [x for x in v[(broken or n) - 10:(broken or n)] if _ok(x)]
+    volx = round(v[broken] / (sum(base_v) / len(base_v)), 2) if broken is not None and base_v and _ok(v[broken]) and sum(base_v) > 0 else None
+    lines = [{"d1": d[ln["a"]], "p1": round(lo[ln["a"]], 4), "d2": d[n - 1], "p2": round(at(ln, n - 1), 4)} for ln in chain]
+    shapes = [{"kind": "line", "d1": ln["d1"], "d2": ln["d2"], "p1": ln["p1"], "p2": ln["p2"], "label": str(k + 1)} for k, ln in enumerate(lines)]
+    exit_lvl = lines[-1]["p2"]
+    state = "ZŁAMANA" if broken is not None else "TRWA"
+    note = (f"{len(chain)} rosnące linie (każda bardziej stroma), +{gain:.0f} % od początku; " +
+            (f"ZŁAMANA najbardziej stroma linia ({d[broken]}" + (f", wolumen {volx:.1f}×" if volx is not None else "") + ") — sprzedaż"
+             if broken is not None else f"wyjście: zamknięcie tygodnia pod najbardziej stromą linią {exit_lvl:.2f}"))
+    return {"state": state, "n": len(chain), "gain": round(gain, 1), "exit": exit_lvl, "broken": d[broken] if broken is not None else None, "vol_x": volx,
+            "lines": lines, "shapes": shapes, "note": note}
 
 
 def build_row(base, weekly, months, fund, spy=None, est=None, conditions=None):

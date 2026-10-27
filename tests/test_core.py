@@ -611,15 +611,28 @@ def test_flat_base_flag_and_parabola():
     flag = [50 + i * 0.5 for i in range(32)] + [66, 72, 80, 88, 94] + [91, 90, 90.5]   # drążek ok. +40 % i pauza
     fp = calc.find_patterns(_weekly(flag, [1e6] * 32 + [3e6] * 5 + [8e5] * 3))
     assert any(p["name"] == "Flaga/Proporzec" for p in fp)
-    para = [20 * math.exp(0.004 * i + 0.0009 * i * i) for i in range(45)]
-    r = calc.parabola(_weekly(para))
-    assert r and r["gain"] >= 100 and r["r2"] >= 0.9 and r["exit"] > 0
-    assert calc.parabola(_weekly([20 * 1.01 ** i for i in range(45)])) is None   # wzrost liniowy (w skali log.) nie jest parabolą
+
+
+def _steps(n=60, c2=0.0004, amp=0.08):
+    """Schodkowy, przyspieszający wzrost: wypukła krzywa (log) z oscylacją co 7 tyg. — dołki leżą na coraz bardziej stromych liniach."""
+    return [20 * math.exp(0.004 * i + c2 * i * i) * (1 + amp * math.sin(2 * math.pi * i / 7)) for i in range(n)]
+
+
+def test_parabolic_curve_needs_three_steepening_lines_and_flags_the_break():
+    r = calc.parabola(_weekly(_steps()))
+    assert r and r["state"] == "TRWA" and r["n"] == 3 and r["gain"] >= 100 and r["exit"] > 0
+    assert [ln["p2"] for ln in r["lines"]] == sorted(ln["p2"] for ln in r["lines"])                       # każda następna linia kończy wyżej
+    assert calc.parabola(_weekly([20 * 1.02 ** i * (1 + 0.08 * math.sin(2 * math.pi * i / 7)) for i in range(60)])) is None   # stałe tempo = jedna linia, nie parabola
+    c = _steps(58) + [_steps(58)[-1] * 0.8, _steps(58)[-1] * 0.7]                                                  # załamanie pod najbardziej stromą linią
+    broken = calc.parabola(_weekly(c, [1e6] * 59 + [4e6]))
+    assert broken and broken["state"] == "ZŁAMANA" and broken["broken"] and broken["vol_x"] == 4.0
 
 
 def test_build_row_carries_patterns_and_position_status_warns_on_parabola():
     from desktop import lines
-    para = [20 * math.exp(0.004 * i + 0.0009 * i * i) for i in range(60)]
+    para = _steps()
     row = calc.build_row({"ticker": "P"}, _weekly(para), [], None)
     assert row["parabola"] and "patterns" in row and "pattern" in row
     assert any("PARABOLA" in m for m in lines.position_status({"last": para[-1]}, row))
+    row["parabola"]["state"] = "ZŁAMANA"
+    assert any("złamana" in m for m in lines.position_status({"last": para[-1]}, row))

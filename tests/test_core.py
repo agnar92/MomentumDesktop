@@ -369,6 +369,7 @@ def test_weekly_fetches_only_recent_weeks_for_cached(monkeypatch):
 
 def test_sync_run_with_fake_sources(tmp_path):
     store = Store(tmp_path)
+    store.select("Bezpieczny (backtest)")
     w = W
 
     def monthly(ts, cache, log, progress=None):
@@ -395,7 +396,7 @@ def test_sync_run_with_fake_sources(tmp_path):
 def test_scanners_have_own_lists_and_share_weekly(tmp_path):
     store = Store(tmp_path)
     names = [x["name"] for x in store.settings["scanners"]]
-    assert names[0] == "Bezpieczny (backtest)" and store.settings["scanner"] == names[0] and len(names) == 4
+    assert names[0] == "Sektory top 3 (RS)" and store.settings["scanner"] == names[0] and names[1] == "Bezpieczny (backtest)" and len(names) == 5
     w = {"d": ["2026-01-05"] * 40, "o": [1] * 40, "h": [1] * 40, "l": [1] * 40, "c": [100.0] * 40, "v": [5e6] * 40}
     store.save_scan([{"ticker": "A"}], {"A": w}, "x")
     store.select(names[1])
@@ -528,3 +529,56 @@ def test_store_migrates_cc250(tmp_path):
     st = Store(tmp_path)
     a, b = st.rows
     assert a["cc52w"] == 1.4 and "cc250" not in a and "rs_rating" not in a and "rs_rating" not in b
+
+
+def _etf(mult):
+    """ETF rosnący szybciej niż SPY (stały): 60 tygodni."""
+    return {**SPY, "c": [100.0 * (1 + 0.01 * mult) ** i for i in range(60)]}
+
+
+def test_sector_rs_ranks_and_picks_only_positive_top():
+    d = [(dt.date(2025, 1, 6) + dt.timedelta(weeks=i)).isoformat() for i in range(60)]
+    spy = {"d": d, "c": [100.0] * 60}
+    sectors = {"XLK": {"d": d, "c": [100.0 * 1.01 ** i for i in range(60)]}, "XLE": {"d": d, "c": [100.0 * 1.005 ** i for i in range(60)]},
+               "XLU": {"d": d, "c": [100.0 * 0.99 ** i for i in range(60)]}}
+    ranked = calc.sector_rs(sectors, spy)
+    assert [x["etf"] for x in ranked] == ["XLK", "XLE", "XLU"] and ranked[0]["pct"] > ranked[1]["pct"] > 0 > ranked[2]["pct"]
+    assert [x["etf"] for x in calc.top_sectors(ranked, 3)] == ["XLK", "XLE"]
+    assert calc.sector_filter("sh_price_o15", ranked[0]) == "sec_technology,sh_price_o15"
+
+
+def test_eps_rating_is_percentile_of_raw_score():
+    days = [(dt.date(2022, 1, 15) + dt.timedelta(days=91 * i)).isoformat() for i in range(16)]
+    grow = [[d, 1.0 + 0.3 * i] for i, d in enumerate(days)]
+    flat = [[d, 1.0] for d in days]
+    f = calc.eps_features(grow)
+    assert f and f["raw"] > calc.eps_features(flat)["raw"]
+    assert calc.eps_features([]) is None
+    rows = [{"eps_raw": 10}, {"eps_raw": 50}, {"eps_raw": 90}, {"eps_raw": None}]
+    calc.assign_eps_rating(rows)
+    assert rows[0]["eps_rating"] < rows[1]["eps_rating"] < rows[2]["eps_rating"] and rows[3]["eps_rating"] is None
+    assert all(1 <= r["eps_rating"] <= 99 for r in rows[:3])
+
+
+def test_sync_sector_scanner_runs_one_query_per_top_sector(tmp_path):
+    store = Store(tmp_path)
+    assert store.scanner.get("top_sectors") == 3
+    queries = []
+
+    def fetch(f, max_tickers, log, progress):
+        queries.append(f)
+        return [{"ticker": "A", "sector": "Technology"}], 1
+
+    def weekly(ts, log, cache, progress):
+        out = {t: _etf(1.0) for t in ts}
+        out["SPY"] = {**SPY, "c": [100.0] * 60}
+        out["A"] = W
+        return out
+
+    def monthly(ts, cache, log, progress=None):
+        for t in ts:
+            cache[t] = {"h": [["2025-01", 50], ["2025-02", 100], ["2025-03", 90], ["2025-04", 90], ["2025-05", 90]], "upto": "2025-05", "raw": 1}
+    rows = sync.run(store, log=lambda s: None, fetch_list=fetch, weekly=weekly, monthly=monthly,
+                    fund=lambda ts, cache, ua, log, progress=None: None, est=lambda ts, cache, log: None, daily=lambda ts, log, **kw: {})
+    assert len(queries) == 3 and all(q.startswith("sec_") and "sh_price_o15" in q for q in queries)
+    assert [r["ticker"] for r in rows] == ["A"] and Store(tmp_path).sectors and sum(x["selected"] for x in Store(tmp_path).sectors) == 3

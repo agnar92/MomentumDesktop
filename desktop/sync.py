@@ -25,6 +25,31 @@ def stage_progress(progress, k):
     return f
 
 
+def sector_scan(store, sc, log, fetch_list, weekly, progress):
+    """Skaner sektorowy: RS sektorów (ETF / SPY nad SMA 52 tyg.) -> N najsilniejszych -> po jednym zapytaniu Finviz na sektor (sektor + wspólny filtr).
+    -> (lista spółek bez powtórzeń, suma z Finviz, ranking sektorów [{etf, sector, pct, selected}])."""
+    etfs = [e for e, _, _ in calc.SECTOR_ETFS]
+    ser = weekly(etfs + [BENCH], log=log, cache=store.series, progress=None)
+    ranked = calc.sector_rs({e: ser[e] for e in etfs if e in ser}, ser.get(BENCH) or {})
+    top = calc.top_sectors(ranked, int(sc["top_sectors"]))
+    names = {x["etf"] for x in top}
+    log("Sektory (RS = ETF / SPY, % nad SMA 52 tyg.): " + ", ".join(f"{x['etf']} {x['pct']:+.1f} %" + (" ✓" if x["etf"] in names else "") for x in ranked))
+    if not top:
+        raise RuntimeError("Żaden sektor nie ma RS nad SMA 52 tyg. (albo brak danych ETF) — lista bez zmian.")
+    rows, seen, total = [], set(), 0
+    for k, sector in enumerate(top):
+        flt = calc.sector_filter(sc["filters"], sector)
+        log(f"Finviz [{sector['sector']}]: filtr {flt}")
+        part, tot = fetch_list(flt, max_tickers=sc["max_tickers"], log=log, progress=None)
+        total += tot or len(part)
+        for r in part:
+            if r["ticker"] not in seen:
+                seen.add(r["ticker"])
+                rows.append({**r, "sector": r.get("sector") or sector["sector"]})
+    info = [{"etf": x["etf"], "sector": x["sector"], "pct": round(x["pct"], 2), "selected": x["etf"] in names} for x in ranked]
+    return rows, total, info
+
+
 def cached_symbol(sym, store):
     """Buduje wiersz dla tickera, którego świece są już w lokalnym cache; nie wykonuje zapytań sieciowych."""
     w = store.weekly(sym)
@@ -34,10 +59,11 @@ def cached_symbol(sym, store):
     mcache, scache, ecache = store.cache("monthly"), store.cache("sec"), store.cache("estimates")
     spy = w if sym == BENCH else (store.series.get(BENCH) or (store.extra.get(BENCH) or (None, None))[1])
     existing = store.row(sym) or {}
-    base = {k: existing[k] for k in ("ticker", "company", "sector", "market_cap", "peg", "forward_pe", "dividend_yield") if k in existing}
+    base = {k: existing[k] for k in ("ticker", "company", "sector", "sector_rs", "market_cap", "peg", "forward_pe", "dividend_yield") if k in existing}
     base["ticker"] = sym
     row = calc.build_row(base, w, prices.monthly_highs(mcache.get(sym)), scache.get(sym), spy, ecache.get(sym),
                          conditions=store.settings.get("strategy_conditions"))
+    calc.assign_eps_rating([row], pool=store.rows)
 
     for key in ("rvol_d", "cc52w", "bdot"):
         if key in existing:
@@ -77,10 +103,11 @@ def symbol(sym, store, log=print, weekly=prices.weekly, monthly=prices.monthly, 
     store.save_cache("estimates", ecache)
     spy = w if sym == BENCH else (store.series.get(BENCH) or (store.extra.get(BENCH) or (None, None))[1])
     existing = store.row(sym) or {}
-    base = {k: existing[k] for k in ("ticker", "company", "sector", "market_cap", "peg", "forward_pe", "dividend_yield") if k in existing}
+    base = {k: existing[k] for k in ("ticker", "company", "sector", "sector_rs", "market_cap", "peg", "forward_pe", "dividend_yield") if k in existing}
     base["ticker"] = sym
     row = calc.build_row(base, w, prices.monthly_highs(mcache.get(sym)), scache.get(sym), spy, ecache.get(sym),
                          conditions=store.settings.get("strategy_conditions"))
+    calc.assign_eps_rating([row], pool=store.rows)
     # W przypadku symbolu otwartego przez Ctrl+Space zachowaj pola wyliczane ze świec dziennych,
     # dopóki odświeżenie dzienne nie dostarczy nowej serii.
     for key in ("rvol_d", "cc52w", "bdot"):
@@ -93,8 +120,14 @@ def symbol(sym, store, log=print, weekly=prices.weekly, monthly=prices.monthly, 
 def run(store, log=print, fetch_list=finviz.fetch, weekly=prices.weekly, monthly=prices.monthly, fund=sec.update, now=None, progress=None, daily=prices.daily,
         est=estimates.update):
     sc = store.scanner
-    log(f"Finviz [{sc['name']}]: filtr {sc['filters']}")
-    base, total = fetch_list(sc["filters"], max_tickers=sc["max_tickers"], log=log, progress=stage_progress(progress, 0))
+    sectors = None
+    if sc.get("top_sectors"):
+        fp = stage_progress(progress, 0)
+        base, total, sectors = sector_scan(store, sc, log, fetch_list, weekly, None)
+        fp(1, 1)
+    else:
+        log(f"Finviz [{sc['name']}]: filtr {sc['filters']}")
+        base, total = fetch_list(sc["filters"], max_tickers=sc["max_tickers"], log=log, progress=stage_progress(progress, 0))
     if not base:
         raise RuntimeError("Finviz nie zwrócił spółek (blokada albo zły filtr) — lista bez zmian.")
     tickers = [r["ticker"] for r in base]
@@ -142,8 +175,12 @@ def run(store, log=print, fetch_list=finviz.fetch, weekly=prices.weekly, monthly
             r["glb_state"], r["bdot"] = "BLUE DOT", bd
     for t, r in tracked_rows.items():
         store.extra[t] = (r, series[t])
-    keep = {r["ticker"] for r in rows} | set(tracked_rows) | {BENCH}
-    store.save_scan(rows, {t: s for t, s in series.items() if t in keep}, (now or dt.datetime.now()).isoformat(timespec="minutes"))
+    by_sector = {x["sector"]: x["pct"] for x in sectors or []}
+    for r in rows + list(tracked_rows.values()):
+        r["sector_rs"] = by_sector.get(r.get("sector"))   # RS sektora spółki (% nad SMA 52 tyg.) — tylko w skanerze sektorowym
+    calc.assign_eps_rating(rows + list(tracked_rows.values()))   # EPS Rating 1–99: percentyl wśród spółek tej listy
+    keep = {r["ticker"] for r in rows} | set(tracked_rows) | {BENCH} | ({e for e, _, _ in calc.SECTOR_ETFS} if sectors else set())
+    store.save_scan(rows, {t: s for t, s in series.items() if t in keep}, (now or dt.datetime.now()).isoformat(timespec="minutes"), sectors=sectors)
     ok = sum(1 for r in rows if r["ok"])
     sig = sum(1 for r in rows if r["ok"] and r["glb_state"] in ("SYGNAŁ", "WYBICIE"))
     if progress:

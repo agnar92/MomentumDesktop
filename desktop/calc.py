@@ -416,22 +416,25 @@ def assign_eps_rating(rows, pool=None):
 # ok. 5 % pod starym szczytem, kupno przy wyjściu nad górę uchwytu); reszta jest opisana słownie, więc progi poniżej to PRZYBLIŻENIE tych opisów
 # (nie testowane na historii jako strategia). Wzorzec jest „aktywny”, gdy kończy się w ostatnich tygodniach: budowany (cena pod punktem kupna)
 # albo świeże wybicie (do 10 % nad nim). Parabolic Curve to wzorzec końca trendu — służy do wyjścia, nie do kupna.
-PATTERN_NAMES = ("Cup & Handle", "Flat Base", "Ascending Triangle", "Flaga/Proporzec")
+PATTERN_NAMES = ("Cup & Handle", "Flat Base", "Ascending Triangle", "Flaga/Proporzec", "Channel", "Symmetrical Triangle", "Descending Triangle", "Falling Wedge", "Inverted H&S")
+SELL_PATTERNS = ("Head & Shoulders", "Rising Wedge")   # wzorce niedźwiedzie: ostrzeżenie / wyjście, nie kupno
 CUP_DEPTH, CUP_WEEKS, HANDLE_WEEKS = (0.20, 0.35), (8, 30), (1, 3)
 BREAKOUT_MAX_PCT = 10.0   # wybicie dalej niż 10 % nad punktem kupna nie jest już podpowiedzią
 PATTERN_LOOKBACK = 4      # wzorzec musi kończyć się w jednym z tylu ostatnich tygodni
 PARABOLA_MIN_GAIN = 1.0   # Parabolic Curve: min. +100 % od początku najflatszej linii
 
 
-def _finish(name, buy, e, w, shapes, note):
-    """Stan wzorca kończącego się w tygodniu e: BUDUJE SIĘ (cena pod punktem kupna) albo WYBICIE (do BREAKOUT_MAX_PCT nad nim); inaczej None."""
+def _finish(name, buy, e, w, shapes, note, first_buy=None, near_high=0.85):
+    """Stan wzorca kończącego się w tygodniu e: BUDUJE SIĘ (cena pod punktem kupna) albo WYBICIE (do BREAKOUT_MAX_PCT nad nim); inaczej None.
+    buy = poziom kupna dziś (dla linii skośnej: wartość linii w ostatnim tygodniu), first_buy = poziom w pierwszym tygodniu po wzorcu."""
     c, v = w["c"], w.get("v") or []
     post = c[e + 1:]
     last = c[-1]
+    fb = buy if first_buy is None else first_buy
     if len(post) > PATTERN_LOOKBACK - 1 or any(not _ok(x) for x in post):
         return None
     if post:
-        if post[0] <= buy or last <= buy:   # wybicie musi trwać do dziś
+        if post[0] <= fb or last <= buy:   # wybicie musi trwać do dziś
             return None
         state = "WYBICIE"
         base_v = [x for x in v[e - 9:e + 1] if _ok(x)]
@@ -441,10 +444,10 @@ def _finish(name, buy, e, w, shapes, note):
     pct = (last / buy - 1) * 100
     if pct > BREAKOUT_MAX_PCT or pct < -8:
         return None
-    if last < max(w['h'][-52:]) * 0.85:   # liderzy: cena w 15 % od maksimum 52 tyg.
+    if last < max(w['h'][-52:]) * near_high:   # liderzy: cena w 15 % od maksimum 52 tyg. (odwrócenia: 30 %)
         return None
     d = w["d"]
-    return {"name": name, "state": state, "buy": round(buy, 4), "pct": round(pct, 2), "start": shapes[0]["d1"], "end": d[e], "vol_x": None if volx is None else round(volx, 2),
+    return {"name": name, "side": "buy", "state": state, "buy": round(buy, 4), "pct": round(pct, 2), "start": shapes[0]["d1"], "end": d[e], "vol_x": None if volx is None else round(volx, 2),
             "shapes": shapes, "note": note}
 
 
@@ -519,6 +522,7 @@ def _flat_or_triangle(w, e, triangle):
 
 def _flag(w, e):
     h, lo, v, d = w["h"], w["l"], w.get("v") or [], w["d"]
+    n = len(w["c"])
     for f in range(2, 7):
         t = e - f                                    # szczyt drążka
         if t < 6:
@@ -536,26 +540,185 @@ def _flag(w, e):
             if pole_v and flag_v and sum(flag_v) / len(flag_v) >= sum(pole_v) / len(pole_v):   # wolumen kurczy się w pauzie
                 continue
             shapes = [{"kind": "line", "d1": d[t - p], "d2": d[t], "p1": pole_lo, "p2": h[t]}, {"kind": "box", "d1": d[t + 1], "d2": d[e], "lo": bot_f, "hi": top_f}]
-            res = _finish("Flaga/Proporzec", top_f, e, w, shapes, f"drążek +{(h[t] / pole_lo - 1) * 100:.0f} % w {p} tyg., pauza {f} tyg.")
+            buy, first_buy = top_f, None
+            if h[e] < h[t + 1]:   # flaga: niższe szczyty -> kupno przy przebiciu opadającej linii (strona: „as the stock goes over the descending trend line”)
+                slope = (h[e] - h[t + 1]) / (e - t - 1)
+                top_line = lambda i: h[t + 1] + slope * (i - t - 1)   # noqa: E731
+                if top_line(n - 1) > 0 and top_line(e + 1) > 0:
+                    buy, first_buy = top_line(n - 1), top_line(e + 1)
+                    shapes.append({"kind": "line", "d1": d[t + 1], "d2": d[n - 1], "p1": h[t + 1], "p2": buy})
+            kind = "proporzec" if lo[e] > lo[t + 1] else "flaga"
+            res = _finish("Flaga/Proporzec", buy, e, w, shapes, f"{kind}: drążek +{(h[t] / pole_lo - 1) * 100:.0f} % w {p} tyg., pauza {f} tyg.", first_buy=first_buy)
             if res:
                 return res
     return None
 
 
+def _pivots(vals, high, k=2):
+    """Pivoty (lokalne szczyty / dołki ±k tygodni) w całej serii."""
+    f = max if high else min
+    return [i for i in range(k, len(vals) - k) if vals[i] == f(vals[i - k:i + k + 1])]
+
+
+def _best_line(idx, lv, upper, s, e, tol=0.02):
+    """Linia (w skali log.) przez parę pivotów z [s, e]: górna — żaden szczyt do e nie leży nad nią o więcej niż tol, dolna — żaden dołek pod nią.
+    Wybór: najwięcej dotknięć, potem najdłuższy odcinek. -> {a, b, sl (log/tydz.), t (dotknięcia), p (log ceny w a)} albo None."""
+    pts = [i for i in idx if s <= i <= e]
+    best = None
+    for x, a in enumerate(pts):
+        for b in pts[x + 1:]:
+            if b - a < 3:
+                continue
+            sl = (lv[b] - lv[a]) / (b - a)
+            if upper:
+                ok = all(lv[k] <= lv[a] + sl * (k - a) + tol for k in range(a, e + 1))
+            else:
+                ok = all(lv[k] >= lv[a] + sl * (k - a) - tol for k in range(a, e + 1))
+            if not ok:
+                continue
+            t = sum(1 for q in pts if q >= a and abs(lv[q] - (lv[a] + sl * (q - a))) <= tol)
+            if best is None or (t, b - a) > (best[0], best[1]):
+                best = (t, b - a, {"a": a, "b": b, "sl": sl, "t": t, "p": lv[a]})
+    return best and best[2]
+
+
+def _at(ln, i):
+    return math.exp(ln["p"] + ln["sl"] * (i - ln["a"]))
+
+
+def _finish_sell(name, level, e, w, shapes, note, first_level=None):
+    """Wzorzec niedźwiedzi (ostrzeżenie przy wyjściu): OSTRZEŻENIE (cena do 8 % nad linią) albo ZŁAMANA (zamknięcie pod linią w ostatnich tygodniach, do 10 % pod nią)."""
+    c = w["c"]
+    post = c[e + 1:]
+    last = c[-1]
+    fl = level if first_level is None else first_level
+    if len(post) > PATTERN_LOOKBACK - 1 or last < max(w["h"][-52:]) * 0.75:
+        return None
+    state = "ZŁAMANA" if post and post[0] < fl and last < level else "OSTRZEŻENIE"
+    pct = (last / level - 1) * 100
+    if (state == "OSTRZEŻENIE" and not 0 <= pct <= 8) or (state == "ZŁAMANA" and not -10 <= pct < 0):
+        return None
+    return {"name": name, "side": "sell", "state": state, "buy": round(level, 4), "pct": round(pct, 2), "start": shapes[0].get("d1") or shapes[0].get("d"), "end": w["d"][e],
+            "vol_x": None, "shapes": shapes, "note": note}
+
+
+def _trend_patterns(w, e, ph, pl):
+    """Wzorce z dwóch linii trendu w oknie kończącym się w tygodniu e: Channel, Symmetrical Triangle, Descending Triangle, Falling Wedge (kupno przy
+    przebiciu górnej linii) i Rising Wedge (ostrzeżenie przy złamaniu dolnej). Linie z dotknięć pivotów (≥ 2 na stronę), zbieżność = zwężenie o ≥ 25 %."""
+    c, h, lo, d = w["c"], w["h"], w["l"], w["d"]
+    n_all = len(c)
+    hv, lv = w["_lh"], w["_ll"]
+    s30 = sma(c, 30)
+    found = {}
+    for n in (30, 24, 18, 14, 10):
+        s = e - n + 1
+        if s < 27:
+            continue
+        up, lw = _best_line(ph, hv, True, s, e), _best_line(pl, lv, False, s, e)
+        if not up or not lw or up["t"] < 2 or lw["t"] < 2:
+            continue
+        s0 = max(up["a"], lw["a"])
+        if e - s0 < 0.6 * n:
+            continue
+        wd0, wd1 = 1 - _at(lw, s0) / _at(up, s0), 1 - _at(lw, e) / _at(up, e)
+        if wd1 < 0.02 or wd0 < 0.08:   # zbyt wąski „klin” to zwykła ciasna konsolidacja
+            continue
+        su, sl_ = up["sl"] * 100, lw["sl"] * 100
+        flat = lambda x: abs(x) <= 0.15   # noqa: E731
+        conv = wd1 <= 0.75 * wd0
+        uptrend = s30[e] is not None and c[e] >= s30[e] and c[s - 1] >= min(c[max(0, s - 26):s]) * 1.15
+        name = side = None
+        if flat(su) and flat(sl_) and 0.10 <= wd1 <= 0.30 and wd1 >= 0.75 * wd0 and uptrend:
+            name, side = "Channel", "buy"
+        elif su < -0.15 and sl_ > 0.15 and conv and uptrend:
+            name, side = "Symmetrical Triangle", "buy"
+        elif flat(sl_) and su < -0.2 and conv and max(h[-52:]) >= min(lo[-52:]) * 1.5:
+            name, side = "Descending Triangle", "buy"
+        elif su < -0.15 and sl_ < -0.15 and su < sl_ - 0.1 and conv:
+            name, side = "Falling Wedge", "buy"
+        elif su > 0.15 and sl_ > 0.15 and sl_ > su + 0.1 and conv and uptrend:
+            name, side = "Rising Wedge", "sell"
+        if not name or name in found:
+            continue
+        upper = [{"kind": "line", "d1": d[up["a"]], "d2": d[n_all - 1], "p1": _at(up, up["a"]), "p2": _at(up, n_all - 1)}]
+        lower = [{"kind": "line", "d1": d[lw["a"]], "d2": d[n_all - 1], "p1": _at(lw, lw["a"]), "p2": _at(lw, n_all - 1)}]
+        note = f"{n} tyg., linie {su:+.2f} / {sl_:+.2f} % tygodniowo, zakres {wd1 * 100:.0f} %"
+        if side == "buy":
+            res = _finish(name, _at(up, n_all - 1), e, w, upper + lower, note, first_buy=_at(up, e + 1),
+                          near_high=0.80 if name in ("Descending Triangle", "Falling Wedge") else 0.85)
+        else:
+            res = _finish_sell(name, _at(lw, n_all - 1), e, w, upper + lower, note, first_level=_at(lw, e + 1))
+        if res:
+            found[name] = res
+    return list(found.values())
+
+
+def _hs(w, e, ph, pl, inverted):
+    """Head & Shoulders (niedźwiedzi, ostrzeżenie: złamanie linii szyi) i Inverted H&S (kupno przy przebiciu linii szyi): 3 kolejne pivoty, głowa o ≥ 5 % ponad / pod
+    oboma ramionami, ramiona w 10 % od siebie, linia szyi przez dołki (szczyty) między nimi."""
+    c, h, lo, v, d = w["c"], w["h"], w["l"], w.get("v") or [], w["d"]
+    n_all = len(c)
+    ex = pl if inverted else ph
+    val, opp = (lo, h) if inverted else (h, lo)
+    cand = [i for i in ex if e - 14 <= i <= e - 2]
+    if not cand:
+        return None
+    p3 = cand[-1]
+    prior = [i for i in ex if i < p3]
+    if len(prior) < 2:
+        return None
+    p1, p2 = prior[-2], prior[-1]
+    if p2 - p1 < 3 or p3 - p2 < 3 or p3 - p1 > 40 or p1 < 27:
+        return None
+    sh = (val[p1], val[p3])
+    if inverted:
+        if not (val[p2] <= min(sh) * 0.95 and abs(sh[0] - sh[1]) / max(sh) <= 0.10 and c[p1] <= max(c[max(0, p1 - 26):p1]) * 0.85):
+            return None
+        t1, t2 = max(range(p1, p2 + 1), key=lambda i: opp[i]), max(range(p2, p3 + 1), key=lambda i: opp[i])
+    else:
+        if not (val[p2] >= max(sh) * 1.05 and abs(sh[0] - sh[1]) / max(sh) <= 0.10 and c[p1] >= min(c[max(0, p1 - 26):p1]) * 1.15):
+            return None
+        t1, t2 = min(range(p1, p2 + 1), key=lambda i: opp[i]), min(range(p2, p3 + 1), key=lambda i: opp[i])
+    if t2 == t1:
+        return None
+    sl = (math.log(opp[t2]) - math.log(opp[t1])) / (t2 - t1)
+    neck = lambda i: math.exp(math.log(opp[t1]) + sl * (i - t1))   # noqa: E731
+    marks = [{"kind": "mark", "d": d[i], "p": val[i], "text": t, "below": inverted} for i, t in ((p1, "LS"), (p2, "H"), (p3, "RS"))]
+    shapes = [{"kind": "line", "d1": d[t1], "d2": d[n_all - 1], "p1": opp[t1], "p2": neck(n_all - 1)}] + marks
+    vol = [v[i] for i in (p1, p2, p3)] if len(v) == n_all and all(_ok(x) for x in (v[p1], v[p2], v[p3])) else None
+    vnote = (", wolumen głowy mniejszy niż lewego ramienia" if vol[1] < vol[0] else ", wolumen głowy NIE mniejszy") if vol else ""
+    note = f"{p3 - p1} tyg., głowa {abs(val[p2] / (min(sh) if inverted else max(sh)) - 1) * 100:.0f} % od ramion{vnote}"
+    if inverted:
+        return _finish("Inverted H&S", neck(n_all - 1), e, w, shapes, note, first_buy=neck(e + 1), near_high=0.70)
+    return _finish_sell("Head & Shoulders", neck(n_all - 1), e, w, shapes, note, first_level=neck(e + 1))
+
+
 def find_patterns(w):
-    """Aktywne wzorce kupna z tygodniowych świec w: [{name, state, buy, pct, start, end, vol_x, shapes, note}] (kolejność: wybicia, potem budowane)."""
-    if not w or len(w.get("c") or []) < 40 or not all(_ok(x) for x in w["c"] + w["h"] + w["l"]):
+    """Aktywne wzorce Zangera z tygodniowych świec w: [{name, side (buy / sell), state, buy (poziom: kupna albo linii szyi / dolnej), pct, start, end, vol_x, shapes, note}]
+    (kolejność: wybicia / złamania, potem budowane; wzorce kupna przed ostrzeżeniami)."""
+    if not w or len(w.get("c") or []) < 40 or not all(_ok(x) and x > 0 for x in w["c"] + w["h"] + w["l"]):
         return []
     n = len(w["c"])
+    w = {**w, "_lh": [math.log(x) for x in w["h"]], "_ll": [math.log(x) for x in w["l"]]}
+    ph, pl = _pivots(w["h"], True), _pivots(w["l"], False)
     out = []
-    for finder in (_cup, lambda w_, e_: _flat_or_triangle(w_, e_, True), lambda w_, e_: _flat_or_triangle(w_, e_, False), _flag):
+
+    def add(res):
+        if res and not any(o["name"] == res["name"] or (o["side"] == res["side"] and abs(o["buy"] / res["buy"] - 1) < 0.01) for o in out):
+            out.append(res)
+    finders = [_cup, lambda w_, e_: _flat_or_triangle(w_, e_, True), lambda w_, e_: _flat_or_triangle(w_, e_, False), _flag,
+               lambda w_, e_: _hs(w_, e_, ph, pl, True), lambda w_, e_: _hs(w_, e_, ph, pl, False)]
+    for finder in finders:
         for e in range(n - 1, n - 1 - PATTERN_LOOKBACK, -1):
             res = finder(w, e)
             if res:
-                if not any(abs(o["buy"] / res["buy"] - 1) < 0.01 for o in out):   # ta sama góra = jeden wzorzec (trójkąt ma pierwszeństwo przed bazą)
-                    out.append(res)
+                add(res)
                 break
-    return sorted(out, key=lambda x: (x["state"] != "WYBICIE", PATTERN_NAMES.index(x["name"])))
+    for e in range(n - 1, n - 1 - PATTERN_LOOKBACK, -1):
+        for res in _trend_patterns(w, e, ph, pl):
+            add(res)
+    order = PATTERN_NAMES + SELL_PATTERNS
+    return sorted(out, key=lambda x: (x["side"] == "sell", x["state"] not in ("WYBICIE", "ZŁAMANA"), order.index(x["name"])))
 
 
 def _support_lines(lo, start, end):
@@ -661,9 +824,11 @@ def build_row(base, weekly, months, fund, spy=None, est=None, conditions=None):
     row.update(eps_g2=ef.get("g2"), eps_cagr3=ef.get("cagr3"), eps_stab=ef.get("stab"), eps_raw=ef.get("raw"), eps_rating=None)   # ocena 1–99: assign_eps_rating po zbudowaniu listy
     pats = find_patterns(weekly)
     para = parabola(weekly)
-    top = pats[0] if pats else None
+    top = next((p for p in pats if p["side"] == "buy"), None)
+    warn = next((p for p in pats if p["side"] == "sell"), None)
     row.update(pattern=top["name"] if top else None, pattern_state=top["state"] if top else None, pattern_buy=top["buy"] if top else None,
-               pattern_pct=top["pct"] if top else None, patterns=pats, parabola=para)   # wzorce Zangera: kolumny + rysunek na wykresie
+               pattern_pct=top["pct"] if top else None, pattern_exit=warn["name"] if warn else ("Parabolic Curve" if para else None),
+               patterns=pats, parabola=para)   # wzorce Zangera: kolumny + rysunek na wykresie; pattern_exit = ostrzeżenie (H&S / Rising Wedge / parabola)
     row["ok"] = passes(row, conditions)
     row["slow"] = slowdown(row)
     return row

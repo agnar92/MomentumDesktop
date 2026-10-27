@@ -159,6 +159,9 @@ def position_status(plan, row, exit_method="MACD"):
         out.append("WYJŚCIE: pod stopem MACD")
     if pl.get("half"):
         out.append("SPRZEDAJ ½ (−20 % od szczytu)")
+    for p in r.get("patterns") or []:   # wzorce niedźwiedzie (Head & Shoulders, Rising Wedge): ostrzeżenie przy wyjściu
+        if p.get("side") == "sell":
+            out.append(f"⚠ {p['name']}: " + ("złamana linia — sprzedaż" if p["state"] == "ZŁAMANA" else f"uwaga na linię {p['buy']:.2f}"))
     if r.get("parabola"):
         out.append("⚠ PARABOLA: złamana najbardziej stroma linia — sprzedaż" if r["parabola"].get("state") == "ZŁAMANA"
                    else "⚠ PARABOLA: wyjście przy zamknięciu tygodnia pod najbardziej stromą linią")

@@ -598,7 +598,7 @@ def draw_rs_panel(cv, data, i0, i1, xf, g, spx, row=None, period="W"):
 
 
 def draw_lines(cv, data, tlines, sel, i0, i1, xf, yf, g, step, w):
-    """Linie trendu: odcinek + przerywane przedłużenie do ostatniego tygodnia okna; Tk nie przycina, więc tniemy do panelu ceny. -> segs (px)."""
+    """Linie trendu: odcinek + (tylko z alarmem) przerywane przedłużenie do ostatniego tygodnia okna; Tk nie przycina, więc tniemy do panelu ceny. -> segs (px)."""
     x0, x1 = g["x0"], g["x1"]
     y0, y1 = g["price"]
     segs = []
@@ -624,7 +624,7 @@ def draw_lines(cv, data, tlines, sel, i0, i1, xf, yf, g, step, w):
         if a < 0 or b < 0 or a == b:
             continue
         (ia, pa), (ib, pb) = sorted(((a, ln["p1"]), (b, ln["p2"])))
-        ie = max(ib, i1 - 1)
+        ie = max(ib, i1 - 1) if ln.get("alert") is not False else ib   # przedłużenie tylko przy włączonym alarmie (to ono jest pilnowane)
         s = {"id": ln["id"], "x1": xf(a - i0), "y1": yf(ln["p1"]), "x2": xf(b - i0), "y2": yf(ln["p2"]), "xe": xf(ie - i0), "ye": yf(L.line_at(ln, data["d"], ie))}
         segs.append(s)
         on = ln["id"] == sel
@@ -1250,7 +1250,7 @@ class ChartWindow(tk.Toplevel):
             lid = format(int(time.time() * 1000), "x")
             self.app.store.alerts["lines"][self.ticker] = self.app.store.alerts["lines"].get(self.ticker, []) + [
                 {"id": lid, "period": self.period, "d1": d, "p1": p, "d2": d, "p2": p,
-                 "alert": self.period != "D"}]
+                 "alert": False}]   # nowa linia: bez alarmu i przedłużenia — alarm użytkownik włącza sam
             self.sel, gs["mode"] = lid, "p2"
             self.tools()
         ln = self.find(self.sel)

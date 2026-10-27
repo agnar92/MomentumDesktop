@@ -412,6 +412,202 @@ def assign_eps_rating(rows, pool=None):
         r["eps_rating"] = max(1, min(99, round(1 + 98 * pct)))
 
 
+# --- Wzorce Zangera (chartpattern.com), tygodniowe świece. Strona podaje liczby tylko dla Cup & Handle (spadek 20–35 % w 8–12 tyg., uchwyt 4 dni–3 tyg.
+# ok. 5 % pod starym szczytem, kupno przy wyjściu nad górę uchwytu); reszta jest opisana słownie, więc progi poniżej to PRZYBLIŻENIE tych opisów
+# (nie testowane na historii jako strategia). Wzorzec jest „aktywny”, gdy kończy się w ostatnich tygodniach: budowany (cena pod punktem kupna)
+# albo świeże wybicie (do 10 % nad nim). Parabolic Curve to wzorzec końca trendu — służy do wyjścia, nie do kupna.
+PATTERN_NAMES = ("Cup & Handle", "Flat Base", "Ascending Triangle", "Flaga/Proporzec")
+CUP_DEPTH, CUP_WEEKS, HANDLE_WEEKS = (0.20, 0.35), (8, 30), (1, 3)
+BREAKOUT_MAX_PCT = 10.0   # wybicie dalej niż 10 % nad punktem kupna nie jest już podpowiedzią
+PATTERN_LOOKBACK = 4      # wzorzec musi kończyć się w jednym z tylu ostatnich tygodni
+PARABOLA_MIN_GAIN = 1.0   # Parabolic Curve: min. +100 % w oknie
+PARABOLA_MIN_R2 = 0.9
+
+
+def _finish(name, buy, e, w, shapes, note):
+    """Stan wzorca kończącego się w tygodniu e: BUDUJE SIĘ (cena pod punktem kupna) albo WYBICIE (do BREAKOUT_MAX_PCT nad nim); inaczej None."""
+    c, v = w["c"], w.get("v") or []
+    post = c[e + 1:]
+    last = c[-1]
+    if len(post) > PATTERN_LOOKBACK - 1 or any(not _ok(x) for x in post):
+        return None
+    if post:
+        if post[0] <= buy or last <= buy:   # wybicie musi trwać do dziś
+            return None
+        state = "WYBICIE"
+        base_v = [x for x in v[e - 9:e + 1] if _ok(x)]
+        volx = v[e + 1] / (sum(base_v) / len(base_v)) if base_v and _ok(v[e + 1]) and sum(base_v) > 0 else None
+    else:
+        state, volx = "BUDUJE SIĘ", None
+    pct = (last / buy - 1) * 100
+    if pct > BREAKOUT_MAX_PCT or pct < -8:
+        return None
+    if last < max(w['h'][-52:]) * 0.85:   # liderzy: cena w 15 % od maksimum 52 tyg.
+        return None
+    d = w["d"]
+    return {"name": name, "state": state, "buy": round(buy, 4), "pct": round(pct, 2), "start": shapes[0]["d1"], "end": d[e], "vol_x": None if volx is None else round(volx, 2),
+            "shapes": shapes, "note": note}
+
+
+def _cup(w, e):
+    c, h, lo, d = w["c"], w["h"], w["l"], w["d"]
+    for hl in range(HANDLE_WEEKS[0], HANDLE_WEEKS[1] + 1):
+        r = e - hl                                   # prawa krawędź miseczki
+        if r < CUP_WEEKS[0]:
+            continue
+        handle = range(r + 1, e + 1)
+        top_h = max(h[i] for i in handle)
+        for a in range(max(4, r - CUP_WEEKS[1]), r - CUP_WEEKS[0] + 1):   # lewy szczyt
+            hi_a = h[a]
+            if hi_a < max(h[max(0, a - 4):a + 5]) or max(h[a:r + 1]) > hi_a * 1.02 or h[r] < hi_a * 0.95 or h[r] > hi_a * 1.02:
+                continue
+            b = min(range(a, r + 1), key=lambda i: lo[i])
+            depth = 1 - lo[b] / hi_a
+            if not CUP_DEPTH[0] <= depth <= CUP_DEPTH[1] or b - a < 3 or r - b < 3:
+                continue
+            if min(lo[i] for i in handle) < hi_a * 0.90 or top_h > h[r] * 1.0001:   # uchwyt nie głębiej niż ok. 10 % pod starym szczytem
+                continue
+            run = min(c[max(0, a - 17):a] or [c[a]])
+            if c[a] < run * 1.2:                     # miseczka po silnym wzroście (2–4 miesiące)
+                continue
+            la, lb, lr = math.log(hi_a), math.log(lo[b]), math.log(h[r])
+            curve = []
+            for i in range(a, r + 1):                # parabola przez lewy szczyt, dno i prawą krawędź (skala log)
+                x = (i - a) / (r - a)
+                xb = (b - a) / (r - a)
+                y = la * (x - xb) * (x - 1) / ((0 - xb) * (0 - 1)) + lb * (x - 0) * (x - 1) / ((xb - 0) * (xb - 1)) + lr * (x - 0) * (x - xb) / ((1 - 0) * (1 - xb))
+                curve.append([d[i], round(math.exp(y), 4)])
+            shapes = [{"kind": "curve", "d1": d[a], "pts": curve},
+                      {"kind": "box", "d1": d[r + 1], "d2": d[e], "lo": min(lo[i] for i in handle), "hi": top_h}]
+            res = _finish("Cup & Handle", top_h, e, w, shapes, f"miseczka −{depth * 100:.0f} % w {r - a} tyg., uchwyt {hl} tyg.")
+            if res:
+                return res
+    return None
+
+
+def _flat_or_triangle(w, e, triangle):
+    c, h, lo, v, d = w["c"], w["h"], w["l"], w.get("v") or [], w["d"]
+    s30 = sma(c, 30)
+    if s30[e] is None or c[e] < s30[e]:
+        return None
+    for n in range(30, 7, -1):
+        s = e - n + 1
+        if s < 27:
+            continue
+        top, bottom = max(h[s:e + 1]), min(lo[s:e + 1])
+        if (top - bottom) / top > (0.25 if triangle else 0.12) or c[s - 1] < min(c[s - 27:s]) * 1.2:   # po wzroście ≥ 20 % w poprzednich 26 tyg.
+            continue
+        third = n // 3
+        lows = [min(lo[s + k * third:s + (k + 1) * third]) for k in range(3)]
+        rising = lows[0] < lows[1] < lows[2] and lows[2] >= lows[0] * 1.05
+        if triangle:
+            touches = [i for i in range(s, e + 1) if h[i] >= top * 0.98]
+            if not rising or len(touches) < 3 or touches[-1] - touches[0] < 4 or lows[2] > top * 0.97:
+                continue
+        elif rising:
+            continue
+        else:
+            pre = [x for x in v[s - 10:s] if _ok(x)]
+            inside = [x for x in v[s + n // 2:e + 1] if _ok(x)]
+            if pre and inside and sum(inside) / len(inside) >= sum(pre) / len(pre):   # wolumen ma wysychać
+                continue
+        shapes = [{"kind": "box", "d1": d[s], "d2": d[e], "lo": bottom, "hi": top}] if not triangle else [
+            {"kind": "line", "d1": d[s], "d2": d[e], "p1": top, "p2": top},
+            {"kind": "line", "d1": d[s + third // 2], "d2": d[e], "p1": lows[0], "p2": lows[2]}]
+        return _finish("Ascending Triangle" if triangle else "Flat Base", top, e, w, shapes, f"{n} tyg., zakres {(top - bottom) / top * 100:.0f} %")
+    return None
+
+
+def _flag(w, e):
+    h, lo, v, d = w["h"], w["l"], w.get("v") or [], w["d"]
+    for f in range(2, 7):
+        t = e - f                                    # szczyt drążka
+        if t < 6:
+            continue
+        for p in range(1, 6):
+            pole_lo = min(lo[max(0, t - p):t + 1])
+            if h[t] < pole_lo * 1.25 or h[t] < max(h[max(0, t - 4):t + 5]) * 0.999:
+                continue
+            flag = range(t + 1, e + 1)
+            top_f, bot_f = max(h[i] for i in flag), min(lo[i] for i in flag)
+            if top_f > h[t] or bot_f < h[t] - 0.5 * (h[t] - pole_lo) or bot_f < h[t] * 0.80:
+                continue
+            pole_v = [x for x in v[max(0, t - p):t + 1] if _ok(x)]
+            flag_v = [v[i] for i in flag if _ok(v[i])]
+            if pole_v and flag_v and sum(flag_v) / len(flag_v) >= sum(pole_v) / len(pole_v):   # wolumen kurczy się w pauzie
+                continue
+            shapes = [{"kind": "line", "d1": d[t - p], "d2": d[t], "p1": pole_lo, "p2": h[t]}, {"kind": "box", "d1": d[t + 1], "d2": d[e], "lo": bot_f, "hi": top_f}]
+            res = _finish("Flaga/Proporzec", top_f, e, w, shapes, f"drążek +{(h[t] / pole_lo - 1) * 100:.0f} % w {p} tyg., pauza {f} tyg.")
+            if res:
+                return res
+    return None
+
+
+def find_patterns(w):
+    """Aktywne wzorce kupna z tygodniowych świec w: [{name, state, buy, pct, start, end, vol_x, shapes, note}] (kolejność: wybicia, potem budowane)."""
+    if not w or len(w.get("c") or []) < 40 or not all(_ok(x) for x in w["c"] + w["h"] + w["l"]):
+        return []
+    n = len(w["c"])
+    out = []
+    for finder in (_cup, lambda w_, e_: _flat_or_triangle(w_, e_, True), lambda w_, e_: _flat_or_triangle(w_, e_, False), _flag):
+        for e in range(n - 1, n - 1 - PATTERN_LOOKBACK, -1):
+            res = finder(w, e)
+            if res:
+                if not any(abs(o["buy"] / res["buy"] - 1) < 0.01 for o in out):   # ta sama góra = jeden wzorzec (trójkąt ma pierwszeństwo przed bazą)
+                    out.append(res)
+                break
+    return sorted(out, key=lambda x: (x["state"] != "WYBICIE", PATTERN_NAMES.index(x["name"])))
+
+
+def parabola(w, lo_n=12, hi_n=30):
+    """Parabolic Curve (koniec dużego wzrostu → ostrzeżenie przy wyjściu): log-cena w ostatnich 12–30 tygodniach pasuje do paraboli wypukłej w górę
+    (R² ≥ 0,9, przyspieszenie > 0), zysk ≥ +100 %, cena powyżej SMA 10. -> {n, gain, r2, shapes, note} albo None."""
+    c, d = (w or {}).get("c") or [], (w or {}).get("d") or []
+    if len(c) < hi_n + 10 or not all(_ok(x) and x > 0 for x in c[-hi_n:]):
+        return None
+    s10 = sma(c, 10)
+    if s10[-1] is None or c[-1] < s10[-1]:
+        return None
+    best = None
+    for n in range(lo_n, hi_n + 1):
+        y = [math.log(x) for x in c[-n:]]
+        t = list(range(n))
+        coef = _polyfit2(t, y)
+        if not coef or coef[2] <= 0 or c[-1] / c[-n] - 1 < PARABOLA_MIN_GAIN:
+            continue
+        mean = sum(y) / n
+        ss_tot = sum((v - mean) ** 2 for v in y)
+        ss_res = sum((v - (coef[0] + coef[1] * k + coef[2] * k * k)) ** 2 for k, v in zip(t, y))
+        r2 = 1 - ss_res / ss_tot if ss_tot else 0
+        if r2 >= PARABOLA_MIN_R2 and (best is None or n > best[0]):
+            best = (n, r2, coef)
+    if not best:
+        return None
+    n, r2, coef = best
+    curve = [[d[len(c) - n + k], round(math.exp(coef[0] + coef[1] * k + coef[2] * k * k), 4)] for k in range(n)]
+    gain = (c[-1] / c[-n] - 1) * 100
+    return {"n": n, "gain": round(gain, 1), "r2": round(r2, 3), "shapes": [{"kind": "curve", "d1": curve[0][0], "pts": curve}],
+            "note": f"+{gain:.0f} % w {n} tyg., przyspieszający wzrost (R² {r2:.2f}); wyjście: zamknięcie tygodnia pod SMA 10 {s10[-1]:.2f}", "exit": round(s10[-1], 4)}
+
+
+def _polyfit2(x, y):
+    """Najmniejsze kwadraty y ≈ a + b·x + c·x² (równania normalne, bez numpy) -> (a, b, c) albo None."""
+    n = len(x)
+    s = [sum(xi ** k for xi in x) for k in range(5)]
+    t = [sum(yi * xi ** k for xi, yi in zip(x, y)) for k in range(3)]
+    m = [[s[0], s[1], s[2], t[0]], [s[1], s[2], s[3], t[1]], [s[2], s[3], s[4], t[2]]]
+    for i in range(3):
+        piv = max(range(i, 3), key=lambda r: abs(m[r][i]))
+        if abs(m[piv][i]) < 1e-12 or n < 3:
+            return None
+        m[i], m[piv] = m[piv], m[i]
+        for r in range(3):
+            if r != i:
+                f = m[r][i] / m[i][i]
+                m[r] = [a - f * b for a, b in zip(m[r], m[i])]
+    return tuple(m[i][3] / m[i][i] for i in range(3))
+
+
 def build_row(base, weekly, months, fund, spy=None, est=None, conditions=None):
     """Wiersz listy: base (z Finviz), weekly {d, o, h, l, c, v}, months (High zamkniętych miesięcy), fund (z SEC albo None), spy (tygodniowe {d, c}),
     est (prognozy z yfinance: niespodzianki EPS i rewizja 90 dni)."""
@@ -444,6 +640,11 @@ def build_row(base, weekly, months, fund, spy=None, est=None, conditions=None):
     row["eps_rev"] = (est or {}).get("rev90")
     ef = eps_features(row["eps_q"]) or {}
     row.update(eps_g2=ef.get("g2"), eps_cagr3=ef.get("cagr3"), eps_stab=ef.get("stab"), eps_raw=ef.get("raw"), eps_rating=None)   # ocena 1–99: assign_eps_rating po zbudowaniu listy
+    pats = find_patterns(weekly)
+    para = parabola(weekly)
+    top = pats[0] if pats else None
+    row.update(pattern=top["name"] if top else None, pattern_state=top["state"] if top else None, pattern_buy=top["buy"] if top else None,
+               pattern_pct=top["pct"] if top else None, patterns=pats, parabola=para)   # wzorce Zangera: kolumny + rysunek na wykresie
     row["ok"] = passes(row, conditions)
     row["slow"] = slowdown(row)
     return row

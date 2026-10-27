@@ -17,7 +17,7 @@ COLUMNS = [  # (klucz, nagłówek, szerokość, format)
     ("ticker", "Ticker", 70, "s"), ("company", "Spółka", 200, "s"), ("sector", "Sektor", 140, "s"), ("sector_rs", "RS sektora %", 105, "%"), ("price", "Cena", 80, "p"),
     ("glb", "Green Line", 90, "p"), ("glb_pct", "Do linii %", 85, "%"), ("glb_state", "GLB", 85, "s"), ("macd", "MACD", 60, "s"), ("trend", "SMA 10>30", 85, "b"),
     ("macd_stop", "Stop MACD", 85, "p"), ("dopm", "Δ marża oper. pp", 120, "%"), ("rev_rr", "Przychody r/r %", 115, "%"),
-    ("eps_rating", "EPS Rating", 90, "i"), ("dgm", "Δ marża brutto pp", 125, "%"), ("quarter", "Kwartał", 105, "s"), ("turnover", "Obrót mln $", 95, "m"),
+    ("eps_rating", "EPS Rating", 90, "i"), ("dgm", "Δ marża brutto pp", 125, "%"), ("pattern", "Wzorzec Zangera", 130, "s"), ("pattern_pct", "Do kupna wzorca %", 115, "%"), ("quarter", "Kwartał", 105, "s"), ("turnover", "Obrót mln $", 95, "m"),
     ("ps", "P/S", 60, "x"), ("peg", "PEG", 70, "x2"), ("pegy", "PEGY", 75, "x2"),
     ("rs", "RS 52 tyg. pp", 105, "%"), ("surp", "Niesp. EPS %", 95, "%"), ("beat2", "2× nad konsensus", 115, "b"), ("eps_rev", "Rewizja EPS 90 dni %", 140, "%"), ("rvol_w", "RVol tyg.", 80, "x"), ("rvol_d", "RVol dz.", 75, "x"), ("cc52w", "C/C[52 tyg.]", 95, "r"), ("ok", "Warunki", 75, "b"), ("slow", "Hamuje", 95, "w"),
 ]
@@ -29,11 +29,13 @@ def is_signal(r):
     """Sygnał kupna wg badania 2011–2025: Green Line, zamknięcie tygodnia 0–10 % nad linią (szersza strefa i Blue Dot dawały mniej)."""
     return r.get("glb_state") in SIGNAL and (r.get("glb_pct") is None or r["glb_pct"] <= ENTRY_MAX)
 # filtry listy (wszystkie naraz, ORAZ): {kolumna: {"in": [wartości]} | {"min", "max"}}; liczby w jednostkach tabeli (obrót w mln $)
-FILTER_CHOICES = {"glb_state": ["WYBICIE", "SYGNAŁ", "BLUE DOT", "NAD", "POD", "BRAK"], "macd": ["nad", "pod"], "ok": ["tak", "nie"], "trend": ["tak", "nie"], "beat2": ["tak", "nie"], "slow": ["HAMUJE", "HAMUJE+MB", "—"]}
+FILTER_CHOICES = {"glb_state": ["WYBICIE", "SYGNAŁ", "BLUE DOT", "NAD", "POD", "BRAK"], "macd": ["nad", "pod"], "ok": ["tak", "nie"], "trend": ["tak", "nie"], "beat2": ["tak", "nie"], "slow": ["HAMUJE", "HAMUJE+MB", "—"], "pattern": list(calc.PATTERN_NAMES)}
 FILTER_SCALE = {"turnover": 1e6}
 FILTER_PRESETS = [
     ("Reguły: sygnał GLB 0–10 % + warunki (przychody, marża)", {"ok": {"in": ["tak"]}, "glb_state": {"in": ["WYBICIE", "SYGNAŁ"]}, "glb_pct": {"min": 0, "max": 10}}),
     ("EPS Rating ≥ 80 + sygnał GLB 0–10 %", {"eps_rating": {"min": 80}, "glb_state": {"in": ["WYBICIE", "SYGNAŁ"]}, "glb_pct": {"min": 0, "max": 10}}),
+    ("Wzorzec Zangera: wybicie (0–10 % nad kupnem) + warunki", {"ok": {"in": ["tak"]}, "pattern": {"in": list(calc.PATTERN_NAMES)}, "pattern_pct": {"min": 0, "max": 10}}),
+    ("Wzorzec Zangera: budowany, do 3 % pod kupnem", {"pattern": {"in": list(calc.PATTERN_NAMES)}, "pattern_pct": {"min": -3, "max": 0}}),
     ("Liderzy: RS 52 tyg. ≥ 50 pp + nad GLB", {"rs": {"min": 50}, "glb_state": {"in": ["WYBICIE", "SYGNAŁ", "BLUE DOT", "NAD"]}}),
     ("Przebicie GLB + SMA 10 > 30 (dowolnie wysoko)", {"trend": {"in": ["tak"]}, "glb_state": {"in": ["WYBICIE", "SYGNAŁ", "BLUE DOT", "NAD"]}}),
     ("Aktywne: RVol tyg. ≥ 1,5 + nad GLB", {"rvol_w": {"min": 1.5}, "glb_state": {"in": ["WYBICIE", "SYGNAŁ", "BLUE DOT", "NAD"]}}),
@@ -1152,6 +1154,8 @@ class AlertsDialog(tk.Toplevel):
 
 GUIDE = """REGUŁY (badanie 2011–2025: ≈5600 spółek USA, fundamenty SEC znane 50/80 dni po kwartale, portfel 10 pozycji, koszt 0,1 %/stronę)
    skaner sektorowy	3 sektory z najsilniejszym RS (ETF / SPY nad SMA 52 tyg.) × zapytanie Finviz: sektor + cena > 15 $ + Sales Q/Q > 15 % (domyślny)
+   wzorce Zangera	Cup & Handle, Flat Base, Ascending Triangle, Flaga/Proporzec na tygodniowych świecach (kolumna Wzorzec, przycisk Z = widok Zangera); progi to przybliżenie opisów ze strony chartpattern.com, nie testowane jako strategia
+   Parabolic Curve	ostrzeżenie przy pozycji: przyspieszający wzrost ≥ +100 %; wyjście przy zamknięciu tygodnia pod SMA 10
    EPS Rating	przybliżenie IBD: wzrost EPS 2 kw. + 3 lata + stabilność, percentyl 1–99 wśród spółek listy (informacyjnie)
    skaner Finviz	ind_stocksonly, cena > 10, śr. wolumen > 300 tys., Sales Q/Q > 15 % (skaner „Bezpieczny (backtest)”)
    warunki	przychody kw. ≥ +15 % r/r i marża operacyjna ≥ +3 pp r/r; RS, P/S i niespodzianki EPS domyślnie wyłączone (RS ≥ 50 pp obniżał wynik — za mało sygnałów)

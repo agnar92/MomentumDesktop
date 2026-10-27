@@ -1,5 +1,6 @@
 """Testy bez sieci: Green Line, stan GLB, MACD, obrót, warunki, parser Finviz, fundamenty SEC i synchronizacja z podmienionymi źródłami."""
 import datetime as dt
+import math
 
 import pytest
 
@@ -582,3 +583,43 @@ def test_sync_sector_scanner_runs_one_query_per_top_sector(tmp_path):
                     fund=lambda ts, cache, ua, log, progress=None: None, est=lambda ts, cache, log: None, daily=lambda ts, log, **kw: {})
     assert len(queries) == 3 and all(q.startswith("sec_") and "sh_price_o15" in q for q in queries)
     assert [r["ticker"] for r in rows] == ["A"] and Store(tmp_path).sectors and sum(x["selected"] for x in Store(tmp_path).sectors) == 3
+
+
+def _weekly(closes, vols=None, spread=0.01):
+    d = [(dt.date(2024, 1, 1) + dt.timedelta(weeks=i)).isoformat() for i in range(len(closes))]
+    return {"d": d, "o": closes, "h": [x * (1 + spread) for x in closes], "l": [x * (1 - spread) for x in closes], "c": closes, "v": vols or [1e6] * len(closes)}
+
+
+def test_cup_and_handle_detected_and_flat_trend_is_not():
+    up = [50 + i * 1.2 for i in range(30)]                      # silny wzrost do szczytu 85
+    cup = [85 - (i + 1) * 3.0 for i in range(8)] + [61 + (i + 1) * 3.0 for i in range(8)]   # spadek ok. 28 % i powrót
+    handle = [83.5, 82.5]
+    w = _weekly(up + cup + handle)
+    pats = calc.find_patterns(w)
+    assert pats and pats[0]["name"] == "Cup & Handle" and pats[0]["state"] == "BUDUJE SIĘ" and pats[0]["pct"] < 0
+    assert pats[0]["shapes"][0]["kind"] == "curve" and pats[0]["shapes"][1]["kind"] == "box"
+    w2 = _weekly(up + cup + handle + [pats[0]["buy"] * 1.03])  # wybicie ponad górę uchwytu
+    assert [p["state"] for p in calc.find_patterns(w2) if p["name"] == "Cup & Handle"] == ["WYBICIE"]
+    assert calc.find_patterns(_weekly([100.0 + (i % 2) for i in range(80)])) == []   # płaski rynek bez poprzedzającego wzrostu
+
+
+def test_flat_base_flag_and_parabola():
+    base = [50 + i * 1.5 for i in range(30)] + [96 + (i % 3) * 0.4 for i in range(12)]
+    vols = [2e6] * 30 + [1e6] * 12
+    pats = calc.find_patterns(_weekly(base, vols))
+    assert any(p["name"] in ("Flat Base", "Ascending Triangle") for p in pats)
+    flag = [50 + i * 0.5 for i in range(32)] + [66, 72, 80, 88, 94] + [91, 90, 90.5]   # drążek ok. +40 % i pauza
+    fp = calc.find_patterns(_weekly(flag, [1e6] * 32 + [3e6] * 5 + [8e5] * 3))
+    assert any(p["name"] == "Flaga/Proporzec" for p in fp)
+    para = [20 * math.exp(0.004 * i + 0.0009 * i * i) for i in range(45)]
+    r = calc.parabola(_weekly(para))
+    assert r and r["gain"] >= 100 and r["r2"] >= 0.9 and r["exit"] > 0
+    assert calc.parabola(_weekly([20 * 1.01 ** i for i in range(45)])) is None   # wzrost liniowy (w skali log.) nie jest parabolą
+
+
+def test_build_row_carries_patterns_and_position_status_warns_on_parabola():
+    from desktop import lines
+    para = [20 * math.exp(0.004 * i + 0.0009 * i * i) for i in range(60)]
+    row = calc.build_row({"ticker": "P"}, _weekly(para), [], None)
+    assert row["parabola"] and "patterns" in row and "pattern" in row
+    assert any("PARABOLA" in m for m in lines.position_status({"last": para[-1]}, row))

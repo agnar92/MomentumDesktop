@@ -519,11 +519,12 @@ def draw_patterns(cv, row, dates, xf, yf, g, step, pmin, pmax):
             y = yf(p["buy"])
             a = px(p["end"])
             cv.create_line(a if a is not None else x0, y, x1, y, fill=col, dash=(6, 3), width=2)
-            ly = y - 9
+            top = g["price"][0] + 32   # pod legendą u góry wykresu
+            ly = max(y - 9, top)
             for t in range(6):   # podpisy kolejnych wzorców jeden pod drugim
                 if all(abs(ly - u) >= 16 for u in used):
                     break
-                ly = y + 9 + 16 * t
+                ly = max(y + 9 + 16 * t, top)
             used.append(ly)
             what = f"linia {fmt(p['buy'])}" if p.get("side") == "sell" else f"kupno > {fmt(p['buy'])}"
             boxed(cv, x1 - 6, ly, f"{'⚠ ' if p.get('side') == 'sell' else ''}{p['name']} · {what} · {p['state']} ({p['pct']:+.1f} %)" + (f" · wol. {p['vol_x']:.1f}×" if p.get("vol_x") is not None else ""), col, anchor="e")

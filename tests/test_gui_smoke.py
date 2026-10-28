@@ -26,6 +26,7 @@ def app(tmp_path):
         a = A.App(tmp_path)
     except tk.TclError:
         pytest.skip("brak ekranu")
+    a.store.settings["view"] = {"W": {"fut": 0}, "M": {"fut": 0}}   # bez pustych świec w przyszłości (osobne testy)
     yield a
     try:
         a.root.destroy()
@@ -281,9 +282,10 @@ def test_guide_position_and_ibd_panels(app):
     ch.update()
     ch.redraw()
     texts = [ch.cv.itemcget(i, "text") for i in ch.cv.find_all() if ch.cv.type(i) == "text"]
-    assert not any(t.startswith("RS Line") or t.startswith("Przychody kw.") or t.startswith("S&P 500") for t in texts)   # T: prosty układ bez RS Line i przychodów
+    assert any(t.startswith("RS Line") or t.startswith("RS /") for t in texts)   # T: panel RS Line jest
+    assert not any(t.startswith("Przychody kw.") or t.startswith("S&P 500") for t in texts)   # ale bez przychodów
     g = ch.geom["g"]
-    assert g["rs"] is None and g["rev"] is None and g["price"][1] < g["vol"][0] < g["vol"][1] < g["macd"][0] < g["macd"][1]
+    assert g["rs"] and g["rs"][1] < g["price"][0] and g["rev"] is None and g["price"][1] < g["vol"][0] < g["vol"][1] < g["macd"][0] < g["macd"][1]
     bands = [i for i in ch.cv.find_all() if ch.cv.type(i) == "rectangle" and ch.cv.itemcget(i, "fill") == A_chart.REGIME_BG]
     assert bands and any(ch.cv.type(i) == "line" and ch.cv.itemcget(i, "fill") == A_chart.SMA_C for i in ch.cv.find_all())   # tło SPY > SMA 10 i niebieska SMA 10
     panel_text = ch.ptext.get("1.0", "end")
@@ -347,9 +349,9 @@ def test_weekly_rwb_toggle_draws_gmma_rwb_strip_and_blue_dot(app):
     assert not ch.rwb and not dot_items() and ch.rwb_btn.cget("state") == "normal"
     gmma_lines = lambda: [i for i in ch.cv.find_all() if ch.cv.type(i) == "line" and ch.cv.itemcget(i, "fill") in (A_chart.FAST_C, A_chart.SLOW_C)]   # noqa: E731
     assert not gmma_lines()
-    ch.toggle_rwb()                                                                # RWB tylko na wykresie tygodniowym
+    ch.toggle_rwb()
     assert ch.rwb and ch.rwb_btn.cget("bg") == "#1f3b5c"
-    assert len(gmma_lines()) >= 12 and dot_items()                                 # 12 średnich Guppy + ● Blue Dot
+    assert not gmma_lines() and dot_items()                                        # sam wskaźnik: bez wachlarza średnich Guppy, z ● Blue Dot
     strip = [i for i in ch.cv.find_all() if ch.cv.type(i) == "rectangle" and ch.cv.itemcget(i, "fill") == A_chart.SLOW_C]
     assert strip                                                                   # pasek RWB u dołu panelu ceny
     g = ch.geom["g"]
@@ -357,7 +359,7 @@ def test_weekly_rwb_toggle_draws_gmma_rwb_strip_and_blue_dot(app):
     tooltip = [ch.cv.itemcget(i, "text") for i in ch.cv.find_withtag("tip") if ch.cv.type(i) == "text"]
     assert any(t.startswith("BLUE DOT") for t in tooltip)
     ch.toggle_period("M")
-    assert ch.rwb_btn.cget("state") == "disabled"                                  # na miesięcznym RWB nie ma
+    assert ch.rwb_btn.cget("state") == "normal" and ch.rwb                         # RWB działa też na miesięcznym
 
 
 def test_revenue_surprise_is_computed_if_actual_and_estimate_are_supplied():
@@ -470,7 +472,7 @@ def test_exit_method_toggle_and_position_plan(app):
     assert app.store.settings["exit"] == "MACD"
 
 
-def test_period_buttons_without_daily_and_no_rs_panel(app):
+def test_period_buttons_without_daily_with_rs_panel(app):
     st = app.store
     w = st.weekly("AAA")
     st.series["SPY"] = {**w, "c": [400 - i for i in range(len(w["c"]))]}   # SPY spada -> RS rośnie, na szczycie 52 tyg.
@@ -480,8 +482,8 @@ def test_period_buttons_without_daily_and_no_rs_panel(app):
     ch.redraw()
     assert set(ch.per_btns) == {"M", "W"} and ch.per_btns["W"].cget("text") == "T" and ch.per_btns["W"].cget("bg") == "#1f3b5c"
     texts = [ch.cv.itemcget(i, "text") for i in ch.cv.find_all() if ch.cv.type(i) == "text"]
-    assert not any("pp" in t or t.startswith("RS") for t in texts)   # T: bez panelu RS Line
-    assert not hasattr(A_chart, "rs_line") and not hasattr(ch, "daily_style")        # dziennego wykresu ani RS Line już nie ma
+    assert any(t.startswith("RS") for t in texts)   # T: panel RS Line (akcja / SPY)
+    assert hasattr(A_chart, "rs_line") and not hasattr(ch, "daily_style")        # RS Line wrócił, dziennego wykresu nie ma
     ch.toggle_period()
     assert ch.period == "M" and ch.per_btns["M"].cget("bg") == "#1f3b5c"
     ch.toggle_period()
@@ -616,7 +618,7 @@ def test_zanger_view_draws_patterns_and_hides_indicators(app):
     texts = [ch.cv.itemcget(i, "text") for i in ch.cv.find_all() if ch.cv.type(i) == "text"]
     assert ch.zanger and any("kupno >" in t and "Flat Base" in t for t in texts) and any(t.startswith("PARABOLA") for t in texts)
     assert not any(t.startswith("MACD") or t.startswith("Przychody") for t in texts) and ch.geom["g"]["rs"] is None
-    ch.toggle_period("D")
+    ch.toggle_period("M")
     assert not ch.zanger and C.PATTERN_NAMES
 
 
@@ -836,3 +838,59 @@ def test_manual_stop_is_drawn_on_monthly_and_zanger_views(app, monkeypatch):
     assert ch.geom["stop_y"] is None and any(t.startswith("▼ STOP") for t in texts)
     ch.set_manual_stop(90.0)
     assert ch.geom["stop_y"] is not None                                         # w widoku Zangera stop jest nadal rysowany (obok stopu MACD)
+
+
+def test_future_slots_price_view_and_persistence(app):
+    app.store.settings["view"] = {"W": {"fut": 12}}
+    app.open_chart("AAA")
+    ch = app.chart
+    ch.update()
+    ch.redraw()
+    real = len(app.store.weekly("AAA")["c"])
+    assert ch.geom["n"] == real + 12 and ch.geom["real"] == real       # 12 pustych świec po prawej
+    vd = ch.vdata()
+    assert vd["d"][real] > vd["d"][real - 1] and vd["c"][real] is None
+    g = ch.geom["g"]
+    x = g["x0"] + (real + 5.5) * ch.geom["step"]                       # linia rysowana w przyszłość
+    d, p, k = ch.value(x, (g["price"][0] + g["price"][1]) / 2)
+    assert k == real + 5 and d == vd["d"][real + 5]
+    ln = {"id": "f", "period": "W", "d1": vd["d"][real - 20], "p1": 100.0, "d2": d, "p2": 120.0, "alert": False}
+    app.store.alerts["lines"]["AAA"] = [ln]
+    ch.redraw()
+    assert any(s_["id"] == "f" and s_["x2"] > g["x0"] + real * ch.geom["step"] for s_ in ch.geom["segs"])
+    # skala ceny: powiększenie i przesunięcie zmieniają zakres, reset przywraca automatyczny
+    l0 = (ch.geom["lmin"], ch.geom["lmax"])
+    ch.save_view(z=2.0)
+    ch.redraw()
+    assert abs((ch.geom["lmax"] - ch.geom["lmin"]) * 2 - (l0[1] - l0[0])) < 1e-9
+    ch.save_view(s=0.5)
+    ch.redraw()
+    assert ch.geom["lmin"] > l0[0]
+    ch.reset_price()
+    ch.redraw()
+    assert (ch.geom["lmin"], ch.geom["lmax"]) == l0
+    # zapamiętanie: długość okna i przyszłość trafiają do ustawień
+    ch._set(60, 10 ** 6)
+    assert app.store.settings["view"]["W"]["n"] == 60
+    ch.cycle_future()
+    assert app.store.settings["view"]["W"]["fut"] == 20 and ch.fut_btn.cget("text") == "⇥ 20"
+
+
+def test_weekly_lines_shown_on_monthly_and_zanger_has_spy_background(app):
+    app.open_chart("AAA")
+    ch = app.chart
+    ch.update()
+    w = app.store.weekly("AAA")
+    app.store.alerts["lines"]["AAA"] = [{"id": "w1", "period": "W", "d1": w["d"][-60], "p1": 90.0, "d2": w["d"][-10], "p2": 110.0, "alert": False}]
+    assert ch.shown_lines() and not ch.shown_lines()[0].get("ro")
+    ch.period = "M"
+    assert [x["id"] for x in ch.shown_lines()] == ["w1"] and ch.shown_lines()[0]["ro"]   # linia T / Z widoczna na M, bez edycji
+    assert ch.lines() == []
+    ch.period = "W"
+    app.store.series["SPY"] = {**w, "c": [100 + i for i in range(len(w["c"]))]}   # SPY rośnie -> nad SMA 10
+    spy = app.store.weekly("SPY")
+    ch.toggle_zanger()
+    ch.update()
+    bg = [i for i in ch.cv.find_all() if ch.cv.type(i) == "rectangle" and ch.cv.itemcget(i, "fill") == A_chart.REGIME_BG]
+    regime = A_chart.spy_regime(w["d"], spy, "W")
+    assert bool(bg) == any(regime)                                          # tło SPY > SMA 10 także w widoku Z

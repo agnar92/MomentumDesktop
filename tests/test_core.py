@@ -695,3 +695,12 @@ def test_flag_buys_over_the_descending_trend_line():
     w = _pts_weekly([(0, 50), (30, 66), (32, 80), (34, 94), (35, 91), (37, 88), (39, 85.5)], [1e6] * 30 + [3e6] * 5 + [8e5] * 5)
     f = _only(w, "Flaga/Proporzec")
     assert f and f["state"] == "BUDUJE SIĘ" and any(s["kind"] == "line" and s["d2"] == w["d"][-1] for s in f["shapes"][2:])   # linia opadająca przedłużona do ostatniego tygodnia
+
+
+def test_rwb_starts_mark_return_of_rwb_after_pullback():
+    c = [100 + i for i in range(120)] + [220 - 3 * i for i in range(25)] + [145 + 2 * i for i in range(60)]   # trend, cofnięcie, powrót
+    r = calc.rwb(c)
+    starts = calc.rwb_starts(c)
+    assert starts and all(r[i] and not r[i - 1] for i in starts)
+    assert all(i >= 60 for i in starts) and starts[-1] > 145        # ostatni start po cofnięciu
+    assert calc.rwb_starts([100 + i for i in range(50)]) == []      # za krótka historia

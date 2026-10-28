@@ -17,9 +17,23 @@ def date_index(dates, d):
     return bisect.bisect_right(dates, d) - 1
 
 
+def slot_index(dates, d):
+    """Jak date_index, ale data po ostatniej świecy daje indeks w przyszłość (ostatni + liczba okresów) — linie narysowane za ostatnią świecą."""
+    k = date_index(dates, d)
+    if k < len(dates) - 1 or len(dates) < 2 or d <= dates[-1]:
+        return k
+    span = (_day(dates[-1]) - _day(dates[max(0, len(dates) - 13)])) / (min(12, len(dates) - 1))
+    return k + max(1, round((_day(d) - _day(dates[-1])) / span))
+
+
+def _day(s):
+    y, m, d = (int(x) for x in s[:10].split("-"))
+    return y * 365.25 + (m - 1) * 30.44 + d
+
+
 def line_at(line, dates, j):
     """Wartość linii w tygodniu j (interpolacja na log ceny); None, gdy punkty nie leżą w historii albo w tym samym tygodniu."""
-    a, b = date_index(dates, line["d1"]), date_index(dates, line["d2"])
+    a, b = slot_index(dates, line["d1"]), slot_index(dates, line["d2"])
     if a < 0 or b < 0 or a == b:
         return None
     la, lb = math.log(line["p1"]), math.log(line["p2"])

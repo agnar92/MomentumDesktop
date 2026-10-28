@@ -65,19 +65,6 @@ def cached_symbol(sym, store):
                          conditions=store.settings.get("strategy_conditions"))
     calc.assign_eps_rating([row], pool=store.rows)
 
-    for key in ("rvol_d", "cc52w", "bdot"):
-        if key in existing:
-            row[key] = existing[key]
-    daily = store.daily(sym)
-    if daily and daily.get("c"):
-        row["rvol_d"] = calc.rel_volume(daily.get("v") or [], calc.RVOL_D)
-        row["cc52w"] = calc.price_ratio(daily["c"])
-        blue_dot = calc.fresh_blue_dot(daily, row.get("glb")) if row.get("glb_state") == "NAD" else None
-        if blue_dot:
-            row["glb_state"], row["bdot"] = "BLUE DOT", blue_dot
-        else:
-            row.pop("bdot", None)
-
     store.extra[sym] = (row, w)
     return row, w
 
@@ -108,17 +95,11 @@ def symbol(sym, store, log=print, weekly=prices.weekly, monthly=prices.monthly, 
     row = calc.build_row(base, w, prices.monthly_highs(mcache.get(sym)), scache.get(sym), spy, ecache.get(sym),
                          conditions=store.settings.get("strategy_conditions"))
     calc.assign_eps_rating([row], pool=store.rows)
-    # W przypadku symbolu otwartego przez Ctrl+Space zachowaj pola wyliczane ze świec dziennych,
-    # dopóki odświeżenie dzienne nie dostarczy nowej serii.
-    for key in ("rvol_d", "cc52w", "bdot"):
-        if key in existing:
-            row[key] = existing[key]
     store.extra[sym] = (row, w)
     return row, w
 
 
-def run(store, log=print, fetch_list=finviz.fetch, weekly=prices.weekly, monthly=prices.monthly, fund=sec.update, now=None, progress=None, daily=prices.daily,
-        est=estimates.update):
+def run(store, log=print, fetch_list=finviz.fetch, weekly=prices.weekly, monthly=prices.monthly, fund=sec.update, now=None, progress=None, est=estimates.update):
     sc = store.scanner
     sectors = None
     if sc.get("top_sectors"):
@@ -161,18 +142,6 @@ def run(store, log=print, fetch_list=finviz.fetch, weekly=prices.weekly, monthly
         if t in series:
             tracked_rows[t] = calc.build_row({"ticker": t}, series[t], prices.monthly_highs(mcache.get(t)), scache.get(t), series.get(BENCH), ecache.get(t),
                                               conditions=store.settings.get("strategy_conditions"))
-    try:   # 252 sesje do C/C[52 tyg.], a także RVol i Blue Dot.
-        dser = daily(liquid, log=log, period="2y") if liquid else {}
-    except Exception as e:
-        log(f"⚠ dzienne (RVol/C/C[52 tyg.]) niedostępne ({e})")
-        dser = {}
-    for r in rows + list(tracked_rows.values()):
-        sd = dser.get(r["ticker"])
-        r["rvol_d"] = calc.rel_volume(sd["v"], calc.RVOL_D) if sd else None
-        r["cc52w"] = calc.price_ratio(sd.get("c", []) if sd else [])
-        bd = calc.fresh_blue_dot(sd, r.get("glb")) if r.get("glb_state") == "NAD" else None
-        if bd:   # > 10 % nad linią i nie tydzień przebicia: wejście po Blue Dot na dziennym
-            r["glb_state"], r["bdot"] = "BLUE DOT", bd
     for t, r in tracked_rows.items():
         store.extra[t] = (r, series[t])
     by_sector = {x["sector"]: x["pct"] for x in sectors or []}

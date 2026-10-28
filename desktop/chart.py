@@ -8,7 +8,7 @@ Linie trendu (lines.py): przeciągnij myszą po wykresie ceny = nowa linia (koni
 chwyć środek = przesuń, klik = zaznacz, Delete / prawy przycisk = usuń. 🔔 Obserwuj = alerty strategii dla spółki."""
 import datetime as dt
 import json
-from bisect import bisect_left, bisect_right
+from bisect import bisect_right
 import math
 import threading
 import time
@@ -20,12 +20,9 @@ from .theme import BG, FG, PANEL, apply_dark
 
 GRID, DIM = "#1a1f26", "#6b7684"
 UP, DOWN = "#d5d9e0", "#e5484d"
-SMA_COLORS = {4: "#22d3ee", 10: "#e5484d", 30: "#f0b429"}
-DAILY_MA_COLORS = {"EMA 8": "#e5484d", "EMA 10": "#f0b429", "EMA 20": "#3b82f6", "SMA 50": "#22d3ee"}
-TLINE = "#22d3ee"
+TLINE, TLINE_RO = "#22d3ee", "#6b9fc8"   # linie trendu: własne (cyjan) i miesięczne pokazane na tygodniowym (blada, przerywana, tylko do odczytu)
 GLB_COLOR, STOP_COLOR, MACD_C, SIG_C = "#3ddc84", "#ff5c5c", "#4aa3ff", "#f0b429"
-FAST_C, SLOW_C, RWB_BG, BLUE_DOT = "#e5484d", "#3b82f6", "#232a33", "#4aa3ff"
-RS_C = "#38bdf8"   # RS Line (akcja / SPY), jak w Deepvue
+FAST_C, SLOW_C, BLUE_DOT = "#e5484d", "#3b82f6", "#4aa3ff"   # RWB (GMMA): szybkie EMA czerwone, wolne niebieskie, ● Blue Dot
 FONT = ("Consolas", 9)
 RIGHT, LEFT, TOP = 64, 6, 22
 ZONE_C, ZONE_ALPHA = "#9aa3ad", 0.16   # strefa kupna 0–10 % nad GLB (jednolity pas = ZONE_C zmieszany z tłem w proporcji ZONE_ALPHA) i przerywana na 5 %
@@ -56,31 +53,22 @@ def fmt(v):
 
 
 def earnings_indices(dates, earnings_dates, period="W"):
-    """Indeksy świec dla dat publikacji wyników: dokładna/następna sesja D, tydzień zawierający raport W."""
-    if not dates or period not in ("D", "W"):
+    """Indeksy tygodniowych świec dla dat publikacji wyników (tydzień zawierający raport; tygodniowe świece są datowane początkiem tygodnia)."""
+    if not dates or period != "W":
         return []
     found = set()
     for event in earnings_dates or ():
         event = str(event)[:10]
         if len(event) != 10:
             continue
-        if period == "D":
-            # get_earnings_dates może wskazać weekend; wówczas E trafia pod następną sesję.
-            if event < dates[0] or event > dates[-1]:
+        i = bisect_right(dates, event) - 1
+        if i >= 0:
+            try:
+                offset = (dt.date.fromisoformat(event) - dt.date.fromisoformat(dates[i])).days
+            except ValueError:
                 continue
-            i = bisect_left(dates, event)
-            if i < len(dates):
+            if 0 <= offset < 7:
                 found.add(i)
-        else:
-            # Tygodniowe świece są datowane początkiem tygodnia.
-            i = bisect_right(dates, event) - 1
-            if i >= 0:
-                try:
-                    offset = (dt.date.fromisoformat(event) - dt.date.fromisoformat(dates[i])).days
-                except ValueError:
-                    continue
-                if 0 <= offset < 7:
-                    found.add(i)
     return sorted(found)
 
 
@@ -136,7 +124,7 @@ def boxed(cv, x, y, text, fill, anchor="w", font=FONT, tags=""):
 
 def ruler_text(p1, p2, k1, k2, period="W"):
     """Miarka (prawy przycisk): zmiana ceny w % od punktu kliknięcia i liczba świec między punktami -> napis."""
-    unit = "sesji" if period == "D" else "mies." if period == "M" else "tyg."
+    unit = "mies." if period == "M" else "tyg."
     pct = (p2 / p1 - 1) * 100 if p1 else 0.0
     return f"{pct:+.1f} % · {abs(k2 - k1)} {unit} · {fmt(p1)} → {fmt(p2)}"
 
@@ -155,32 +143,12 @@ def fmt_vol(v):
     return "—" if v is None else f"{v / 1e9:.1f}B" if v >= 1e9 else f"{v / 1e6:.1f}M" if v >= 1e6 else f"{v / 1e3:.0f}K"
 
 
-def geometry(w, h, period="W"):
-    """Panele: RS Line jak w Deepvue (akcja / SPY + średnia, szczyty RS) 10 %, cena 50 %, wolumen 10 %, przychody kwartalne 11 %, MACD reszta
-    (odstępy i oś czasu osobno); dzienny (D): RS Line, cena (linia zamknięć + RWB + Blue Dot + GLB) i wolumen — bez przychodów i Stochastic."""
+def geometry(w, h):
+    """Panele widoku Zangera: sama cena (skala log.) 80 % i wolumen, bez RS / przychodów / MACD."""
     top = 8
     ph = h - top - 22
-    s1 = top + ph * 0.10
-    p0 = s1 + 8
-    if period == "Z":   # widok Zangera: sama cena (log) i wolumen, bez RS / przychodów / MACD
-        p0 = top
-        p1 = p0 + ph * 0.80
-        return {"rs": None, "price": (p0, p1), "vol": (p1 + 6, h - 22), "rev": None, "macd": (h - 22, h - 22), "x0": LEFT, "x1": w - RIGHT}
-    if period == "D":
-        p1 = p0 + ph * 0.74
-        return {"rs": (top, s1), "price": (p0, p1), "vol": (p1 + 6, h - 22), "rev": None, "macd": (h - 22, h - 22), "x0": LEFT, "x1": w - RIGHT}
-    p1 = p0 + ph * 0.50
-    v0, v1 = p1 + 6, p1 + 6 + ph * 0.10
-    r0, r1 = v1 + 8, v1 + 8 + ph * 0.11
-    return {"rs": (top, s1), "price": (p0, p1), "vol": (v0, v1), "rev": (r0, r1), "macd": (r1 + 8, h - 22), "x0": LEFT, "x1": w - RIGHT}
-
-
-def fmt_big(v):
-    return f"{v / 1e9:.1f} mld" if v >= 1e9 else f"{v / 1e6:.0f} mln"
-
-
-def rev_color(g):
-    return DIM if g is None else GLB_COLOR if g >= 25 else SIG_C if g >= 15 else "#6b7684" if g >= 0 else DOWN
+    p1 = top + ph * 0.80
+    return {"rs": None, "price": (top, p1), "vol": (p1 + 6, h - 22), "rev": None, "macd": (h - 22, h - 22), "x0": LEFT, "x1": w - RIGHT}
 
 
 # ---------- suwak okna czasu (minimapa) ----------
@@ -337,9 +305,10 @@ def glb_peak(data, row, period):
     return level, next((i for i in range(len(hs) - 1, -1, -1) if hs[i] and abs(hs[i] / level - 1) < 0.003), None)
 
 
-def draw_simple(cv, data, row, w, h, n_show, end, tlines, sel, spx, period, stop=None, stop_label=""):
+def draw_simple(cv, data, row, w, h, n_show, end, tlines, sel, spx, period, stop=None, stop_label="", rwb=False):
     """Prosty wykres T / M: szare słupki OHLC, niebieska SMA 10, kropkowana Green Line od świecy rekordu, tło zielone, gdy SPY > SMA 10 interwału,
-    wolumen i MACD; linie trendu rysują się na cenie. -> geometria jak z `draw`."""
+    wolumen i MACD; linie trendu rysują się na cenie. rwb (tylko T): 12 EMA Guppy (szybkie czerwone, wolne niebieskie), pasek RWB u dołu ceny i ● Blue Dot
+    pod świecą (Stochastic 10,1 ↑ 20 przy RWB, zamknięcie nad Green Line). -> geometria jak z `draw`."""
     total = len(data["c"])
     i0, i1 = window(total, n_show, end)
     cfull = [v if v is not None else 0 for v in data["c"]]
@@ -416,6 +385,23 @@ def draw_simple(cv, data, row, w, h, n_show, end, tlines, sel, spx, period, stop
         y5 = yf(level * 1.05)
         if y0 < y5 < y1:
             cv.create_line(xs, y5, x1, y5, fill=ZONE_C, dash=(6, 4))
+    blue_dots = []
+    if rwb and period == "W":
+        fast, slow = calc.gmma(cfull)
+        for lines_, col in ((slow, SLOW_C), (fast, FAST_C)):
+            for s_ in lines_:
+                pts = [(xf(i), yf(v)) for i, v in enumerate(s_[i0:i1]) if v]
+                if len(pts) > 1:
+                    cv.create_line(*[p for xy in pts for p in xy], fill=col, width=1)
+        r = calc.rwb(cfull)[i0:i1]
+        a = None
+        for i, on in enumerate(r + [False]):   # pasek RWB u dołu panelu ceny
+            if on and a is None:
+                a = i
+            elif not on and a is not None:
+                cv.create_rectangle(xf(a) - step / 2, y1 - 4, xf(i - 1) + step / 2, y1, fill=SLOW_C, outline="")
+                a = None
+        blue_dots = [i for i in calc.blue_dots(data["h"], data["l"], data["c"], level) if i0 <= i < i1]
     # słupki OHLC: jeden szary kolor
     for i in range(n):
         if hi[i] is None or lo[i] is None or c[i] is None:
@@ -425,6 +411,10 @@ def draw_simple(cv, data, row, w, h, n_show, end, tlines, sel, spx, period, stop
         if op[i]:
             cv.create_line(x - step * 0.4, yf(op[i]), x, yf(op[i]), fill=BAR_C, width=min(2, max(1, step * 0.12)))
         cv.create_line(x, yf(c[i]), x + step * 0.4, yf(c[i]), fill=BAR_C, width=min(2, max(1, step * 0.12)))
+    for i in blue_dots:
+        if data["l"][i]:
+            py = yf(data["l"][i]) + 9
+            cv.create_oval(xf(i - i0) - 4, py - 4, xf(i - i0) + 4, py + 4, fill=BLUE_DOT, outline="")
     pts = [(xf(i), yf(v)) for i, v in enumerate(sma10) if v]
     if len(pts) > 1:
         cv.create_line(*[p for xy in pts for p in xy], fill=SMA_C, width=2.4)
@@ -474,166 +464,86 @@ def draw_simple(cv, data, row, w, h, n_show, end, tlines, sel, spx, period, stop
         cv.create_rectangle(xf(i) - step * 0.3, ym(hist[i]), xf(i) + step * 0.3, mid, fill=HIST_C[(hist[i] >= 0, rising)], outline="")
     for s_, col in ((mac, MACD_LINE), (sig, SIGNAL_LINE)):
         cv.create_line(*[p for i, v in enumerate(s_) for p in (xf(i), ym(v))], fill=col, width=1.4)
-    legend = f"SMA 10 {u}" + ("" if any(x is not None for x in regime) else " · brak danych SPY (zrób Sync)") + f" · zielone tło = SPY nad SMA 10 {u}" + (" · szary pas = 0–10 % nad GLB" if ly is not None else "")
+    legend = f"SMA 10 {u}" + ("" if any(x is not None for x in regime) else " · brak danych SPY (zrób Sync)") + f" · zielone tło = SPY nad SMA 10 {u}" + (" · szary pas = 0–10 % nad GLB" if ly is not None else "") + (" · RWB: GMMA, ● Blue Dot" if rwb and period == "W" else "")
     boxed(cv, x0 + 4, y0 + 10, legend, SMA_C)
     return {"g": g, "step": step, "n": n, "i0": i0, "lmin": lmin, "lmax": lmax, "segs": segs, "stop_y": stop_y}
 
 
-def draw(cv, data, row=None, w=None, h=None, n_show=None, end=None, tlines=(), sel=None, spx=None, period="W", daily_style="line", earnings_dates=(), zanger=False, stop=None, stop_label=""):
-    """Rysuje wykres okna (n_show tygodni kończące się na `end`, domyślnie cała historia) na canvas `cv`; data = {d, o, h, l, c, v};
-    tlines = linie trendu, sel = id zaznaczonej. -> geometria (do dymka i linii; `i0` = indeks pierwszego tygodnia okna w pełnej serii, segs = linie w px)."""
+def draw(cv, data, row=None, w=None, h=None, n_show=None, end=None, tlines=(), sel=None, spx=None, period="W", rwb=False, zanger=False, stop=None, stop_label=""):
+    """Rysuje wykres okna (n_show świec kończące się na `end`, domyślnie cała historia) na canvas `cv`; data = {d, o, h, l, c, v}; tlines = linie trendu
+    (z flagą ro = tylko do odczytu), sel = id zaznaczonej. T / M: `draw_simple`; zanger=True (tylko T): `draw_zanger`.
+    -> geometria (do dymka i linii; `i0` = indeks pierwszej świecy okna w pełnej serii, segs = linie w px, stop_y = y ręcznego stopu)."""
     cv.delete("all")
-    manual = stop   # ręczny stop (niżej `stop` oznacza stop z MACD / GLB wiersza)
     w = w or cv.winfo_width()
     h = h or cv.winfo_height()
-    total = len(data["c"])
-    if total < 2:
+    if len(data["c"]) < 2:
         return None
-    if period in ("W", "M") and not zanger:
-        return draw_simple(cv, data, row, w, h, n_show, end, tlines, sel, spx, period, stop, stop_label)
+    if zanger and period == "W":
+        return draw_zanger(cv, data, row, w, h, n_show, end, tlines, sel, stop, stop_label)
+    return draw_simple(cv, data, row, w, h, n_show, end, tlines, sel, spx, period, stop, stop_label, rwb)
+
+
+def draw_zanger(cv, data, row, w, h, n_show, end, tlines, sel, stop, stop_label):
+    """Widok Zangera (tylko T): cena (skala log., słupki jednokolorowe), Green Line, wolumen, kontur wzorców kupna / ostrzeżeń i parabola; bez wskaźników."""
+    total = len(data["c"])
     i0, i1 = window(total, n_show, end)
-    earnings_local = {i - i0 for i in earnings_indices(data.get("d", []), earnings_dates, period) if i0 <= i < i1}
-    cfull = [v if v is not None else 0 for v in data["c"]]
-    smas = {} if period == "D" or zanger else {k: calc.sma(cfull, k)[i0:i1] for k in ((4, 10, 30) if period == "W" else (10, 30))}
-    daily_mas = {}
-    if period == "D" and daily_style == "bars":
-        daily_mas = {name: (calc.ema(cfull, n) if name.startswith("EMA") else calc.sma(cfull, n))[i0:i1]
-                     for name, n in (("EMA 8", 8), ("EMA 10", 10), ("EMA 20", 20), ("SMA 50", 50))}
-    mac, sig, hist = (x[i0:i1] for x in calc.macd(cfull))
-    crosses = [i - i0 for i in calc.macd_cross_down(calc.macd(cfull)[2]) if i0 <= i < i1]
-    nv = calc.RVOL_D if period == "D" else calc.RVOL_W   # średnia wolumenu i wolumen relatywny: dzienny 50 sesji, tygodniowy 10 tygodni
-    vavg = calc.sma([x or 0 for x in data["v"]], nv)[i0:i1]
-    rv = calc.rel_volume(data["v"], nv)
     c, hi, lo, vol, dates = (data[k][i0:i1] for k in ("c", "h", "l", "v", "d"))
+    vavg = calc.sma([x or 0 for x in data["v"]], calc.RVOL_W)[i0:i1]
+    rv = calc.rel_volume(data["v"], calc.RVOL_W)
     n = len(c)
-    g = geometry(w, h, "Z" if zanger else period)
+    g = geometry(w, h)
     x0, x1 = g["x0"], g["x1"]
     step = (x1 - x0) / n
+    y0, y1 = g["price"]
 
     def xf(i):
         return x0 + (i + 0.5) * step
 
     level = (row or {}).get("glb")
     vals = [v for v in hi + lo if v] + ([level] if level and min(x for x in lo if x) * 0.5 < level < max(x for x in hi if x) * 2 else [])
-    if zanger:   # punkty kupna wzorców i poziom wyjścia z paraboli mają się zmieścić na wykresie
-        top_px = max(x for x in hi if x)
-        vals += [x for x in pattern_levels(row) if top_px * 0.6 < x < top_px * 1.25]
-    # Dodatkowy margines pod ceną tylko wtedy, gdy trzeba narysować E poniżej Low świecy.
-    pmin, pmax = min(vals) * (0.92 if earnings_local else 0.97), max(vals) * 1.03
-    y0, y1 = g["price"]
+    top_px = max(x for x in hi if x)   # punkty kupna wzorców i poziom wyjścia z paraboli mają się zmieścić na wykresie
+    vals += [x for x in pattern_levels(row) if top_px * 0.6 < x < top_px * 1.25]
+    pmin, pmax = min(vals) * 0.97, max(vals) * 1.03
     lmin, lmax = math.log(pmin), math.log(pmax)
 
     def yf(p):
         return y1 - (math.log(p) - lmin) / (lmax - lmin) * (y1 - y0)
 
-    level0, last0 = (row or {}).get("glb"), c[-1] if c else None
-    stop0 = _stop_level(row)
-    ly = yf(level0) if level0 and pmin < level0 < pmax else None
-    last_y, stop_y = axis_spots(ly, yf(last0) if last0 else None, yf(stop0) if stop0 and pmin < stop0 < pmax else None)
-    taken = [v for v in (ly, last_y, stop_y) if v is not None]
+    ly = yf(level) if level and pmin < level < pmax else None
+    last = c[-1]
+    last_y, _ = axis_spots(ly, yf(last) if last else None, None)
+    taken = [v for v in (ly, last_y) if v is not None]
     for t in ticks(pmin, pmax):
         y = yf(t)
         cv.create_line(x0, y, x1, y, fill=GRID)
-        if all(abs(y - v) >= 13 for v in taken):   # podziałka ustępuje napisom Green Line / ceny / stopu
+        if all(abs(y - v) >= 13 for v in taken):   # podziałka ustępuje napisom Green Line / ceny
             cv.create_text(x1 + 4, y, text=fmt(t), anchor="w", fill=DIM, font=FONT)
-    u = {"M": "mies.", "D": "sesji"}.get(period, "tyg.")
-    blue_dot_indices = []
-    if period == "D":
-        if daily_style == "line":
-            blue_dot_indices = draw_rwb(cv, data, row, i0, i1, xf, yf, g, step, cfull)
-        else:
-            blue_dot_indices = [
-                i for i in calc.blue_dots(data["h"], data["l"], data["c"], level)
-                if i0 <= i < i1
-            ]
-    yrs = max(1, math.ceil(60 / max(1e-9, step * 12)))     # wykres miesięczny: co ile lat podpis, żeby się nie nakładały
-    every = max(1, math.ceil(62 / max(1e-9, step * 13)))   # tygodniowy: co który kwartał podpis (wąski wykres)
+    every = max(1, math.ceil(62 / max(1e-9, step * 13)))   # co który kwartał podpis (wąski wykres)
     q_no = 0
-    for i in range(n):   # oś czasu: początek każdego kwartału (miesięczny: styczeń co `yrs` lat)
-        new_q = dates[i][5:7] in ("01", "04", "07", "10") and (i == 0 or dates[i - 1][5:7] != dates[i][5:7])
-        if period == "M":
-            new_q = dates[i][5:7] == "01" and int(dates[i][:4]) % yrs == 0
-        if new_q:
+    for i in range(n):
+        if dates[i][5:7] in ("01", "04", "07", "10") and (i == 0 or dates[i - 1][5:7] != dates[i][5:7]):
             cv.create_line(xf(i), y0, xf(i), h - 22, fill=GRID)
             q_no += 1
-            if xf(i) > x0 + 28 and (period == "M" or (q_no - 1) % every == 0):   # przy samej krawędzi napis byłby ucięty
-                cv.create_text(xf(i), h - 10, text=dates[i][:4] if period == "M" else dates[i][:7], fill=DIM, font=FONT)
-    for k, s in smas.items():
-        pts = [(xf(i), yf(v)) for i, v in enumerate(s) if v]
-        if len(pts) > 1:
-            cv.create_line(*[p for xy in pts for p in xy], fill=SMA_COLORS[k], width=1.5)
-    for name, s in daily_mas.items():
-        pts = [(xf(i), yf(v)) for i, v in enumerate(s) if v]
-        if len(pts) > 1:
-            cv.create_line(*[p for xy in pts for p in xy], fill=DAILY_MA_COLORS[name], width=1.5)
-    pts = [(xf(i), yf(v)) for i, v in enumerate(c) if v] if period == "D" and daily_style == "line" else []
-    if len(pts) > 1:
-        cv.create_line(*[p for xy in pts for p in xy], fill=FG, width=1.6)
-    for i in range(n if period != "D" or daily_style == "bars" else 0):
+            if xf(i) > x0 + 28 and (q_no - 1) % every == 0:   # przy samej krawędzi napis byłby ucięty
+                cv.create_text(xf(i), h - 10, text=dates[i][:7], fill=DIM, font=FONT)
+    for i in range(n):
         if hi[i] is None or lo[i] is None or c[i] is None:
             continue
-        col = FG if zanger else UP if i == 0 or c[i - 1] is None or c[i] >= c[i - 1] else DOWN   # widok Zangera: słupki jednokolorowe
         x = xf(i)
-        cv.create_line(x, yf(hi[i]), x, yf(lo[i]), fill=col, width=max(1, step * 0.25))
-        if period == "D" and daily_style == "bars":
-            op = data["o"][i0 + i] if data.get("o") and i0 + i < len(data["o"]) else None
-            if op:
-                cv.create_line(x - step * 0.3, yf(op), x, yf(op), fill=col)
-            cv.create_line(x, yf(c[i]), x + step * 0.3, yf(c[i]), fill=col)
-        else:
-            cv.create_line(x - step * 0.35, yf(c[i]), x + step * 0.35, yf(c[i]), fill=col)
-    # Dzienny wykres słupkowy używa tego samego sygnału Blue Dot co tryb RWB.
-    if period == "D" and daily_style == "bars":
-        for i in blue_dot_indices:
-            low = data["l"][i]
-            if low:
-                y = yf(low) + 9
-                cv.create_oval(
-                    xf(i - i0) - 4, y - 4, xf(i - i0) + 4, y + 4,
-                    fill=BLUE_DOT, outline=""
-                )
-    # E = dzień publikacji wyników. E umieszczamy bezpośrednio pod Low świecy.
-    for i in sorted(earnings_local):
-        if i < len(lo) and lo[i] is not None:
-            boxed(cv, xf(i), yf(lo[i]) + 5, "E", "#f0b429", anchor="n", font=("Segoe UI", 9, "bold"))
-    if level and pmin < level < pmax:
-        y = yf(level)
-        cv.create_line(x0, y, x1, y, fill="#0a2e18", width=6)
-        cv.create_line(x0, y, x1, y, fill=GLB_COLOR, width=3)
-        cv.create_rectangle(x1 + 1, y - 9, w - 2, y + 9, fill=GLB_COLOR, outline="")
-        cv.create_text(x1 + 4, y, text=fmt(level), anchor="w", fill="#000", font=FONT)
-        # Zostaw wolny pas u góry na legendę SMA; etykietę Green Line umieszczaj niżej,
-        # jeśli linia jest blisko górnej krawędzi.
-        ty = max(y0 + 38, y - 11)
-        boxed(cv, x0 + 4, ty, f"GREEN LINE {fmt(level)} · kupno do {fmt(level * 1.1)}" + (" · wyjście: zamknięcie tyg. pod linią" if (row or {}).get("exit") == "GLB" else ""),
-              GLB_COLOR)
-    stop = _stop_level(row)   # metoda GLB: wyjście = zamknięcie pod Green Line
-    if stop and pmin < stop < pmax:
-        y = yf(stop)
-        cv.create_line(x0, y, x1, y, fill=STOP_COLOR, dash=(5, 4))
-        cv.create_text(x1 + 4, stop_y, text=fmt(stop), anchor="w", fill=STOP_COLOR, font=FONT)
-    pl = (row or {}).get("plan")   # 📌 pozycja: stop początkowy −10 % i „sprzedaj połowę” przy −20 % od szczytu
-    # Opisy poziomów pozycji dostają osobne wiersze, gdy ich ceny są blisko siebie.
-    position_labels = []
-    for v, col, lab in (((pl["stop_init"], STOP_COLOR, f"stop −10 % {fmt(pl['stop_init'])}"),
-                         (pl["half_at"], "#f0b429", f"½ przy {fmt(pl['half_at'])} (−20 % od szczytu {fmt(pl['peak'])})")) if pl else ()):
-        if v and pmin < v < pmax:
-            yy = yf(v)
-            cv.create_line(x0, yy, x1, yy, fill=col, dash=(2, 3))
-            label_y = yy - 8
-            if any(abs(label_y - used_y) < 16 for used_y in position_labels):
-                label_y = max(y0 + 38, min(y1 - 10, label_y + 17))
-            position_labels.append(label_y)
-            boxed(cv, x0 + 4, label_y, lab, col)
-    if zanger:
-        draw_patterns(cv, row, dates, xf, yf, g, step, pmin, pmax)
+        cv.create_line(x, yf(hi[i]), x, yf(lo[i]), fill=FG, width=max(1, step * 0.25))
+        cv.create_line(x - step * 0.35, yf(c[i]), x + step * 0.35, yf(c[i]), fill=FG)
+    if ly is not None:
+        cv.create_line(x0, ly, x1, ly, fill="#0a2e18", width=6)
+        cv.create_line(x0, ly, x1, ly, fill=GLB_COLOR, width=3)
+        cv.create_rectangle(x1 + 1, ly - 9, w - 2, ly + 9, fill=GLB_COLOR, outline="")
+        cv.create_text(x1 + 4, ly, text=fmt(level), anchor="w", fill="#000", font=FONT)
+        boxed(cv, x0 + 4, max(y0 + 38, ly - 11), f"GREEN LINE {fmt(level)} · kupno do {fmt(level * 1.1)}", GLB_COLOR)
+    draw_patterns(cv, row, dates, xf, yf, g, step, pmin, pmax)
     segs = draw_lines(cv, data, tlines, sel, i0, i1, xf, yf, g, step, w)
-    manual_y = draw_manual_stop(cv, manual, yf, g, w, pmin, pmax, stop_label)
-    last = c[-1]
+    manual_y = draw_manual_stop(cv, stop, yf, g, w, pmin, pmax, stop_label)
     if last:
         cv.create_text(x1 + 4, last_y, text=fmt(last), anchor="w", fill="#ffffff", font=("Consolas", 9, "bold"))
-    # wolumen + średnia 10 tyg.
-    v0, v1 = g["vol"]
+    v0, v1 = g["vol"]   # wolumen + średnia 10 tyg.
     vv = [x or 0 for x in vol]
     vmax = max(vv) or 1
     for i in range(n):
@@ -642,54 +552,9 @@ def draw(cv, data, row=None, w=None, h=None, n_show=None, end=None, tlines=(), s
     pts = [(xf(i), v1 - a / vmax * (v1 - v0) * 0.85) for i, a in enumerate(vavg) if a]
     if len(pts) > 1:
         cv.create_line(*[p for xy in pts for p in xy], fill="#ff9f43", width=1.5)
-    cv.create_text(x0 + 4, v0 + 6, text=f"Wolumen · śr. {nv} {u}" + (f" · RVol {rv:.1f}×" if rv is not None else ""), anchor="w",
+    cv.create_text(x0 + 4, v0 + 6, text=f"Wolumen · śr. {calc.RVOL_W} tyg." + (f" · RVol {rv:.1f}×" if rv is not None else ""), anchor="w",
                    fill=SIG_C if rv is not None and rv >= 1.5 else DIM, font=FONT)
-    # MACD
-    m0, m1 = g["macd"]
-    rng = (max(abs(x) for x in mac + sig + hist) or 1) * 1.25
-    mid = (m0 + m1) / 2
-
-    def ym(v):
-        return mid - v / rng * (m1 - m0) / 2
-
-    if period != "D" and not zanger:   # dzienny i widok Zangera: bez dolnego panelu (wyjście i tak po tygodniowym MACD)
-        cv.create_line(x0, mid, x1, mid, fill=GRID)
-        for i in range(n):
-            cv.create_rectangle(xf(i) - step * 0.3, ym(hist[i]), xf(i) + step * 0.3, mid, fill="#2f9e5a" if hist[i] >= 0 else "#a33a3e", outline="")
-        for s, col in ((mac, MACD_C), (sig, SIG_C)):
-            cv.create_line(*[p for i, v in enumerate(s) for p in (xf(i), ym(v))], fill=col, width=1.3)
-        for i in crosses:
-            cv.create_text(xf(i), m1 - 6, text="▼", fill=STOP_COLOR, font=FONT)
-        cv.create_text(x0 + 4, m0 + 6, text=f"MACD (12, 26, 9) {u}" + (" · ▼ = stop pod Low tygodnia przecięcia" if period == "W" else ""),
-                       anchor="w", fill=DIM, font=FONT)
-    legend = (("  ".join(DAILY_MA_COLORS) + " · ● Blue Dot") if daily_style == "bars" else "GMMA: szybkie EMA (czerwone) / wolne (niebieskie) · jasne tło = RWB · ● Blue Dot") if period == "D" else "  ".join(f"SMA {k} {u}" for k in ((4, 10, 30) if period == "W" else (10, 30)))
-    if zanger:
-        legend = "Widok Zangera: cena (skala log.) + wolumen · wzorce: " + (", ".join(p["name"] for p in (row or {}).get("patterns") or []) or "brak")
-    boxed(cv, x0 + 4, y1 - 10 if period == "D" else y0 + 10, legend, FG)
-    # RS Line jak w Deepvue nad wykresem (zastępuje panel S&P 500)
-    if not zanger:
-        draw_rs_panel(cv, data, i0, i1, xf, g, spx, row, period)
-    # przychody kwartalne (słupki w okresie kwartału) z dynamiką r/r: zielony ≥ +25 %, żółty ≥ +15 % (dzienny: bez)
-    if period == "D" or zanger:
-        return {"g": g, "step": step, "n": n, "i0": i0, "lmin": lmin, "lmax": lmax, "segs": segs, "stop_y": manual_y}
-    q0, q1 = g["rev"]
-    qs = (row or {}).get("qs") or []
-    shown = []
-    for m, q in enumerate(qs):
-        b = L.date_index(dates, q["quarter"])
-        a = L.date_index(dates, qs[m - 1]["quarter"]) + 1 if m > 0 else b - 12
-        if b >= 0 and a <= n - 1 and (q.get("rev") or 0) > 0:
-            shown.append((max(0, a), b, q))
-    rmax = max([q["rev"] for *_, q in shown] or [1])
-    for a, b, q in shown:
-        xa, xb = xf(a) - step * 0.45, xf(min(b, n - 1)) + step * 0.45
-        ht = q["rev"] / rmax * (q1 - q0 - 26)
-        col = rev_color(q.get("rev_rr"))
-        cv.create_rectangle(xa + 1, q1 - ht, max(xa + 2, xb - 1), q1, fill=col, outline="", stipple="gray75")
-        if xb - xa > 22 and q.get("rev_rr") is not None:
-            cv.create_text((xa + xb) / 2, q1 - ht - 6, text=f"{q['rev_rr']:+.0f}%", fill=col, font=FONT)
-    cv.create_text(x0 + 4, q0 + 4, text=(f"Przychody kw. · r/r % (zielony ≥ 25 %, żółty ≥ 15 %) · ostatni {fmt_big(qs[-1]['rev'])} $" if qs
-                                         else "Przychody kw. — brak danych SEC"), anchor="w", fill=DIM, font=FONT)
+    boxed(cv, x0 + 4, y0 + 10, "Widok Zangera: cena (skala log.) + wolumen · wzorce: " + (", ".join(p["name"] for p in (row or {}).get("patterns") or []) or "brak"), FG)
     return {"g": g, "step": step, "n": n, "i0": i0, "lmin": lmin, "lmax": lmax, "segs": segs, "stop_y": manual_y}
 
 
@@ -761,75 +626,6 @@ def draw_patterns(cv, row, dates, xf, yf, g, step, pmin, pmax):
                                       if para.get("state") == "ZŁAMANA" else f"PARABOLA · wyjście: zamknięcie tyg. pod linią 3 ({fmt(para['exit'])})"), PARABOLA_COLOR)
 
 
-def rs_line(closes, spx_closes):
-    """RS Line: zamknięcie akcji / zamknięcie SPY w tym samym tygodniu (sesji) — None, gdy brak."""
-    return [c / s if c and s else None for c, s in zip(closes, spx_closes)]
-
-
-RS_HIGH_C, RS_EARLY_C, RS_MA_C = "#3ddc84", "#f472b6", "#f0b429"
-
-
-def rs_markers(rs, highs, lookback):
-    """Szczyty RS Line jak w Deepvue: {indeks: True (nowy szczyt RS i ceny) / False (RS przed ceną)} — RS powyżej maksimum z `lookback` poprzednich."""
-    out = {}
-    for i in range(lookback, len(rs)):
-        v = rs[i]
-        prior = [x for x in rs[i - lookback:i] if x]
-        if not v or not prior or v <= max(prior):
-            continue
-        ph = [x for x in highs[i - lookback:i] if x]
-        out[i] = not ph or (highs[i] or 0) > max(ph)
-    return out
-
-
-def draw_rs_panel(cv, data, i0, i1, xf, g, spx, row=None, period="W"):
-    """Panel RS Line (Deepvue): akcja / SPY na skali log okna, średnia 52 tyg. (252 sesje na D, 12 mies. na M), ● zielony = nowy szczyt RS
-    i ceny, ● różowy = szczyt RS przed ceną; RS 52 tyg. w pp na końcu linii."""
-    s0, s1 = g["rs"]
-    x0, x1 = g["x0"], g["x1"]
-    dates, closes = data.get("d") or [], data.get("c") or []
-    highs = data.get("h") or closes
-    sv = []
-    if spx and spx.get("d"):
-        for d in dates:
-            k = L.date_index(spx["d"], d)
-            sv.append(spx["c"][k] if k >= 0 else None)
-    rs_full = rs_line(closes, sv) if sv else []
-    lookback = 252 if period == "D" else 12 if period == "M" else 52
-    ma_full = [None] * len(rs_full)
-    for i in range(lookback - 1, len(rs_full)):
-        win = rs_full[i - lookback + 1:i + 1]
-        if all(win):
-            ma_full[i] = sum(win) / lookback
-    rs, ma = rs_full[i0:i1], ma_full[i0:i1]
-    ok = [v for v in rs if v]
-    if len(ok) < 2:
-        cv.create_text(x0 + 4, s0 + 6, text="RS Line — brak danych SPY (zrób Sync)", anchor="w", fill=DIM, font=FONT)
-        cv.create_line(x0, s1 + 3, x1, s1 + 3, fill=GRID)
-        return
-    vals = ok + [v for v in ma if v]
-    lo_, hi_ = math.log(min(vals)), math.log(max(vals))
-
-    def yr(v):
-        return s1 - (math.log(v) - lo_) / ((hi_ - lo_) or 1) * (s1 - s0 - 4) - 2
-    pts = [(xf(i), yr(v)) for i, v in enumerate(rs) if v]
-    cv.create_line(*[p for xy in pts for p in xy], fill=RS_C, width=1.6)
-    mpts = [(xf(i), yr(v)) for i, v in enumerate(ma) if v]
-    if len(mpts) > 1:
-        cv.create_line(*[p for xy in mpts for p in xy], fill=RS_MA_C, width=1.3)
-    for i, with_price in rs_markers(rs_full, highs, lookback).items():
-        if i0 <= i < i1:
-            x, y = xf(i - i0), yr(rs_full[i])
-            cv.create_oval(x - 3.5, y - 3.5, x + 3.5, y + 3.5, fill=RS_HIGH_C if with_price else RS_EARLY_C, outline="")
-    r = row or {}
-    unit = "252 sesji" if period == "D" else "12 mies." if period == "M" else "52 tyg."
-    full = f"RS Line (akcja / SPY) · średnia {unit} · ● zielony = nowy szczyt RS · ● różowy = RS przed ceną"
-    boxed(cv, x0 + 4, s0 + 6, full if x1 - x0 > 7 * len(full) else f"RS / MA {unit}", RS_C)
-    if r.get("rs") is not None:   # na końcu linii: siła względna 52 tyg. w pp vs SPY (jak kolumna RS)
-        boxed(cv, x1 + 4, pts[-1][1], f"{r['rs']:+.0f} pp", RS_C)
-    cv.create_line(x0, s1 + 3, x1, s1 + 3, fill=GRID)
-
-
 def draw_lines(cv, data, tlines, sel, i0, i1, xf, yf, g, step, w):
     """Linie trendu: odcinek + (tylko z alarmem) przerywane przedłużenie do ostatniego tygodnia okna; Tk nie przycina, więc tniemy do panelu ceny. -> segs (px)."""
     x0, x1 = g["x0"], g["x1"]
@@ -858,6 +654,14 @@ def draw_lines(cv, data, tlines, sel, i0, i1, xf, yf, g, step, w):
             continue
         (ia, pa), (ib, pb) = sorted(((a, ln["p1"]), (b, ln["p2"])))
         ie = max(ib, i1 - 1) if ln.get("alert") is not False else ib   # przedłużenie tylko przy włączonym alarmie (to ono jest pilnowane)
+        if ln.get("ro"):   # linia z wykresu miesięcznego pokazana na tygodniowym: blada, przerywana, bez uchwytów (edycja tylko na M)
+            seg = clip(xf(ia - i0), yf(pa), xf(ib - i0), yf(pb))
+            if seg:
+                cv.create_line(*seg, fill=TLINE_RO, width=1.6, dash=(7, 3))
+            ext = clip(xf(ib - i0), yf(pb), xf(ie - i0), yf(L.line_at(ln, data["d"], ie))) if ie > ib else None
+            if ext:
+                cv.create_line(*ext, fill=TLINE_RO, dash=(3, 4))
+            continue
         s = {"id": ln["id"], "x1": xf(a - i0), "y1": yf(ln["p1"]), "x2": xf(b - i0), "y2": yf(ln["p2"]), "xe": xf(ie - i0), "ye": yf(L.line_at(ln, data["d"], ie))}
         segs.append(s)
         on = ln["id"] == sel
@@ -873,43 +677,6 @@ def draw_lines(cv, data, tlines, sel, i0, i1, xf, yf, g, step, w):
         if ln.get("alert") is not False and s["xe"] >= x1 - step and y0 < s["ye"] < y1:
             cv.create_text(x1 + 4, s["ye"], text=f"🔔 {fmt(L.line_at(ln, data['d'], i1 - 1))}", anchor="w", fill=TLINE, font=FONT)
     return segs
-
-
-def draw_rwb(cv, data, row, i0, i1, xf, yf, g, step, cfull):
-    """Dzienny: jasne tło przy RWB, 6 szybkich (czerwone) i 6 wolnych (niebieskie) EMA, ● Blue Dot pod świecą i stop pod Low ostatniej kropki."""
-    y0, y1 = g["price"]
-    fast, slow = calc.gmma(cfull)
-    r = calc.rwb(cfull)[i0:i1]
-    a = None
-    for i, on in enumerate(r + [False]):   # odcinki RWB = tło pod świecami
-        if on and a is None:
-            a = i
-        elif not on and a is not None:
-            cv.create_rectangle(xf(a) - step / 2, y0, xf(i - 1) + step / 2, y1, fill=RWB_BG, outline="")
-            a = None
-    for lines_, col in ((slow, SLOW_C), (fast, FAST_C)):
-        for s in lines_:
-            pts = [(xf(i), yf(v)) for i, v in enumerate(s[i0:i1]) if v]
-            if len(pts) > 1:
-                cv.create_line(*[p for xy in pts for p in xy], fill=col, width=1)
-    dots = [i for i in calc.blue_dots(data["h"], data["l"], data["c"], (row or {}).get("glb")) if i0 <= i < i1]
-    for i in dots:
-        lo = data["l"][i]
-        if lo:
-            y = yf(lo) + 9
-            cv.create_oval(xf(i - i0) - 4, y - 4, xf(i - i0) + 4, y + 4, fill=BLUE_DOT, outline="")
-    return dots
-
-
-def _stop_level(row):
-    """Linia stopu na wykresie: dla 📌 pozycji max(−10 %, MACD od wejścia), bez pozycji stop MACD wiersza; metoda GLB — brak."""
-    r = row or {}
-    if r.get("exit") == "GLB":
-        return None
-    pl = r.get("plan")
-    if pl:
-        return max((v for v in (pl.get("macd_stop"), pl.get("stop_init")) if v), default=None)
-    return r.get("macd_stop")
 
 
 def fund_panel_lines(r, pos=None, plan=None, exit_method="MACD", conditions=None):
@@ -1149,19 +916,19 @@ class ChartWindow(tk.Toplevel):
         self.geometry(f"{int(hh * 0.92)}x{hh}+40+10")
         apply_dark(self)
         self.sel, self.gest = None, None   # zaznaczona linia trendu, gest myszy na wykresie
-        self.period, self.other = "W", {"M": {}, "D": {}}   # W = tygodniowy, D = dzienny (2 lata), M = miesięczny (pełna historia) — w pamięci
+        self.period, self.other = "W", {"M": {}}   # W = tygodniowy (3 lata), M = miesięczny (pełna historia, w pamięci)
+        self.rwb = False   # RWB (GMMA + Blue Dot) na wykresie tygodniowym
         top = tk.Frame(self, bg=PANEL)
         top.pack(fill="x")
-        self.daily_style = "bars"
-        self.daily_style_btn = tk.Button(top, text="D: RWB", command=self.toggle_daily_style, relief="flat")
-        self.daily_style_btn.pack(side="right", padx=2, pady=2)
+        self.rwb_btn = tk.Button(top, text="RWB", width=4, command=self.toggle_rwb, relief="flat")
+        self.rwb_btn.pack(side="right", padx=2, pady=2)
         self.sync_btn = tk.Button(top, text="⟳ Sync", command=self.sync_current_ticker, relief="flat")
         self.sync_btn.pack(side="right", padx=2, pady=2)
         self.syncing_ticker = None
         self.watch_btn = tk.Button(top, text="🔕 Obserwuj", command=self.toggle_watch, relief="flat")
         self.watch_btn.pack(side="right", padx=4, pady=2)
-        self.per_btns = {}   # osobne przyciski M / T / D (klawisze m / w / d)
-        for per, lab in (("D", "D"), ("W", "T"), ("M", "M")):
+        self.per_btns = {}   # osobne przyciski M / T (klawisze m / w)
+        for per, lab in (("W", "T"), ("M", "M")):
             b = tk.Button(top, text=lab, width=2, command=lambda x=per: self.toggle_period(x), relief="flat")
             b.pack(side="right", padx=1, pady=2)
             self.per_btns[per] = b
@@ -1270,12 +1037,10 @@ class ChartWindow(tk.Toplevel):
         self.bind("<Delete>", lambda e: self.delete_selected())
         self.bind("<Control-space>", self.focus_ticker_entry)
         self.bind("m", lambda e: self.toggle_period("M"))
-        self.bind("d", lambda e: self.toggle_period("D"))
         self.bind("w", lambda e: self.toggle_period("W"))
         self.bind("z", lambda e: self.toggle_zanger())
-        # R przełącza RWB/słupki tylko na wykresie dziennym.
-        self.bind("r", lambda e: self.toggle_daily_style() if self.period == "D" else None)
-        self.bind("R", lambda e: self.toggle_daily_style() if self.period == "D" else None)
+        self.bind("r", lambda e: self.toggle_rwb())   # RWB (GMMA + Blue Dot) na tygodniowym
+        self.bind("R", lambda e: self.toggle_rwb())
         for w in (self.cv, self.slider):
             w.bind("<MouseWheel>", lambda e: self.zoom(0.85 if e.delta > 0 else 1.18))
             w.bind("<Button-4>", lambda e: self.zoom(0.85))
@@ -1309,8 +1074,8 @@ class ChartWindow(tk.Toplevel):
         return "break"
 
     def data(self):
-        if self.period in ("M", "D"):
-            return self.other[self.period].get(self.ticker)
+        if self.period == "M":
+            return self.other["M"].get(self.ticker)
         return self.app.store.weekly(self.ticker)
 
     def refresh_earnings_dates(self, ticker=None):
@@ -1333,8 +1098,10 @@ class ChartWindow(tk.Toplevel):
             self.syncing_ticker = None
             self.sync_btn.config(state="normal", text="⟳ Sync")
 
-    def toggle_daily_style(self):
-        self.daily_style = "bars" if self.daily_style == "line" else "line"
+    def toggle_rwb(self):
+        """RWB: 12 średnich Guppy (szybkie czerwone, wolne niebieskie), pasek RWB i ● Blue Dot — tylko na wykresie tygodniowym (T)."""
+        self.rwb = not self.rwb
+        self.mark_period()
         self.redraw()
 
     def toggle_zanger(self):
@@ -1346,70 +1113,65 @@ class ChartWindow(tk.Toplevel):
         self.redraw()
 
     def toggle_period(self, to=None):
-        """M / T / D (bez argumentu: tygodniowy → dzienny → miesięczny). Dzienny (2 lata) i miesięczny (pełna historia) z yfinance (ceny bez korekty),
-        raz na spółkę w tle."""
-        self.period = to or {"W": "D", "D": "M", "M": "W"}[self.period]
+        """M / T (bez argumentu: przełącza). Miesięczny (pełna historia) z yfinance (ceny bez korekty), raz na spółkę w tle."""
+        self.period = to or {"W": "M", "M": "W"}[self.period]
         if self.period != "W" and self.zanger:
             self.zanger = False
             self.zanger_btn.config(bg=self.del_btn.cget("bg"), fg=FG)
-        self.n_show, self.end, self.sel = (260 if self.period == "D" else None), None, None   # dzienny: domyślnie ostatni rok
+        self.n_show, self.end, self.sel = None, None, None
         self.mark_period()
         self.load_period()
 
     def mark_period(self):
         for per, b in self.per_btns.items():
             b.config(bg="#1f3b5c" if per == self.period else self.del_btn.cget("bg"), fg="#ffffff" if per == self.period else FG)
+        on = self.rwb and self.period == "W"
+        self.rwb_btn.config(state="normal" if self.period == "W" else "disabled", bg="#1f3b5c" if on else self.del_btn.cget("bg"), fg="#ffffff" if on else FG)
 
     def load_period(self):
         t, per = self.ticker, self.period
         self.refresh_earnings_dates(t)
-        if per in ("M", "D") and t not in self.other[per]:
-            # Dane dzienne są zapisywane do daily.json. Pełne OHLC miesięczne
-            # przechowujemy osobno, bo monthly.json zawiera tylko High do Green Line.
-            cached = self.app.store.daily(t) if per == "D" else self.app.store.cache("monthly_ohlc").get(t)
+        if per == "M" and t not in self.other["M"]:
+            # Pełne OHLC miesięczne przechowujemy osobno, bo monthly.json zawiera tylko High do Green Line.
+            cached = self.app.store.cache("monthly_ohlc").get(t)
             if cached and cached.get("d"):
-                self.other[per][t] = cached
+                self.other["M"][t] = cached
             else:
                 self.cv.delete("all")
-                self.cv.create_text(20, 20, text=f"Pobieram {'historię miesięczną' if per == 'M' else 'świece dzienne'} {t}…", anchor="w", fill=FG)
+                self.cv.create_text(20, 20, text=f"Pobieram historię miesięczną {t}…", anchor="w", fill=FG)
 
                 def work():
                     try:
-                        m = prices.monthly_ohlc(t) if per == "M" else prices.daily_ohlc(t)
+                        m = prices.monthly_ohlc(t)
                     except Exception:   # brak sieci: komunikat na wykresie
                         m = None
                     if m:
-                        m["period"] = per
-                        m["open_last"] = per == "M" and m["d"][-1][:7] == dt.date.today().strftime("%Y-%m")
+                        m["period"] = "M"
+                        m["open_last"] = m["d"][-1][:7] == dt.date.today().strftime("%Y-%m")
                     box.append(m)
                 box = []   # wynik z wątku odbieramy w pętli Tk (Tk nie jest wielowątkowy)
                 threading.Thread(target=work, daemon=True).start()
 
                 def poll():
                     if box:
-                        self._got(t, box[0], per)
+                        self._got(t, box[0])
                     elif self.winfo_exists():
                         self.after(100, poll)
                 self.after(100, poll)
                 return
-        name = {"M": "miesięczny", "D": "dzienny"}.get(per, "tygodniowy")
-        self.title(f"{t} — {name}")
+        self.title(f"{t} — {'miesięczny' if per == 'M' else 'tygodniowy'}")
         self.redraw()
 
-    def _got(self, t, m, per="M"):
+    def _got(self, t, m):
         if not m:   # nie zapamiętujemy porażki — kolejne przełączenie spróbuje ponownie
             if t == self.ticker and self.winfo_exists():
                 self.cv.delete("all")
                 self.cv.create_text(20, 20, text=f"Nie udało się pobrać danych {t} (sieć / yfinance) — 📅 przełącza dalej.", anchor="w", fill=FG)
             return
-        self.other[per][t] = m
-        if per == "D":
-            self.app.store.save_daily_series(t, m)
-            self.app.check_alerts(refresh_daily=False)
-        elif per == "M":
-            monthly_cache = self.app.store.cache("monthly_ohlc")
-            monthly_cache[t] = m
-            self.app.store.save_cache("monthly_ohlc", monthly_cache)
+        self.other["M"][t] = m
+        monthly_cache = self.app.store.cache("monthly_ohlc")
+        monthly_cache[t] = m
+        self.app.store.save_cache("monthly_ohlc", monthly_cache)
         if t == self.ticker and self.winfo_exists():
             self.load_period()
 
@@ -1417,7 +1179,7 @@ class ChartWindow(tk.Toplevel):
         self.ticker, self.end, self.sel, self.gest = ticker, None, None, None
         self.symbol_var.set(ticker)
         if self.period != "W":
-            self.n_show = 260 if self.period == "D" else None
+            self.n_show = None
         r = self.app.store.row(ticker) or {}
         company = r.get("company") or ""
         self.head.config(text=f"  ·  {company}" if company else "")
@@ -1440,12 +1202,10 @@ class ChartWindow(tk.Toplevel):
                        else f"Brak danych dla {self.ticker} — wpisz ticker powyżej lub użyj Ctrl+Space.")
             self.cv.create_text(20, 20, text=message, anchor="w", fill=FG)
             return
-        self.daily_style_btn.config(state="normal" if self.period == "D" else "disabled",
-                                    text="D: RWB" if self.daily_style == "bars" else "D: słupki")
-        spx = (self.period == "D" and self.app.store.daily("SPY")) or (self.spy_monthly() if self.period == "M" else self.app.store.weekly("SPY"))
-        self.geom = draw(self.cv, data, self.row_for_chart(), n_show=self.n_show, end=self.end, tlines=self.lines(), sel=self.sel,
-                         spx=spx, period=self.period, daily_style=self.daily_style,
-                         earnings_dates=self.earnings_dates, zanger=self.zanger and self.period == "W",
+        self.mark_period()
+        spx = self.spy_monthly() if self.period == "M" else self.app.store.weekly("SPY")
+        self.geom = draw(self.cv, data, self.row_for_chart(), n_show=self.n_show, end=self.end, tlines=self.shown_lines(), sel=self.sel,
+                         spx=spx, period=self.period, rwb=self.rwb, zanger=self.zanger and self.period == "W",
                          stop=self.manual_stop(), stop_label=self.stop_label())
 
     def spy_monthly(self):
@@ -1500,7 +1260,7 @@ class ChartWindow(tk.Toplevel):
     def draw_slider(self):
         data = self.data()
         if data:
-            draw_slider(self.slider, data["c"], self.n_show, self.end, {"M": "mies.", "D": "sesji"}.get(self.period, "tyg."))
+            draw_slider(self.slider, data["c"], self.n_show, self.end, "mies." if self.period == "M" else "tyg.")
         else:
             self.slider.delete("all")
 
@@ -1554,16 +1314,13 @@ class ChartWindow(tk.Toplevel):
         self.cv.create_line(e.x, (g["rs"] or g["price"])[0], e.x, g["macd"][1], fill="#3a4654", tags="tip")
         index = self.geom["i0"] + i
         lines = [s for s in info_lines(data, index) if s]
-        if self.period in ("D", "W"):
+        if self.period == "W":
             cache = getattr(self, "earnings_cache_entry", None) or {}
             lines.extend(earnings_tooltip_lines(data, index, cache, self.period))
-        # Blue Dot pokazujemy w dymku danych po najechaniu na świecę, w obu stylach dziennych.
-        if self.period == "D":
+        if self.period == "W" and self.rwb:   # Blue Dot w dymku świecy (tygodniowy)
             row = self.app.store.row(self.ticker) or {}
-            dots = calc.blue_dots(data["h"], data["l"], data["c"], row.get("glb"))
-            if index in dots:
-                low = data["l"][index]
-                lines.extend([f"BLUE DOT · {data['d'][index]}", f"Stop pod Low: {fmt(low)}"])
+            if index in calc.blue_dots(data["h"], data["l"], data["c"], row.get("glb")):
+                lines.extend([f"BLUE DOT · {data['d'][index]}", f"Stop pod Low: {fmt(data['l'][index])}"])
         tip_w = 252
         x = e.x + 14 if e.x < g["x1"] - tip_w - 14 else e.x - tip_w - 14
         self.cv.create_rectangle(x, e.y + 10, x + tip_w, e.y + 16 + 15 * len(lines), fill="#1b2027", outline="#3a4654", tags="tip")
@@ -1572,10 +1329,15 @@ class ChartWindow(tk.Toplevel):
 
     # --- linie trendu
     def lines(self):
-        if self.period not in ("W", "D"):
-            return []
-        return [ln for ln in self.app.store.alerts["lines"].get(self.ticker, [])
-                if ln.get("period", "W") == self.period]
+        """Linie trendu bieżącego interwału (te można rysować, przesuwać i usuwać); stare linie bez period są tygodniowe."""
+        return [ln for ln in self.app.store.alerts["lines"].get(self.ticker, []) if ln.get("period", "W") == self.period]
+
+    def shown_lines(self):
+        """Linie do narysowania: własne + (na tygodniowym) linie narysowane na miesięcznym jako tylko do odczytu."""
+        own = self.lines()
+        if self.period == "W":
+            own = own + [{**ln, "ro": True} for ln in self.app.store.alerts["lines"].get(self.ticker, []) if ln.get("period") == "M"]
+        return own
 
     def find(self, lid):
         return next((x for x in self.lines() if x["id"] == lid), None)
@@ -1609,11 +1371,9 @@ class ChartWindow(tk.Toplevel):
         if not self.geom or not self.data():
             return
         self.cv.focus_set()
-        hit = L.hit_line(self.geom["segs"], e.x, e.y, 9) if self.period in ("W", "D") else None   # linie trendu: tygodniowy i dzienny
+        hit = L.hit_line(self.geom["segs"], e.x, e.y, 9)   # linie trendu: tygodniowy i miesięczny (miesięczne na tygodniowym są tylko do odczytu)
         if not hit and self.near_stop(e.x, e.y):   # chwycona linia ręcznego stopu: przeciąganie w pionie
             self.gest = {"mode": "stop"}
-            return
-        if self.period not in ("W", "D"):
             return
         if hit:
             self.sel = hit[0]
@@ -1806,8 +1566,6 @@ class ChartWindow(tk.Toplevel):
             self.save_lines()
             self.tools()
             self.redraw()
-            if ln.get("alert") is not False and ln.get("period", "W") == "D":
-                self.app.refresh_daily_alerts()
 
     def toggle_watch(self):
         st = self.app.store

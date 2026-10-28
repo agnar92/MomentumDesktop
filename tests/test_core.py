@@ -45,13 +45,13 @@ def test_glb_armed_only_after_breakout_from_below_and_expires_after_a_run():
     assert row["glb_state"] == "WYBICIE"
 
 
-def test_fresh_blue_dot_only_in_last_sessions():
+def test_fresh_blue_dot_only_in_last_weeks():
     n = 160
     c = [50 + i * 0.4 for i in range(n)]
     c[150:154] = [c[149] - 3, c[149] - 6, c[149] - 7, c[149] - 1]       # korekta w trendzie, potem odbicie: Stochastic przecina 20 w górę
     d = {"d": [f"2026-{1 + i // 28:02d}-{1 + i % 28:02d}" for i in range(n)], "h": [x + 1 for x in c], "l": [x - 1 for x in c], "c": c}
-    assert calc.fresh_blue_dot(d, 40, sessions=10) == d["d"][153]
-    assert calc.fresh_blue_dot(d, 40, sessions=5) is None                 # kropka starsza niż 5 sesji
+    assert calc.fresh_blue_dot(d, 40, weeks=10) == d["d"][153]
+    assert calc.fresh_blue_dot(d, 40, weeks=5) is None                    # kropka starsza niż 5 tygodni
     assert calc.fresh_blue_dot(d, 1e9) is None and calc.fresh_blue_dot(None, 40) is None
     assert calc.glb_state(99, 103, 100) == "POD"
     assert calc.glb_state(99, 103, None) == "BRAK"
@@ -384,12 +384,11 @@ def test_sync_run_with_fake_sources(tmp_path):
     rows = sync.run(store, log=lambda s: None, fetch_list=lambda f, max_tickers, log, progress: ([{"ticker": "A"}, {"ticker": "B"}], 2),
                     weekly=lambda ts, log, cache, progress: {"A": w, "B": {**w, "v": [1e3] * 60}, "SPY": SPY}, monthly=monthly, fund=fund,
                     est=lambda ts, cache, log: cache.update({t: {"at": "2026-10-20", **EST} for t in ts}),
-                    daily=lambda ts, log, **kw: {t: {**w, "v": [1e6] * 59 + [3e6]} for t in ts},
                     progress=lambda f, st: steps.append((round(f, 2), st)))
     assert [f for f, _ in steps] == [0.0, 0.15, 0.4, 0.6, 1.0] and steps[-1][1] == "Gotowe"
     a = next(r for r in rows if r["ticker"] == "A")
     assert a["ok"] and a["glb_state"] == "SYGNAŁ"
-    assert a["rvol_w"] == pytest.approx(1.0) and a["rvol_d"] == pytest.approx(3.0)     # wolumen relatywny: tydzień / 10, sesja / 50
+    assert a["rvol_w"] == pytest.approx(1.0) and "rvol_d" not in a and a["cc52w"] == pytest.approx(calc.price_ratio(w["c"]))   # RVol tygodniowy; C/C[52 tyg.] z tygodniowych zamknięć
     assert next(r for r in rows if r["ticker"] == "B")["ok"]       # mały obrót nie blokuje (płynność = filtr Finviz)
     assert Store(tmp_path).rows and Store(tmp_path).weekly("A")["c"][-1] == 104.0
 
@@ -510,13 +509,12 @@ def test_upside_and_rs_rating_removed():
 def test_ruler_text_percent_and_bars():
     from desktop.chart import ruler_text
     assert ruler_text(100, 150, 10, 22).startswith("+50.0 % · 12 tyg.")
-    assert ruler_text(100, 80, 5, 2, "D").startswith("-20.0 % · 3 sesji")
     assert " mies." in ruler_text(10, 11, 0, 4, "M")
 
 
-def test_price_ratio_252_sessions():
-    closes = [100.0] + [50.0] * 251 + [75.0]
-    assert calc.price_ratio(closes) == pytest.approx(0.75)        # 253 zamknięcia: baza = pierwsze (sprzed 252 sesji)
+def test_price_ratio_52_weeks():
+    closes = [100.0] + [50.0] * 51 + [75.0]
+    assert calc.price_ratio(closes) == pytest.approx(0.75)        # 53 zamknięcia tygodni: baza = pierwsze (sprzed 52 tygodni)
     assert calc.price_ratio([10.0, 20.0]) == pytest.approx(2.0)    # krótsza historia: najstarsze zamknięcie
     assert calc.price_ratio([5.0]) is None
 
@@ -580,7 +578,7 @@ def test_sync_sector_scanner_runs_one_query_per_top_sector(tmp_path):
         for t in ts:
             cache[t] = {"h": [["2025-01", 50], ["2025-02", 100], ["2025-03", 90], ["2025-04", 90], ["2025-05", 90]], "upto": "2025-05", "raw": 1}
     rows = sync.run(store, log=lambda s: None, fetch_list=fetch, weekly=weekly, monthly=monthly,
-                    fund=lambda ts, cache, ua, log, progress=None: None, est=lambda ts, cache, log: None, daily=lambda ts, log, **kw: {})
+                    fund=lambda ts, cache, ua, log, progress=None: None, est=lambda ts, cache, log: None)
     assert len(queries) == 3 and all(q.startswith("sec_") and "sh_price_o15" in q for q in queries)
     assert [r["ticker"] for r in rows] == ["A"] and Store(tmp_path).sectors and sum(x["selected"] for x in Store(tmp_path).sectors) == 3
 

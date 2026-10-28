@@ -6,7 +6,7 @@ Prosta aplikacja okienkowa (Python + Tkinter, ciemny motyw) z **jedną strategi�
 |---|---|
 | Skaner sektorowy (podstawowy) | RS sektora = cena ETF sektora (XLB, XLC, XLY, XLP, XLE, XLF, XLV, XLI, XLRE, XLK, XLU) / SPY, tygodniowo; sektor jest dodatni, gdy RS jest nad własną SMA 52 tyg.; ranking po % nad SMA. 3 najsilniejsze dodatnie sektory = 3 zapytania Finviz (`sec_<sektor>` + `ind_stocksonly,sh_price_o15,sh_avgvol_o300,fa_salesqoq_o15`), wyniki bez powtórzeń. Kolumna *RS sektora %*, ranking w pasku statusu. Test 2011–25 (bez fundamentów): top 3 sektory ≈ 11,8 %/rok, DD −28 % wobec ≈ 9,3 % / −38 % bez sektorów — bez walidacji statystycznej |
 | Wzorce Zangera | Przycisk **Z** (klawisz z) na wykresie tygodniowym: widok jak u Zangera — cena (skala log.), wolumen, słupki jednokolorowe, bez RS / MACD / przychodów — z konturem wzorca i poziomem kupna. **Wszystkie 11 wzorców ze strony chartpattern.com**: kupno — Cup & Handle, Flat Base, Ascending Triangle, Flaga/Proporzec (kupno przy przebiciu opadającej linii), Channel, Symmetrical Triangle, Descending Triangle (kupno przy przebiciu opadającej linii, jak na przykładzie strony), Falling Wedge, Inverted H&S (przebicie linii szyi); ostrzeżenia przy wyjściu — Head & Shoulders (złamanie linii szyi), Rising Wedge (złamanie dolnej linii), Parabolic Curve. Kolumny *Wzorzec Zangera*, *Do kupna wzorca %*, *Ostrzeżenie wzorca*, filtry i presety. Strona podaje liczby tylko dla Cup & Handle, reszta to **moje przybliżenie** opisów i schematów; niesprawdzone jako strategia |
-| Linie trendu | Przeciągnij po wykresie = nowa linia (też dziennym); **nowa linia jest bez alarmu i bez przedłużenia** — alarm włączasz sam (prawy przycisk → „Dodaj alert linii”), wtedy linia przedłuża się do ostatniego tygodnia; blisko poziomu drugiego końca linia sama się prostuje („poziomo”); w trakcie rysowania podgląd % · tygodnie · cena; **↶ / Ctrl+Z** cofa (zmiana, usunięcie); w widoku Z słupki są jednokolorowe |
+| Linie trendu | Przeciągnij po wykresie = nowa linia (tygodniowym i **miesięcznym** — miesięczne widać też na tygodniowym); **nowa linia jest bez alarmu i bez przedłużenia** — alarm włączasz sam (prawy przycisk → „Dodaj alert linii”), wtedy linia przedłuża się do ostatniego tygodnia; blisko poziomu drugiego końca linia sama się prostuje („poziomo”); w trakcie rysowania podgląd % · tygodnie · cena; **↶ / Ctrl+Z** cofa (zmiana, usunięcie); w widoku Z słupki są jednokolorowe |
 | Parabolic Curve | Wg schematu Zangera (chartpattern.com): schodkowa formacja kilku baz, każda wyżej i bardziej stroma. Szukam łańcucha **3 połączonych rosnących linii podparcia** (kotwica każdej kolejnej leży na poprzedniej ±2 %, jak wachlarz na schemacie) na tygodniowych Low (każda ≥ 15 % bardziej stroma, kolejne kotwice później), wzrost ≥ +100 % od początku najflatszej, najbardziej stroma ma świeżą kotwicę, a cena nie jest więcej niż 20 % nad nią (po luce w górę poziom wyjścia nie ma sensu). Ostrzeżenie przy wyjściu, nie sygnał kupna: **TRWA** (wyjście = zamknięcie tygodnia pod najbardziej stromą linią) albo **ZŁAMANA** (zamknięcie pod nią w ostatnich 3 tyg., z wolumenem względem średniej 10 tyg.). Linie 1/2/3 rysują się w widoku Z; pojawia się w panelu pozycji. Progi to przybliżenie (strona nie podaje liczb) |
 | EPS Rating | Przybliżenie IBD (formuła IBD nie jest publiczna): 0,5 × średni wzrost EPS r/r z 2 ostatnich kwartałów + 0,3 × 3-letni wzrost EPS TTM + 0,2 × stabilność (udział z 8 kwartałów ze wzrostem r/r); wynik = percentyl 1–99 **wśród spółek aktualnej listy** (nie wszystkich akcji USA). Kolumna informacyjna, nie warunek |
 | Lista do pobrania | **Skaner Finviz** do wyboru na pasku (*Skanery / ustawienia…*: własne skanery = nazwa + filtr + limit; domyślnie **Sektory top 3 (RS)**, Bezpieczny (backtest), Trend 50/200, Blisko rekordu (ATH), CANSLIM). Pierwszy = bezpieczny filtr wstępny `ind_stocksonly,sh_price_o10,sh_avgvol_o300,fa_salesqoq_o15` (tylko akcje, cena > 10 $, śr. wolumen > 300 tys., przychody kw. > 15 % r/r). W teście nie odciął żadnego z dużych zwycięzców |
@@ -32,53 +32,51 @@ Heurystyka z backtestu (spółki z dzisiejszej listy, bez spółek wycofanych z 
 - **Wykres T (tygodniowy, 3 lata) i M (miesięczny, cała historia)** — prosty układ: **szare słupki OHLC**, **niebieska SMA 10** danego interwału, **zielona kropkowana
   Green Line** od świecy rekordu (z ceną nad świecą i na osi), **zielone tło tam, gdzie SPY jest nad własną SMA 10** tego samego interwału (na T tygodniową, na M miesięczną;
   SPY miesięczny pobiera się w tle raz), **szary, lekko przezroczysty pas 0–10 % nad Green Line** (strefa kupna) z **przerywaną linią na 5 %**, wolumen (zielony / czerwony ze średnią 10) i MACD (12, 26, 9; histogram w 4 kolorach). ↑ / ↓ = następna / poprzednia spółka, ruch myszy = dane
-  świecy (w dymku także Earnings / Revenue Surprise, gdy świeca zawiera raport wyników; brak konsensusu przychodów = N/D). Dzienny (D) i widok Zangera (Z) mają własne, rozbudowane rysowanie.
+  świecy (w dymku także Earnings / Revenue Surprise, gdy świeca zawiera raport wyników; brak konsensusu przychodów = N/D). Widok Zangera (Z, tylko T) ma własne rysowanie. **RWB** (przycisk RWB / klawisz r, tylko T): 12 średnich Guppy, pasek RWB i ● Blue Dot na tygodniowych świecach.
   **Suwak** nad wykresem (minimapa całej historii): przeciągnij ramkę = przesuń okno, krawędzie = zmień długość, klik obok ramki = skok, kółko myszy / + − = zoom, ← / → = przesuń o 4 tygodnie.
-  Przycisk **⟳ Sync** w oknie wykresu odświeża tylko aktualną spółkę (świece tygodniowe, fundamenty oraz dane dzienne i miesięczne) w tle, bez ponownego skanowania całego Finviz.
+  Przycisk **⟳ Sync** w oknie wykresu odświeża tylko aktualną spółkę (świece tygodniowe i miesięczne oraz fundamenty) w tle, bez ponownego skanowania całego Finviz.
 - **💰 Wielkość** (przycisk na wykresie): kalkulator pozycji. Podajesz **kapitał w PLN** i **ryzyko w % kapitału**; kurs USD/PLN pobiera się z yfinance (`PLN=X`, można poprawić ręcznie),
   kapitał liczy się w USD, a liczba akcji = ryzyko / (wejście − stop), nie więcej niż za cały kapitał (całe akcje). Przy **📌 pozycji** wejście i stop biorą się z pozycji
   (stop = większy z −10 % i stopu MACD od wejścia), bez pozycji: ostatnia cena i Green Line (albo −10 %); wejście i stop można edytować. Okno pokazuje wartość pozycji w USD i PLN,
   stratę przy stopie oraz wariant „cały kapitał”. Kapitał i ryzyko są zapamiętywane.
 - **🛑 Ręczny stop** (przycisk **Stop** na wykresie): czerwona przerywana linia, którą **przeciągasz myszą w pionie** (przyciąga się do High / Low świecy pod kursorem — wygodne przy stopie
   pod dołkiem wzorca); **dwuklik** na panelu ceny = stop w tym miejscu, prawy przycisk na linii = usuń, przycisk **Stop ✕** też usuwa. Napis na linii: cena, % od wejścia i (po podaniu kapitału
-  w 💰 Wielkość) liczba akcji z wartością w PLN. Jeden poziom na spółkę, widoczny na T / M / D / Z (zapis w `settings.json`); okno 💰 Wielkość bierze go jako stop i zmienia go, gdy wpiszesz inny.
-- **Linie trendu**: na wykresie tygodniowym i dziennym przeciągnij myszą po panelu ceny, aby narysować linię (punkty przyciągają się do High / Low świecy).
+  w 💰 Wielkość) liczba akcji z wartością w PLN. Jeden poziom na spółkę, widoczny na T / M / Z (zapis w `settings.json`); okno 💰 Wielkość bierze go jako stop i zmienia go, gdy wpiszesz inny.
+- **Linie trendu**: na wykresie tygodniowym i **miesięcznym** przeciągnij myszą po panelu ceny, aby narysować linię (punkty przyciągają się do High / Low świecy).
   Chwyć koniec, aby zmienić punkt; chwyć środek, aby przesunąć. Prawy klik na linii otwiera menu **Dodaj/wyłącz alert linii** lub **Usuń linię**; Delete usuwa zaznaczoną linię.
-  **Miarka**: przytrzymaj prawy przycisk myszy na panelu ceny (poza linią) i przesuwaj — od punktu kliknięcia widać zmianę ceny w % i liczbę tygodni (sesji na D, miesięcy na M); puszczenie przycisku chowa miarkę.
-  Linia jest przedłużona przerywaną kreską do ostatniej świecy. Linie dzienne i tygodniowe są przechowywane osobno; alert na linii dziennej sprawdza dzienne zamknięcia.
+  **Miarka**: przytrzymaj prawy przycisk myszy na panelu ceny (poza linią) i przesuwaj — od punktu kliknięcia widać zmianę ceny w % i liczbę tygodni (miesięcy na M); puszczenie przycisku chowa miarkę.
+  Linia jest przedłużona przerywaną kreską do ostatniej świecy. Linie miesięczne i tygodniowe są przechowywane osobno; **linie z wykresu miesięcznego są widoczne na tygodniowym** (blade, przerywane, tylko do odczytu — edytujesz je na M). Alert na każdej linii sprawdza zamknięcia TYGODNIA.
 - **🔔 Alerty** (pasek): zamknięcie tygodnia przecięło linię trendu oraz dla obserwowanych spółek (🔕 Obserwuj na wykresie): sygnał GLB, przecięcie MACD
   w dół, zamknięcie pod stopem MACD, spełnione warunki. Sprawdzane po starcie i po każdym Sync; zapis w `data/alerts.json`.
 - **Warunki domyślne** (zmieniane przyciskiem **Warunki…**; bez progu obrotu — płynność ustawiasz filtrem w Finviz): przychody kw. ≥ +15 % r/r i marża oper. ≥ +3 pp r/r; P/S < 20, siła
   względna (RS ≥ 50 pp nad SPY) i 2 raporty EPS powyżej konsensusu można włączyć ręcznie. Starsze zapisane ustawienia warunków są raz resetowane do nowych domyślnych. Wcześniejszy backtest (płynny rynek): Backtest 2015–2026: +15,6 % na transakcję, portfel wszystkich sygnałów
   36,6 % rocznie (S&P 500 13,6 %), ale mało sygnałów naraz i spadek portfela do −55 %. **Hamuje ⚠**: tempo przychodów spadło o ≥ 10 pp (⚠⚠ z marżą brutto
   w dół). Liczby w 📖 Poradniku.
-- **RS jak w Deepvue** (tylko wykres dzienny D): nad ceną RS Line = akcja / SPY ze średnią 252 sesje, ● zielony = nowy szczyt RS i ceny, ● różowy = szczyt RS przed ceną;
-  na końcu linii „+x pp” (RS 52 tyg.). Kolumna **C/C[52 tyg.]** = zamknięcie / zamknięcie sprzed 252 sesji.
+- **RS 52 tyg.** (kolumna, pp nad SPY) i **C/C[52 tyg.]** = zamknięcie tygodnia / zamknięcie sprzed 52 tygodni; wykresu RS Line już nie ma.
 - **Wejście:** zamknięcie tygodnia **0–10 % nad Green Line** po przebiciu od dołu (WYBICIE = tydzień przebicia, SYGNAŁ = kolejny tydzień w strefie; po rajdzie > 10 % nad linią kolejne wejście dopiero na nowej Green Line). Dalej niż 10 % (także BLUE DOT)
   i Blue Line — tylko informacyjnie (w badaniu 2011–2025 dawały mniej).
 - **Niespodzianki EPS** (warunek „2× nad konsensus”: 2 ostatnie raporty powyżej konsensusu EPS; kolumny Niesp. EPS % i Rewizja EPS 90 dni %, z yfinance,
   co 7 dni). W backteście warunek podniósł wynik z 36,6 do 42,4 % rocznie. Rewizja prognozy na przyszły rok (dziś vs 90 dni temu) to podgląd — bez historii do testu.
-- **Wolumen relatywny** (kolumny RVol tyg. / RVol dz. i opis panelu wolumenu): wolumen ostatniego tygodnia / średnia 10 poprzednich tygodni oraz
-  ostatniej sesji / średnia 50 sesji — 2,0 = dwa razy więcej niż zwykle; gotowy filtr „Aktywne: RVol tyg. ≥ 1,5 + nad GLB”.
+- **Wolumen relatywny** (kolumna RVol tyg.): wolumen ostatniego tygodnia / średnia 10 poprzednich tygodni — 2,0 = dwa razy więcej niż zwykle; gotowy filtr „Aktywne: RVol tyg. ≥ 1,5 + nad GLB”.
 - **📌 Pozycje** (pasek narzędzi): pozycje z planem wyjścia i kolumną „Co teraz” (trzymaj / stop −10 % / wyjście / sprzedaj ½ / hamuje) oraz obserwowane spółki;
   klik = wykres, usuwanie pozycji i obserwowanych.
 - **🚪 Wyjście** (przycisk na wykresie, zapamiętany): **MACD** (stop pod Low tygodnia przecięcia w dół) albo **pod GLB** (zamknięcie tygodnia pod Green Line,
   jak u Dr Wisha — trzyma największe ruchy, np. SNDK, MU, NVDA 2023). Zawsze: stop 10 % pod kupnem i **spadek 20 % od szczytu = sprzedaj połowę**. Przy 📌 pozycji
-  panel / lista kontrolna pokazują plan wyjścia (stop −10 %, „½ przy”; linie planu rysuje już tylko wykres D), a alerty: zamknięcie pod Green Line i spadek 20 % od szczytu. Liczby w 📖 Poradniku.
+  panel / lista kontrolna pokazują plan wyjścia (stop −10 %, „½ przy”; na wykresie T / M jest tylko ręczny stop 🛑), a alerty: zamknięcie pod Green Line i spadek 20 % od szczytu. Liczby w 📖 Poradniku.
 - **Okno wykresu** jest wyższe niż szersze; po prawej rozwijany panel **FUNDAMENTY** (pasek ze strzałką na całej wysokości): warunki, wartości z ostatnich
   raportów, lista kontrolna i ostrzeżenie dla pozycji (stan panelu zostaje zapamiętany).
-- **M / T / D** (osobne przyciski na wykresie; klawisze m / w / d) — dzienny: 2 lata świec z yfinance, domyślnie słupkowy High–Low z kreskami otwarcia/zamknięcia i średnimi EMA 8/10/20 oraz SMA 50.
-  Można przełączyć go na **RWB / GMMA**: 6 szybkich EMA (czerwone) i 6 wolnych (niebieskie), jaśniejsze tło = RWB — ● Blue Dot (Stochastic 10,1 ↑ 20 przy RWB nad Green Line).
-  Stop pod Low kropki i Green Line; bez MACD, przychodów i panelu Stochastic. Tylko do podglądu: w teście RWB + Blue Dot dawało +1 % na transakcję.
-- **M — miesięczny** (przycisk M na wykresie albo klawisz m): wykres miesięczny z pełnej historii (yfinance, ceny bez korekty, pobierany raz na spółkę)
-  do sprawdzenia Green Line — schodki = linia w czasie, kółko = miesiąc obecnego rekordu („stoi N mies.”), porównanie z linią z listy (⚠ przy różnicy).
-  Linie trendu można rysować na wykresie tygodniowym i dziennym; linie dla obu interwałów są przechowywane osobno.
+- **M / T** (osobne przyciski na wykresie; klawisze m / w; **bez wykresu dziennego i danych dziennych**): miesięczny do określania Green Line i wzorców (linie trendu),
+  tygodniowy do wejść. Miesięczny: pełna historia z yfinance (ceny bez korekty, pobierany raz na spółkę), Green Line kropkowana od świecy rekordu. Linie trendu rysujesz na obu,
+  miesięczne widać też na tygodniowym (blade, przerywane).
+- **RWB (tygodniowy)** (przycisk RWB / klawisz r, aktywny na T): 6 szybkich EMA (czerwone) i 6 wolnych (niebieskie), pasek RWB u dołu ceny, ● Blue Dot (Stochastic 10,1 ↑ 20 przy RWB,
+  zamknięcie nad Green Line; dymek świecy podaje stop pod jej Low). Stan **BLUE DOT** w kolumnie GLB to kropka z ostatnich 2 tygodni, gdy cena jest > 10 % nad linią.
+  Tylko do podglądu: w teście RWB + Blue Dot (wtedy dziennie) dawało +1 % na transakcję.
 - **Ticker na pasku wykresu**: wpisz symbol w lewym górnym polu i naciśnij Enter. Jeśli dane są w cache, wykres otworzy je od razu; w przeciwnym razie pobieranie odbędzie się w tle. Ostatnie symbole są zapamiętywane. **Ctrl+Space** na liście otwiera okno dowolnego symbolu; w oknie wykresu ten skrót przenosi kursor do pola tickera.
 
 ## Dane (darmowe źródła, jak najmniej zapytań)
 
 - **⟳ Sync (F5)**: Finviz (lista) → yfinance **tygodniowe 3 lata** (wykres, średnie, MACD, obrót) → dla wszystkich spółek ze skanera:
-  yfinance **miesięczne High z całej historii** (Green Line) i **SEC** (fundamenty; odświeżane co 7 dni). Bez danych dziennych.
+  yfinance **miesięczne High z całej historii** (Green Line) i **SEC** (fundamenty; odświeżane co 7 dni). Bez danych dziennych (Blue Dot, RVol i C/C[52 tyg.] liczone z tygodniowych).
 - **Tylko nowe dane**: spółka już pobrana dostaje z yfinance tylko ostatnie tygodnie (doklejane do zapisanych), a historia miesięczna tylko nowe zamknięte
   miesiące. Całość pobieramy dla nowej spółki, po przerwie dłuższej niż ~5 miesięcy albo gdy ceny wstecz się zmieniły (split). Ceny są **nieskorygowane o dywidendy** (tylko o splity), jak na TradingView — inaczej dawne szczyty spółek z dużymi wypłatami (np. CLMT) wychodziły za nisko.
 - **Pasek postępu** na dole okna w trakcie Sync: etap (1/4 Finviz, 2/4 tygodniowe, 3/4 miesięczne, 4/4 SEC), procent, czas od startu i szacowany czas do końca.

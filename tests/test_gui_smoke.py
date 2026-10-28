@@ -973,3 +973,35 @@ def test_rwb_dokup_arrow_marks_price_entering_the_gap(app):
     ch.on_motion(type("E", (), {"x": g["x0"] + (150 - ch.geom["i0"] + 0.5) * ch.geom["step"], "y": (g["price"][0] + g["price"][1]) / 2})())
     tip = [ch.cv.itemcget(i, "text") for i in ch.cv.find_withtag("tip") if ch.cv.type(i) == "text"]
     assert any(t.startswith("DOKUP") for t in tip)
+
+
+def test_position_entry_line_follows_the_entry_price_also_after_editing(app):
+    app.open_chart("AAA")
+    ch = app.chart
+    ch.update()
+    texts = lambda: [ch.cv.itemcget(i, "text") for i in ch.cv.find_all() if ch.cv.type(i) == "text"]   # noqa: E731
+    entry_lines = lambda: [i for i in ch.cv.find_all() if ch.cv.type(i) == "line" and ch.cv.itemcget(i, "fill") == A_chart.ENTRY_COLOR]   # noqa: E731
+    assert not entry_lines() and not any(t.startswith("WEJŚCIE") for t in texts())          # bez pozycji nie ma linii
+    last = app.store.weekly("AAA")["c"][-1]
+    ch.toggle_pos()                                                                         # 📌 Pozycja: wejście = ostatnia cena
+    assert entry_lines() and any(t.startswith(f"WEJŚCIE {A_chart.fmt(app.store.row('AAA')['price'])}") for t in texts())
+    pos = app.store.alerts["pos"]["AAA"]
+    pos["price"] = last * 0.9                                                               # edycja ceny w oknie Pozycje
+    app.redraw_chart()
+    t = [x for x in texts() if x.startswith("WEJŚCIE")]
+    assert t and A_chart.fmt(last * 0.9) in t[0] and "+11.1 %" in t[0]                      # linia i napis przesunięte na nową cenę, wynik od wejścia
+    w = app.store.weekly("AAA")
+    months = {"d": [f"{2015 + i // 12}-{1 + i % 12:02d}-01" for i in range(60)], "period": "M", "open_last": False,
+              **{k: [w[k][i] for i in range(60)] for k in ("o", "h", "l", "c", "v")}}      # miesięczne dane bez sieci
+    ch.other["M"]["AAA"] = months
+    ch.toggle_period("M")
+    ch.update()
+    assert any("WEJŚCIE" in x for x in texts())                                             # ta sama linia na M (poza skalą: ze strzałką)
+    ch.toggle_period("W")
+    ch.toggle_zanger()
+    assert any("WEJŚCIE" in x for x in texts())                                             # i w widoku Z
+    pos["price"] = last * 100                                                               # daleko poza skalą: strzałka przy krawędzi, bez linii
+    ch.redraw()
+    assert any(x.startswith("▲ WEJŚCIE") for x in texts()) and not entry_lines()
+    ch.toggle_pos()                                                                         # zamknięcie pozycji = linia znika
+    assert not any("WEJŚCIE" in x for x in texts())

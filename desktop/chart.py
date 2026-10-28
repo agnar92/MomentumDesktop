@@ -28,7 +28,7 @@ FAST_C, SLOW_C, RWB_BG, BLUE_DOT = "#e5484d", "#3b82f6", "#232a33", "#4aa3ff"
 RS_C = "#38bdf8"   # RS Line (akcja / SPY), jak w Deepvue
 FONT = ("Consolas", 9)
 RIGHT, LEFT, TOP = 64, 6, 22
-ZONE_C = "#9aa3ad"   # strefa kupna 0–10 % nad GLB i przerywana na 5 %
+ZONE_C, ZONE_ALPHA = "#9aa3ad", 0.16   # strefa kupna 0–10 % nad GLB (jednolity pas = ZONE_C zmieszany z tłem w proporcji ZONE_ALPHA) i przerywana na 5 %
 BAR_C, SMA_C, REGIME_BG = "#a9b1bb", "#2f6bff", "#0f2a1c"   # wykres T / M: szare słupki, niebieska SMA 10, tło „SPY nad SMA 10”
 VOL_UP, VOL_DOWN = "#1f7a6d", "#7d3c38"
 HIST_C = {(True, True): "#00e676", (True, False): "#2e8b57", (False, False): "#ff5252", (False, True): "#8b8f98"}   # (hist ≥ 0, rośnie)
@@ -284,6 +284,13 @@ def draw_manual_stop(cv, stop, yf, g, w, pmin, pmax, label):
     return y
 
 
+def mix(base, top, alpha):
+    """Kolor `top` nałożony na `base` z przezroczystością alpha (Tk nie ma kanału alfa; stipple migocze, więc mieszamy kolory sami) -> "#rrggbb"."""
+    a = [int(base[k:k + 2], 16) for k in (1, 3, 5)]
+    b = [int(top[k:k + 2], 16) for k in (1, 3, 5)]
+    return "#" + "".join(f"{round(x * (1 - alpha) + y * alpha):02x}" for x, y in zip(a, b))
+
+
 def simple_geometry(w, h):
     """Panele wykresu T / M: cena 64 %, wolumen 13 %, MACD reszta (odstęp na oś czasu na dole)."""
     top = 8
@@ -394,10 +401,19 @@ def draw_simple(cv, data, row, w, h, n_show, end, tlines, sel, spx, period, stop
             q_no += 1
             if xf(i) > x0 + 28 and (period == "M" or (q_no - 1) % every == 0):
                 cv.create_text(xf(i), h - 10, text=dates[i][:4] if period == "M" else dates[i][:7], fill=DIM, font=FONT)
-    if ly is not None:   # strefa kupna: 0–10 % nad Green Line (lekko przezroczysty szary pas) i przerywana na 5 %
-        zt, y5 = max(y0, yf(level * 1.1)), yf(level * 1.05)
+    if ly is not None:   # strefa kupna: 0–10 % nad Green Line — jednolity, delikatnie jaśniejszy pas (bez kropkowania, które migocze) i przerywana na 5 %
+        zt = max(y0, yf(level * 1.1))
         if zt < ly:
-            cv.create_rectangle(xs, zt, x1, min(ly, y1), fill=ZONE_C, stipple="gray12", outline="")
+            first = at - i0 if at is not None and i0 <= at < i1 else 0
+            cols_ = [mix(REGIME_BG if on else BG, ZONE_C, ZONE_ALPHA) for on in (bool(r_) for r_ in regime)]   # kolor liczony na tle (zielonym albo ciemnym)
+            i = first
+            while i < n:
+                j = i
+                while j + 1 < n and cols_[j + 1] == cols_[i]:
+                    j += 1
+                cv.create_rectangle(xs if i == first else xf(i) - step / 2, zt, x1 if j == n - 1 else xf(j) + step / 2, min(ly, y1), fill=cols_[i], outline="")
+                i = j + 1
+        y5 = yf(level * 1.05)
         if y0 < y5 < y1:
             cv.create_line(xs, y5, x1, y5, fill=ZONE_C, dash=(6, 4))
     # słupki OHLC: jeden szary kolor

@@ -136,9 +136,10 @@ class Store:
             row["ok"] = calc.passes(row, self.settings.get("strategy_conditions"))
             if "cc52w" not in row and "cc250" in row:   # starsze zapisy: C/C250 -> C/C[52 tyg.]
                 row["cc52w"] = row.pop("cc250")
-            if "rwb_days" not in row:   # starsze zapisy (sprzed kolumny RWB dni): liczone z zapisanych świec tygodniowych
+            row.pop("rwb_days", None)
+            if "rwb_weeks" not in row:   # starsze zapisy (sprzed kolumny RWB tyg.): liczone z zapisanych świec tygodniowych
                 w = self.weekly(row.get("ticker", ""))
-                row["rwb_days"] = calc.rwb_days([x or 0 for x in w["c"]], w["d"]) if w and w.get("d") and w.get("c") else None
+                row["rwb_weeks"] = calc.rwb_weeks([x or 0 for x in w["c"]]) if w and w.get("c") else None
 
     def select(self, name):
         """Przełącza wybrany skaner (lista spółek z jego ostatniego Sync)."""

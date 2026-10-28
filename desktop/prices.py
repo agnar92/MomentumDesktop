@@ -107,6 +107,32 @@ def weekly(tickers, log=print, period=WEEKLY_PERIOD, cache=None, today=None, pro
     return out
 
 
+def weekly_full(tickers):
+    """Pełna historia tygodniowa (max) spółek -> {ticker: seria}; wykres T w desktopie dociąga ją przy otwarciu (lista trzyma tylko 3 lata)."""
+    tickers = list(tickers)
+    df = _yf().download(tickers, period="max", interval="1wk", auto_adjust=AUTO_ADJUST, group_by="ticker", progress=False, threads=True)
+    out = {}
+    for t, f in _frames(df, tickers).items():
+        s = _series(f)
+        if len(s["d"]) >= 10:
+            out[t] = s
+    return out
+
+
+def join_weekly(full, recent):
+    """Pełna historia + świeższe tygodnie z listy (nowsze nadpisują od swojej pierwszej daty). -> seria albo None, gdy ceny się rozjeżdżają
+    (split / korekta po zapisaniu historii) albo jest dziura między seriami."""
+    if not recent or not recent.get("d"):
+        return full
+    first = recent["d"][0]
+    if first in full["d"] and not _same(full["c"][full["d"].index(first)], recent["c"][0]):
+        return None
+    if full["d"][-1] < first and (dt.date.fromisoformat(first) - dt.date.fromisoformat(full["d"][-1])).days > 14:
+        return None
+    cut = next((i for i, d in enumerate(full["d"]) if d >= first), len(full["d"]))
+    return {"raw": 1, **{k: full[k][:cut] + recent[k] for k in ("d", "o", "h", "l", "c", "v")}}
+
+
 def last_closed_month(today=None):
     today = today or dt.date.today()
     first = today.replace(day=1)

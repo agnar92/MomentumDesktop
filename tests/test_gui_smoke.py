@@ -26,6 +26,7 @@ def app(tmp_path):
         a = A.App(tmp_path)
     except tk.TclError:
         pytest.skip("brak ekranu")
+    a.store.settings["full_weekly"] = False   # testy bez pobierania pełnej historii z sieci
     a.store.settings["view"] = {"W": {"fut": 0}, "M": {"fut": 0}}   # bez pustych świec w przyszłości (osobne testy)
     yield a
     try:
@@ -841,7 +842,7 @@ def test_manual_stop_is_drawn_on_monthly_and_zanger_views(app, monkeypatch):
 
 
 def test_future_slots_price_view_and_persistence(app):
-    app.store.settings["view"] = {"W": {"fut": 12}}
+    app.store.settings["view"] = {"W": {"fut": 12, "n": 10 ** 6}}   # okno: cała historia
     app.open_chart("AAA")
     ch = app.chart
     ch.update()
@@ -908,3 +909,42 @@ def test_sma_line_hidden_outside_price_scale(app):
     ch.reset_price()
     ch.redraw()
     assert [i for i in ch.cv.find_all() if ch.cv.type(i) == "line" and ch.cv.itemcget(i, "fill") == A_chart.SMA_C and float(ch.cv.itemcget(i, "width")) == 2.4]
+
+
+def test_filter_dialog_has_from_to_for_eps_rating_and_other_number_columns(app):
+    from desktop import app as A
+    d = A.FilterDialog(app)
+    d.update()
+    for k in ("eps_rating", "rwb_weeks", "rvol_w", "ps", "cc52w"):
+        assert (k, "min") in d.vars and (k, "max") in d.vars       # pola „od – do” także dla EPS Rating i innych liczb
+    d.vars[("eps_rating", "min")].set("80")
+    d.vars[("eps_rating", "max")].set("99")
+    assert app.store.settings["list_filters"]["eps_rating"] == {"min": 80.0, "max": 99.0}
+    d.preset({})
+
+
+def test_full_weekly_history_is_loaded_on_open_cached_and_joined(app, monkeypatch):
+    import datetime as dt
+    from desktop import prices
+    app.store.settings["full_weekly"] = True
+    w = app.store.weekly("AAA")
+    d0 = dt.date.fromisoformat(w["d"][0])
+    older = 200
+    full = {"raw": 1, "d": [(d0 - dt.timedelta(weeks=older - i)).isoformat() for i in range(older)] + list(w["d"][:5]),
+            **{k: [50.0 + i * 0.1 for i in range(older)] + list(w[k][:5]) for k in ("o", "h", "l", "c", "v")}}
+    calls = []
+    monkeypatch.setattr(prices, "weekly_full", lambda ts: calls.append(list(ts)) or {t: full for t in ts})
+    app.open_chart("AAA")
+    ch = app.chart
+    for _ in range(40):
+        ch.update()
+        ch.after(50)
+        if ch.other["W"].get("AAA"):
+            break
+    ch.update()
+    assert calls and "AAA" in calls[0]
+    joined = ch.data()
+    assert len(joined["c"]) == older + len(w["c"]) and joined["d"] == sorted(joined["d"])   # dłuższa historia, bez dubli
+    assert "AAA" in app.store.cache("weekly_full")                                          # zapisane w cache
+    assert prices.join_weekly(full, {**w, "c": [x * 2 for x in w["c"]]}) is None            # split po zapisaniu -> bez sklejania
+    assert ch.n_show == 156                                                                 # domyślne okno nadal 3 lata

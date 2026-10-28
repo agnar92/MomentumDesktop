@@ -317,6 +317,7 @@ def _near(a, b, period):
 
 FUTURE_STEPS = (0, 6, 12, 20, 30)   # ile pustych świec po prawej (miejsce na linie w przyszłość); przycisk przełącza po kolei
 FUTURE_DEFAULT = {"W": 12, "M": 6}
+DEFAULT_WEEKS = 156   # domyślne okno T (3 lata); pełna historia jest za suwakiem
 
 
 def spy_regime(dates, spx, period="W", n=10):
@@ -1079,7 +1080,8 @@ class ChartWindow(tk.Toplevel):
         self.geometry(f"{int(hh * 0.92)}x{hh}+40+10")
         apply_dark(self)
         self.sel, self.gest = None, None   # zaznaczona linia trendu, gest myszy na wykresie
-        self.period, self.other = "W", {"M": {}}   # W = tygodniowy (3 lata), M = miesięczny (pełna historia, w pamięci)
+        self.period, self.other = "W", {"M": {}, "W": {}}   # W = tygodniowy (3 lata z listy + pełna historia dociągnięta przy otwarciu), M = miesięczny (pełna historia)
+        self.wjoin, self.wtried = {}, set()
         self.load_view()
         self.rwb = False   # RWB (GMMA + Blue Dot) na wykresie tygodniowym
         top = tk.Frame(self, bg=PANEL)
@@ -1247,7 +1249,54 @@ class ChartWindow(tk.Toplevel):
     def data(self):
         if self.period == "M":
             return self.other["M"].get(self.ticker)
-        return self.app.store.weekly(self.ticker)
+        return self.weekly_series(self.ticker)
+
+    def weekly_series(self, t):
+        """Seria tygodniowa spółki: pełna historia (pobrana przy otwarciu wykresu, w cache `weekly_full`) sklejona ze świeżymi tygodniami z listy; bez niej 3 lata z listy."""
+        recent, full = self.app.store.weekly(t), self.other["W"].get(t)
+        if not recent or not full:
+            return recent
+        key = (id(recent), id(full))
+        if t not in self.wjoin or self.wjoin[t][0] != key:
+            self.wjoin[t] = (key, prices.join_weekly(full, recent) or recent)
+        return self.wjoin[t][1]
+
+    def load_full_weekly(self, t):
+        """Pełna historia tygodniowa: z cache albo w tle z yfinance (wykres działa od razu na 3 latach z listy i przerysuje się po pobraniu)."""
+        if self.period != "W" or t in self.wtried or not self.app.store.settings.get("full_weekly", True):
+            return
+        cache = self.app.store.cache("weekly_full")
+        need = [x for x in (t, "SPY") if x not in self.other["W"]]
+        for x in list(need):
+            e, recent = cache.get(x), self.app.store.weekly(x)
+            if e and e.get("d") and (not recent or prices.join_weekly(e, recent)):
+                self.other["W"][x] = e
+                need.remove(x)
+        if not need or not self.app.store.weekly(t):
+            return
+        self.wtried.add(t)   # jedna próba na otwarcie okna (brak sieci nie zapętla)
+        box = []
+
+        def work():
+            try:
+                box.append(prices.weekly_full(need))
+            except Exception:
+                box.append({})
+        threading.Thread(target=work, daemon=True).start()
+
+        def poll():
+            if not self.winfo_exists():
+                return
+            if not box:
+                self.after(150, poll)
+                return
+            if box[0]:
+                cache.update(box[0])
+                self.app.store.save_cache("weekly_full", cache)
+                self.other["W"].update(box[0])
+                if self.period == "W":
+                    self.redraw()
+        self.after(150, poll)
 
     def view(self):
         """Ustawienia widoku bieżącego interwału (zapamiętane w settings.json): fut = puste świece w przyszłości, n = długość okna, pv = (z, s) skala ceny."""
@@ -1260,7 +1309,7 @@ class ChartWindow(tk.Toplevel):
             self.app.store.save_settings()
 
     def load_view(self):
-        self.n_show = self.view()["n"]
+        self.n_show = self.view()["n"] or (DEFAULT_WEEKS if self.period == "W" else None)   # T: domyślnie ostatnie 3 lata, resztę historii pokazuje suwak
         self.fut_btn.config(text=f"⇥ {self.view()['fut']}") if hasattr(self, "fut_btn") else None
 
     def vdata(self):
@@ -1398,6 +1447,7 @@ class ChartWindow(tk.Toplevel):
                 return
         self.title(f"{t} — {'miesięczny' if per == 'M' else 'tygodniowy'}")
         self.redraw()
+        self.load_full_weekly(t)
 
     def _got(self, t, m):
         if not m:   # nie zapamiętujemy porażki — kolejne przełączenie spróbuje ponownie
@@ -1438,7 +1488,7 @@ class ChartWindow(tk.Toplevel):
             self.cv.create_text(20, 20, text=message, anchor="w", fill=FG)
             return
         self.mark_period()
-        spx = self.spy_monthly() if self.period == "M" else self.app.store.weekly("SPY")
+        spx = self.spy_monthly() if self.period == "M" else self.weekly_series("SPY")
         vd = self.vdata()
         self.geom = draw(self.cv, vd, self.row_for_chart(), n_show=self.n_show, end=self.end, tlines=self.shown_lines(), sel=self.sel,
                          spx=spx, period=self.period, rwb=self.rwb, zanger=self.zanger and self.period == "W",

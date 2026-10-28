@@ -782,7 +782,7 @@ class FilterDialog(tk.Toplevel):
                 tk.Checkbutton(box, text=v, variable=var, bg=PANEL, command=lambda k=k, v=v, var=var: self.toggle(k, v, var.get())).grid(row=i // 6, column=i % 6, sticky="w")
             r += 1
         for k, h, _, fm in COLUMNS:
-            if fm not in "p%mn":
+            if fm not in ("p", "%", "m", "n", "i", "x", "x2", "r"):   # liczby: też EPS Rating, RWB tyg., RVol, P/S, PEG, C/C[52 tyg.]
                 continue
             tk.Label(self.body, text=h + (" (mln $)" if k in FILTER_SCALE else ""), bg=PANEL, fg="#8b95a3").grid(row=r, column=0, sticky="w", pady=2)
             for c, b in ((1, "min"), (3, "max")):

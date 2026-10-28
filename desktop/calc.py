@@ -80,6 +80,12 @@ def rwb(closes):
     return [min(x[i] for x in f) > max(x[i] for x in s) for i in range(len(closes))]
 
 
+def rwb_starts(closes, warmup=60):
+    """Początki RWB: świece, na których szybkie EMA znów wszystkie nad wolnymi (poprzednia świeca bez RWB) — sygnał do dokupienia (po cofnięciu w trendzie)."""
+    r = rwb(closes)
+    return [i for i in range(max(1, warmup), len(r)) if r[i] and not r[i - 1]]
+
+
 def stoch_k(highs, lows, closes, n=10):
     """Stochastic (n, 1) %K -> lista (None, gdy brak n świec albo zerowy zakres)."""
     out = []

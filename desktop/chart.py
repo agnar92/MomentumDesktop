@@ -27,7 +27,7 @@ FONT = ("Consolas", 9)
 RIGHT, LEFT, TOP = 64, 6, 22
 ZONE_C, ZONE_ALPHA = "#9aa3ad", 0.16   # strefa kupna 0–10 % nad GLB (jednolity pas = ZONE_C zmieszany z tłem w proporcji ZONE_ALPHA) i przerywana na 5 %
 BAR_C, SMA_C, REGIME_BG = "#a9b1bb", "#2f6bff", "#0f2a1c"   # wykres T / M: szare słupki, niebieska SMA 10, tło „SPY nad SMA 10”
-RS_C = "#38bdf8"   # panel RS Line (akcja / SPY)
+RS_C, RWB_START_C = "#38bdf8", "#f5c518"   # panel RS Line (akcja / SPY)
 VOL_UP, VOL_DOWN = "#1f7a6d", "#7d3c38"
 HIST_C = {(True, True): "#00e676", (True, False): "#2e8b57", (False, False): "#ff5252", (False, True): "#8b8f98"}   # (hist ≥ 0, rośnie)
 MACD_LINE, SIGNAL_LINE = "#2f6bff", "#c850e8"
@@ -260,6 +260,39 @@ def mix(base, top, alpha):
     return "#" + "".join(f"{round(x * (1 - alpha) + y * alpha):02x}" for x, y in zip(a, b))
 
 
+def future_dates(dates, n, period="W"):
+    """n syntetycznych dat po ostatniej świecy (tydzień +7 dni, miesiąc: następne miesiące, ten sam dzień) — miejsce na rysowanie linii w przyszłość."""
+    if not dates or n <= 0:
+        return []
+    y, m, d = (int(x) for x in dates[-1][:10].split("-"))
+    base = dt.date(y, m, d)
+    out = []
+    for k in range(1, n + 1):
+        if period == "M":
+            mm = m - 1 + k
+            out.append(f"{y + mm // 12:04d}-{mm % 12 + 1:02d}-{min(d, 28):02d}")
+        else:
+            out.append((base + dt.timedelta(days=7 * k)).isoformat())
+    return out
+
+
+def extend(data, n, period="W"):
+    """Kopia serii z n pustymi (None) świecami w przyszłości; `real` = liczba prawdziwych świec."""
+    real = len(data["c"])
+    out = {k: (list(v) + [None] * n if isinstance(v, list) else v) for k, v in data.items() if k != "d"}
+    out["d"] = list(data["d"]) + future_dates(data["d"], n, period)
+    out["real"] = real
+    return out
+
+
+def price_view(lmin, lmax, z=1.0, s=0.0):
+    """Widoczny zakres log ceny: z = powiększenie (>1 = węższy), s = przesunięcie w ułamkach domyślnego zakresu (dodatnie = w górę)."""
+    rng = lmax - lmin
+    mid = (lmax + lmin) / 2 + s * rng
+    half = rng / 2 / max(0.05, z)
+    return mid - half, mid + half
+
+
 def simple_geometry(w, h):
     """Panele wykresu T / M: RS Line 12 %, cena 52 %, wolumen 11 %, MACD reszta (odstęp na oś czasu na dole)."""
     top = 8
@@ -280,6 +313,10 @@ def _near(a, b, period):
         return abs((dt.date.fromisoformat(a[:10]) - dt.date.fromisoformat(b[:10])).days) < 7
     except ValueError:
         return False
+
+
+FUTURE_STEPS = (0, 6, 12, 20, 30)   # ile pustych świec po prawej (miejsce na linie w przyszłość); przycisk przełącza po kolei
+FUTURE_DEFAULT = {"W": 12, "M": 6}
 
 
 def spy_regime(dates, spx, period="W", n=10):
@@ -308,16 +345,18 @@ def glb_peak(data, row, period):
     return level, next((i for i in range(len(hs) - 1, -1, -1) if hs[i] and abs(hs[i] / level - 1) < 0.003), None)
 
 
-def draw_simple(cv, data, row, w, h, n_show, end, tlines, sel, spx, period, stop=None, stop_label="", rwb=False):
+def draw_simple(cv, data, row, w, h, n_show, end, tlines, sel, spx, period, stop=None, stop_label="", rwb=False, real=None, pv=(1.0, 0.0)):
     """Prosty wykres T / M: szare słupki OHLC, niebieska SMA 10, kropkowana Green Line od świecy rekordu, tło zielone, gdy SPY > SMA 10 interwału,
     wolumen i MACD; linie trendu rysują się na cenie. rwb (tylko T): 12 EMA Guppy (szybkie czerwone, wolne niebieskie), pasek RWB u dołu ceny i ● Blue Dot
     pod świecą (Stochastic 10,1 ↑ 20 przy RWB, zamknięcie nad Green Line). -> geometria jak z `draw`."""
     total = len(data["c"])
+    real = total if real is None else real   # świece po `real` to puste miejsce w przyszłości (na linie)
     i0, i1 = window(total, n_show, end)
-    cfull = [v if v is not None else 0 for v in data["c"]]
+    nr = max(2, min(i1, real) - i0)   # prawdziwe świece w oknie
+    cfull = [v if v is not None else 0 for v in data["c"][:real]]
     sma10 = calc.sma(cfull, 10)[i0:i1]
-    mac, sig, hist = (x[i0:i1] for x in calc.macd(cfull))
-    vavg = calc.sma([x or 0 for x in data["v"]], calc.RVOL_W)[i0:i1]
+    mac, sig, hist = (x[i0:i0 + nr] for x in calc.macd(cfull))
+    vavg = calc.sma([x or 0 for x in data["v"][:real]], calc.RVOL_W)[i0:i1]
     c, hi, lo, vol, dates = (data[k][i0:i1] for k in ("c", "h", "l", "v", "d"))
     op = (data.get("o") or [None] * total)[i0:i1]
     n = len(c)
@@ -336,11 +375,14 @@ def draw_simple(cv, data, row, w, h, n_show, end, tlines, sel, spx, period, stop
     vals = [v for v in hi + lo if v]
     if level and min(vals) * 0.5 < level < max(vals) * 2:
         vals += [level, level * 1.1]   # strefa kupna 0–10 % nad linią ma się zmieścić w skali
-    pmin, pmax = min(vals) * 0.97, max(vals) * 1.03
-    lmin, lmax = math.log(pmin), math.log(pmax)
+    lmin, lmax = price_view(math.log(min(vals) * 0.97), math.log(max(vals) * 1.03), *pv)   # pv: ręczne powiększenie / przesunięcie skali ceny
+    pmin, pmax = math.exp(lmin), math.exp(lmax)
 
     def yf(p):
         return y1 - (math.log(p) - lmin) / (lmax - lmin) * (y1 - y0)
+
+    def yc(p):   # jak yf, ale przycięte do panelu ceny (Tk nie przycina)
+        return max(y0, min(y1, yf(p)))
 
     # tło: zielone, gdy SPY nad SMA 10 tego samego interwału (pod ceną i wolumenem)
     regime = spy_regime(dates, spx, period)
@@ -354,7 +396,8 @@ def draw_simple(cv, data, row, w, h, n_show, end, tlines, sel, spx, period, stop
     draw_rs_panel(cv, data, i0, i1, xf, g, spx, row, period)
     ly = yf(level) if level and pmin < level < pmax else None
     xs = xf(at - i0) if at is not None and i0 <= at < i1 else x0   # Green Line i jej strefa zaczynają się na świecy rekordu
-    last = c[-1]
+    last = data["c"][real - 1]
+    last = last if last and pmin < last < pmax else None
     last_y, _ = axis_spots(ly, yf(last) if last else None, None)
     taken = [v for v in (ly, last_y) if v is not None]
     for t in ticks(pmin, pmax):
@@ -362,6 +405,8 @@ def draw_simple(cv, data, row, w, h, n_show, end, tlines, sel, spx, period, stop
         cv.create_line(x0, y, x1, y, fill=GRID)
         if all(abs(y - v) >= 13 for v in taken):
             cv.create_text(x1 + 4, y, text=fmt(t), anchor="w", fill=DIM, font=FONT)
+    if i1 > real:   # granica: po prawej puste miejsce w przyszłości
+        cv.create_line(xf(real - 1 - i0) + step / 2, y0, xf(real - 1 - i0) + step / 2, v1, fill="#3a4654", dash=(2, 4))
     yrs = max(1, math.ceil(60 / max(1e-9, step * 12)))     # miesięczny: co ile lat podpis
     every = max(1, math.ceil(62 / max(1e-9, step * 13)))   # tygodniowy: co który kwartał podpis
     q_no = 0
@@ -390,13 +435,7 @@ def draw_simple(cv, data, row, w, h, n_show, end, tlines, sel, spx, period, stop
         if y0 < y5 < y1:
             cv.create_line(xs, y5, x1, y5, fill=ZONE_C, dash=(6, 4))
     blue_dots = []
-    if rwb and period == "W":
-        fast, slow = calc.gmma(cfull)
-        for lines_, col in ((slow, SLOW_C), (fast, FAST_C)):
-            for s_ in lines_:
-                pts = [(xf(i), yf(v)) for i, v in enumerate(s_[i0:i1]) if v]
-                if len(pts) > 1:
-                    cv.create_line(*[p for xy in pts for p in xy], fill=col, width=1)
+    if rwb:   # sam wskaźnik RWB (pasek u dołu ceny) + ● Blue Dot, bez wachlarza średnich; T i M
         r = calc.rwb(cfull)[i0:i1]
         a = None
         for i, on in enumerate(r + [False]):   # pasek RWB u dołu panelu ceny
@@ -405,21 +444,29 @@ def draw_simple(cv, data, row, w, h, n_show, end, tlines, sel, spx, period, stop
             elif not on and a is not None:
                 cv.create_rectangle(xf(a) - step / 2, y1 - 4, xf(i - 1) + step / 2, y1, fill=SLOW_C, outline="")
                 a = None
-        blue_dots = [i for i in calc.blue_dots(data["h"], data["l"], data["c"], level) if i0 <= i < i1]
+        blue_dots = [i for i in calc.blue_dots(data["h"][:real], data["l"][:real], data["c"][:real], level) if i0 <= i < i1]
     # słupki OHLC: jeden szary kolor
     for i in range(n):
-        if hi[i] is None or lo[i] is None or c[i] is None:
+        if hi[i] is None or lo[i] is None or c[i] is None or lo[i] > pmax or hi[i] < pmin:
             continue
         x = xf(i)
-        cv.create_line(x, yf(hi[i]), x, yf(lo[i]), fill=BAR_C, width=min(2.5, max(1, step * 0.2)))
-        if op[i]:
+        cv.create_line(x, yc(hi[i]), x, yc(lo[i]), fill=BAR_C, width=min(2.5, max(1, step * 0.2)))
+        if op[i] and pmin < op[i] < pmax:
             cv.create_line(x - step * 0.4, yf(op[i]), x, yf(op[i]), fill=BAR_C, width=min(2, max(1, step * 0.12)))
-        cv.create_line(x, yf(c[i]), x + step * 0.4, yf(c[i]), fill=BAR_C, width=min(2, max(1, step * 0.12)))
+        if pmin < c[i] < pmax:
+            cv.create_line(x, yf(c[i]), x + step * 0.4, yf(c[i]), fill=BAR_C, width=min(2, max(1, step * 0.12)))
+    starts = [i for i in calc.rwb_starts(cfull) if i0 <= i < i1] if rwb else []
+    for k_, i in enumerate(starts):   # początek RWB = sygnał „dokup”: żółty trójkąt pod świecą (ostatni z podpisem)
+        if data["l"][i] and pmin < data["l"][i] < pmax:
+            tx, ty = xf(i - i0), yf(data["l"][i]) + 10
+            cv.create_polygon(tx, ty - 5, tx - 5, ty + 4, tx + 5, ty + 4, fill=RWB_START_C, outline="")
+            if k_ == len(starts) - 1:
+                boxed(cv, tx, ty + 17, "RWB START · dokup", RWB_START_C, anchor="center")
     for i in blue_dots:
-        if data["l"][i]:
+        if data["l"][i] and pmin < data["l"][i] < pmax:
             py = yf(data["l"][i]) + 9
             cv.create_oval(xf(i - i0) - 4, py - 4, xf(i - i0) + 4, py + 4, fill=BLUE_DOT, outline="")
-    pts = [(xf(i), yf(v)) for i, v in enumerate(sma10) if v]
+    pts = [(xf(i), yc(v)) for i, v in enumerate(sma10) if v]
     if len(pts) > 1:
         cv.create_line(*[p for xy in pts for p in xy], fill=SMA_C, width=2.4)
     if ly is not None:   # Green Line: kropkowana od świecy rekordu, cena nad świecą i na osi
@@ -456,24 +503,24 @@ def draw_simple(cv, data, row, w, h, n_show, end, tlines, sel, spx, period, stop
     if len(pts) > 1:
         cv.create_line(*[p for xy in pts for p in xy], fill=SMA_C, width=1.3)
     # MACD (12, 26, 9): histogram w 4 kolorach (znak × rośnie / maleje), linia MACD i sygnału
-    rng = (max(abs(x) for x in mac + sig + hist) or 1) * 1.25
+    rng = (max([abs(x) for x in mac + sig + hist] or [0]) or 1) * 1.25
     mid = (m0 + m1) / 2
 
     def ym(v):
         return mid - v / rng * (m1 - m0) / 2
 
     cv.create_line(x0, mid, x1, mid, fill=GRID)
-    for i in range(n):
+    for i in range(len(hist)):
         rising = i == 0 or hist[i] >= hist[i - 1]
         cv.create_rectangle(xf(i) - step * 0.3, ym(hist[i]), xf(i) + step * 0.3, mid, fill=HIST_C[(hist[i] >= 0, rising)], outline="")
     for s_, col in ((mac, MACD_LINE), (sig, SIGNAL_LINE)):
         cv.create_line(*[p for i, v in enumerate(s_) for p in (xf(i), ym(v))], fill=col, width=1.4)
-    legend = f"SMA 10 {u}" + ("" if any(x is not None for x in regime) else " · brak danych SPY (zrób Sync)") + f" · zielone tło = SPY nad SMA 10 {u}" + (" · szary pas = 0–10 % nad GLB" if ly is not None else "") + (" · RWB: GMMA, ● Blue Dot" if rwb and period == "W" else "")
+    legend = f"SMA 10 {u}" + ("" if any(x is not None for x in regime) else " · brak danych SPY (zrób Sync)") + f" · zielone tło = SPY nad SMA 10 {u}" + (" · szary pas = 0–10 % nad GLB" if ly is not None else "") + (" · pasek RWB, ● Blue Dot, ▲ start RWB = dokup" if rwb else "")
     boxed(cv, x0 + 4, y0 + 10, legend, SMA_C)
-    return {"g": g, "step": step, "n": n, "i0": i0, "lmin": lmin, "lmax": lmax, "segs": segs, "stop_y": stop_y}
+    return {"g": g, "step": step, "n": n, "i0": i0, "lmin": lmin, "lmax": lmax, "segs": segs, "stop_y": stop_y, "real": real}
 
 
-def draw(cv, data, row=None, w=None, h=None, n_show=None, end=None, tlines=(), sel=None, spx=None, period="W", rwb=False, zanger=False, stop=None, stop_label=""):
+def draw(cv, data, row=None, w=None, h=None, n_show=None, end=None, tlines=(), sel=None, spx=None, period="W", rwb=False, zanger=False, stop=None, stop_label="", real=None, pv=(1.0, 0.0)):
     """Rysuje wykres okna (n_show świec kończące się na `end`, domyślnie cała historia) na canvas `cv`; data = {d, o, h, l, c, v}; tlines = linie trendu
     (z flagą ro = tylko do odczytu), sel = id zaznaczonej. T / M: `draw_simple`; zanger=True (tylko T): `draw_zanger`.
     -> geometria (do dymka i linii; `i0` = indeks pierwszej świecy okna w pełnej serii, segs = linie w px, stop_y = y ręcznego stopu)."""
@@ -483,17 +530,18 @@ def draw(cv, data, row=None, w=None, h=None, n_show=None, end=None, tlines=(), s
     if len(data["c"]) < 2:
         return None
     if zanger and period == "W":
-        return draw_zanger(cv, data, row, w, h, n_show, end, tlines, sel, stop, stop_label)
-    return draw_simple(cv, data, row, w, h, n_show, end, tlines, sel, spx, period, stop, stop_label, rwb)
+        return draw_zanger(cv, data, row, w, h, n_show, end, tlines, sel, stop, stop_label, spx, real, pv)
+    return draw_simple(cv, data, row, w, h, n_show, end, tlines, sel, spx, period, stop, stop_label, rwb, real, pv)
 
 
-def draw_zanger(cv, data, row, w, h, n_show, end, tlines, sel, stop, stop_label):
+def draw_zanger(cv, data, row, w, h, n_show, end, tlines, sel, stop, stop_label, spx=None, real=None, pv=(1.0, 0.0)):
     """Widok Zangera (tylko T): cena (skala log., słupki jednokolorowe), Green Line, wolumen, kontur wzorców kupna / ostrzeżeń i parabola; bez wskaźników."""
     total = len(data["c"])
+    real = total if real is None else real
     i0, i1 = window(total, n_show, end)
     c, hi, lo, vol, dates = (data[k][i0:i1] for k in ("c", "h", "l", "v", "d"))
-    vavg = calc.sma([x or 0 for x in data["v"]], calc.RVOL_W)[i0:i1]
-    rv = calc.rel_volume(data["v"], calc.RVOL_W)
+    vavg = calc.sma([x or 0 for x in data["v"][:real]], calc.RVOL_W)[i0:i1]
+    rv = calc.rel_volume(data["v"][:real], calc.RVOL_W)
     n = len(c)
     g = geometry(w, h)
     x0, x1 = g["x0"], g["x1"]
@@ -507,14 +555,26 @@ def draw_zanger(cv, data, row, w, h, n_show, end, tlines, sel, stop, stop_label)
     vals = [v for v in hi + lo if v] + ([level] if level and min(x for x in lo if x) * 0.5 < level < max(x for x in hi if x) * 2 else [])
     top_px = max(x for x in hi if x)   # punkty kupna wzorców i poziom wyjścia z paraboli mają się zmieścić na wykresie
     vals += [x for x in pattern_levels(row) if top_px * 0.6 < x < top_px * 1.25]
-    pmin, pmax = min(vals) * 0.97, max(vals) * 1.03
-    lmin, lmax = math.log(pmin), math.log(pmax)
+    lmin, lmax = price_view(math.log(min(vals) * 0.97), math.log(max(vals) * 1.03), *pv)
+    pmin, pmax = math.exp(lmin), math.exp(lmax)
 
     def yf(p):
         return y1 - (math.log(p) - lmin) / (lmax - lmin) * (y1 - y0)
 
+    def yc(p):
+        return max(y0, min(y1, yf(p)))
+
+    # tło: zielone, gdy SPY nad SMA 10 tygodniowa (jak na T) — pod ceną i wolumenem
+    a = None
+    for i, on in enumerate([bool(x) for x in spy_regime(dates, spx, "W")] + [False]):
+        if on and a is None:
+            a = i
+        elif not on and a is not None:
+            cv.create_rectangle(xf(a) - step / 2, y0, xf(i - 1) + step / 2, g["vol"][1], fill=REGIME_BG, outline="")
+            a = None
     ly = yf(level) if level and pmin < level < pmax else None
-    last = c[-1]
+    last = data["c"][real - 1]
+    last = last if last and pmin < last < pmax else None
     last_y, _ = axis_spots(ly, yf(last) if last else None, None)
     taken = [v for v in (ly, last_y) if v is not None]
     for t in ticks(pmin, pmax):
@@ -522,6 +582,8 @@ def draw_zanger(cv, data, row, w, h, n_show, end, tlines, sel, stop, stop_label)
         cv.create_line(x0, y, x1, y, fill=GRID)
         if all(abs(y - v) >= 13 for v in taken):   # podziałka ustępuje napisom Green Line / ceny
             cv.create_text(x1 + 4, y, text=fmt(t), anchor="w", fill=DIM, font=FONT)
+    if i1 > real:
+        cv.create_line(xf(real - 1 - i0) + step / 2, y0, xf(real - 1 - i0) + step / 2, g["vol"][1], fill="#3a4654", dash=(2, 4))
     every = max(1, math.ceil(62 / max(1e-9, step * 13)))   # co który kwartał podpis (wąski wykres)
     q_no = 0
     for i in range(n):
@@ -531,11 +593,12 @@ def draw_zanger(cv, data, row, w, h, n_show, end, tlines, sel, stop, stop_label)
             if xf(i) > x0 + 28 and (q_no - 1) % every == 0:   # przy samej krawędzi napis byłby ucięty
                 cv.create_text(xf(i), h - 10, text=dates[i][:7], fill=DIM, font=FONT)
     for i in range(n):
-        if hi[i] is None or lo[i] is None or c[i] is None:
+        if hi[i] is None or lo[i] is None or c[i] is None or lo[i] > pmax or hi[i] < pmin:
             continue
         x = xf(i)
-        cv.create_line(x, yf(hi[i]), x, yf(lo[i]), fill=FG, width=max(1, step * 0.25))
-        cv.create_line(x - step * 0.35, yf(c[i]), x + step * 0.35, yf(c[i]), fill=FG)
+        cv.create_line(x, yc(hi[i]), x, yc(lo[i]), fill=FG, width=max(1, step * 0.25))
+        if pmin < c[i] < pmax:
+            cv.create_line(x - step * 0.35, yf(c[i]), x + step * 0.35, yf(c[i]), fill=FG)
     if ly is not None:
         cv.create_line(x0, ly, x1, ly, fill="#0a2e18", width=6)
         cv.create_line(x0, ly, x1, ly, fill=GLB_COLOR, width=3)
@@ -559,7 +622,7 @@ def draw_zanger(cv, data, row, w, h, n_show, end, tlines, sel, stop, stop_label)
     cv.create_text(x0 + 4, v0 + 6, text=f"Wolumen · śr. {calc.RVOL_W} tyg." + (f" · RVol {rv:.1f}×" if rv is not None else ""), anchor="w",
                    fill=SIG_C if rv is not None and rv >= 1.5 else DIM, font=FONT)
     boxed(cv, x0 + 4, y0 + 10, "Widok Zangera: cena (skala log.) + wolumen · wzorce: " + (", ".join(p["name"] for p in (row or {}).get("patterns") or []) or "brak"), FG)
-    return {"g": g, "step": step, "n": n, "i0": i0, "lmin": lmin, "lmax": lmax, "segs": segs, "stop_y": manual_y}
+    return {"g": g, "step": step, "n": n, "i0": i0, "lmin": lmin, "lmax": lmax, "segs": segs, "stop_y": manual_y, "real": real}
 
 
 PATTERN_COLORS = {"Cup & Handle": "#4da3ff", "Flat Base": "#f0b429", "Ascending Triangle": "#b084f5", "Flaga/Proporzec": "#2ec4b6", "Channel": "#5fd0ff", "Symmetrical Triangle": "#e879f9",
@@ -722,7 +785,7 @@ def draw_lines(cv, data, tlines, sel, i0, i1, xf, yf, g, step, w):
         return xa + t0 * dx, ya + t0 * dy, xa + t1 * dx, ya + t1 * dy
 
     for ln in tlines:
-        a, b = L.date_index(data["d"], ln["d1"]), L.date_index(data["d"], ln["d2"])
+        a, b = L.slot_index(data["d"], ln["d1"]), L.slot_index(data["d"], ln["d2"])
         if a < 0 or b < 0 or a == b:
             continue
         (ia, pa), (ib, pb) = sorted(((a, ln["p1"]), (b, ln["p2"])))
@@ -984,17 +1047,23 @@ class ChartWindow(tk.Toplevel):
         super().__init__(app.root)
         self.app, self.geom, self.drag, self.ruler = app, None, None, None
         self.n_show, self.end = None, None   # okno suwaka: długość zostaje między spółkami, koniec wraca do ostatniego tygodnia
+        self.vcache = None
         self.configure(bg=BG)
         hh = max(600, min(self.winfo_screenheight() - 90, 1150))   # okno wyższe niż szersze (użytkownik: „bardziej wysokie niż szerokie”)
         self.geometry(f"{int(hh * 0.92)}x{hh}+40+10")
         apply_dark(self)
         self.sel, self.gest = None, None   # zaznaczona linia trendu, gest myszy na wykresie
         self.period, self.other = "W", {"M": {}}   # W = tygodniowy (3 lata), M = miesięczny (pełna historia, w pamięci)
+        self.load_view()
         self.rwb = False   # RWB (GMMA + Blue Dot) na wykresie tygodniowym
         top = tk.Frame(self, bg=PANEL)
         top.pack(fill="x")
         self.rwb_btn = tk.Button(top, text="RWB", width=4, command=self.toggle_rwb, relief="flat")
         self.rwb_btn.pack(side="right", padx=2, pady=2)
+        self.price_btn = tk.Button(top, text="⤢ Cena", command=self.reset_price, relief="flat")
+        self.price_btn.pack(side="right", padx=2, pady=2)
+        self.fut_btn = tk.Button(top, text="⇥ 12", width=5, command=self.cycle_future, relief="flat")
+        self.fut_btn.pack(side="right", padx=2, pady=2)
         self.sync_btn = tk.Button(top, text="⟳ Sync", command=self.sync_current_ticker, relief="flat")
         self.sync_btn.pack(side="right", padx=2, pady=2)
         self.syncing_ticker = None
@@ -1115,9 +1184,12 @@ class ChartWindow(tk.Toplevel):
         self.bind("r", lambda e: self.toggle_rwb())   # RWB (GMMA + Blue Dot) na tygodniowym
         self.bind("R", lambda e: self.toggle_rwb())
         for w in (self.cv, self.slider):
-            w.bind("<MouseWheel>", lambda e: self.zoom(0.85 if e.delta > 0 else 1.18))
-            w.bind("<Button-4>", lambda e: self.zoom(0.85))
-            w.bind("<Button-5>", lambda e: self.zoom(1.18))
+            w.bind("<MouseWheel>", lambda e: self.wheel(e, 1 if e.delta > 0 else -1))
+            w.bind("<Button-4>", lambda e: self.wheel(e, 1))
+            w.bind("<Button-5>", lambda e: self.wheel(e, -1))
+        self.cv.bind("<ButtonPress-2>", self.free_press)
+        self.cv.bind("<B2-Motion>", self.free_move)
+        self.cv.bind("<ButtonRelease-2>", lambda e: self.app.store.save_settings())
         self.bind("<Up>", lambda e: self.step(-1))
         self.bind("<Down>", lambda e: self.step(1))
         self.bind("<Left>", lambda e: self.pan(-4))
@@ -1151,6 +1223,71 @@ class ChartWindow(tk.Toplevel):
             return self.other["M"].get(self.ticker)
         return self.app.store.weekly(self.ticker)
 
+    def view(self):
+        """Ustawienia widoku bieżącego interwału (zapamiętane w settings.json): fut = puste świece w przyszłości, n = długość okna, pv = (z, s) skala ceny."""
+        v = self.app.store.settings.setdefault("view", {}).setdefault(self.period, {})
+        return {"fut": v.get("fut", FUTURE_DEFAULT[self.period]), "n": v.get("n"), "pv": (v.get("z", 1.0), v.get("s", 0.0))}
+
+    def save_view(self, save=True, **kw):
+        self.app.store.settings.setdefault("view", {}).setdefault(self.period, {}).update(kw)
+        if save:
+            self.app.store.save_settings()
+
+    def load_view(self):
+        self.n_show = self.view()["n"]
+        self.fut_btn.config(text=f"⇥ {self.view()['fut']}") if hasattr(self, "fut_btn") else None
+
+    def vdata(self):
+        """Dane bieżącego interwału z pustymi świecami w przyszłości (data(), ale dłuższe o `fut`; "real" = liczba prawdziwych świec)."""
+        data, fut = self.data(), self.view()["fut"]
+        if not data:
+            return None
+        key = (self.ticker, self.period, fut, id(data), len(data["c"]))
+        if not self.vcache or self.vcache[0] != key:
+            self.vcache = (key, extend(data, fut, self.period))
+        return self.vcache[1]
+
+    def cycle_future(self):
+        f = self.view()["fut"]
+        nxt = FUTURE_STEPS[(FUTURE_STEPS.index(f) + 1) % len(FUTURE_STEPS)] if f in FUTURE_STEPS else FUTURE_STEPS[0]
+        self.save_view(fut=nxt)
+        self.fut_btn.config(text=f"⇥ {nxt}")
+        self.end = None
+        self.redraw()
+
+    def wheel(self, e, d):
+        """Kółko: czas (powiększ / zmniejsz okno); nad osią ceny albo z Shift — skala ceny."""
+        if e.widget is self.cv and self.geom and (e.x > self.geom["g"]["x1"] or e.state & 1):
+            z = self.view()["pv"][0] * (1.18 if d > 0 else 0.85)
+            self.save_view(z=max(0.2, min(8.0, z)))
+            self.redraw()
+        else:
+            self.zoom(0.85 if d > 0 else 1.18)
+
+    def free_press(self, e):
+        """Środkowy przycisk: swobodne przesuwanie wykresu (czas i cena naraz)."""
+        if self.geom and self.data():
+            vd = self.vdata()
+            i0, i1 = window(len(vd["c"]), self.n_show, self.end)
+            self.free = (e.x, e.y, i1, self.view()["pv"][1])
+
+    def free_move(self, e):
+        fr = getattr(self, "free", None)
+        if not fr or not self.geom:
+            return
+        x, y, i1, s = fr
+        vd = self.vdata()
+        total = len(vd["c"])
+        i0, cur = window(total, self.n_show, self.end)
+        n = cur - i0
+        y0, y1 = self.geom["g"]["price"]
+        self.save_view(s=s + (e.y - y) / (y1 - y0) / self.view()["pv"][0], save=False)
+        self._set(n, max(n, min(total, i1 - round((e.x - x) / self.geom["step"]))))
+
+    def reset_price(self):
+        self.save_view(z=1.0, s=0.0)
+        self.redraw()
+
     def refresh_earnings_dates(self, ticker=None):
         """Bieżące daty wyników z cache; zgodność ze starszym cache przez daty niespodzianek EPS."""
         ticker = ticker or self.ticker
@@ -1172,7 +1309,7 @@ class ChartWindow(tk.Toplevel):
             self.sync_btn.config(state="normal", text="⟳ Sync")
 
     def toggle_rwb(self):
-        """RWB: 12 średnich Guppy (szybkie czerwone, wolne niebieskie), pasek RWB i ● Blue Dot — tylko na wykresie tygodniowym (T)."""
+        """RWB: pasek RWB (szybkie średnie Guppy nad wolnymi) u dołu ceny i ● Blue Dot — na T i M."""
         self.rwb = not self.rwb
         self.mark_period()
         self.redraw()
@@ -1191,15 +1328,16 @@ class ChartWindow(tk.Toplevel):
         if self.period != "W" and self.zanger:
             self.zanger = False
             self.zanger_btn.config(bg=self.del_btn.cget("bg"), fg=FG)
-        self.n_show, self.end, self.sel = None, None, None
+        self.end, self.sel = None, None
+        self.load_view()
         self.mark_period()
         self.load_period()
 
     def mark_period(self):
         for per, b in self.per_btns.items():
             b.config(bg="#1f3b5c" if per == self.period else self.del_btn.cget("bg"), fg="#ffffff" if per == self.period else FG)
-        on = self.rwb and self.period == "W"
-        self.rwb_btn.config(state="normal" if self.period == "W" else "disabled", bg="#1f3b5c" if on else self.del_btn.cget("bg"), fg="#ffffff" if on else FG)
+        on = self.rwb
+        self.rwb_btn.config(state="normal", bg="#1f3b5c" if on else self.del_btn.cget("bg"), fg="#ffffff" if on else FG)
 
     def load_period(self):
         t, per = self.ticker, self.period
@@ -1251,8 +1389,6 @@ class ChartWindow(tk.Toplevel):
     def set_ticker(self, ticker):
         self.ticker, self.end, self.sel, self.gest = ticker, None, None, None
         self.symbol_var.set(ticker)
-        if self.period != "W":
-            self.n_show = None
         r = self.app.store.row(ticker) or {}
         company = r.get("company") or ""
         self.head.config(text=f"  ·  {company}" if company else "")
@@ -1277,9 +1413,10 @@ class ChartWindow(tk.Toplevel):
             return
         self.mark_period()
         spx = self.spy_monthly() if self.period == "M" else self.app.store.weekly("SPY")
-        self.geom = draw(self.cv, data, self.row_for_chart(), n_show=self.n_show, end=self.end, tlines=self.shown_lines(), sel=self.sel,
+        vd = self.vdata()
+        self.geom = draw(self.cv, vd, self.row_for_chart(), n_show=self.n_show, end=self.end, tlines=self.shown_lines(), sel=self.sel,
                          spx=spx, period=self.period, rwb=self.rwb, zanger=self.zanger and self.period == "W",
-                         stop=self.manual_stop(), stop_label=self.stop_label())
+                         stop=self.manual_stop(), stop_label=self.stop_label(), real=vd["real"], pv=self.view()["pv"])
 
     def spy_monthly(self):
         """SPY miesięczny do tła wykresu M (SPY nad SMA 10 mies.): z cache `monthly_ohlc`; brak albo starszy niż 2 miesiące -> pobranie w tle
@@ -1333,21 +1470,24 @@ class ChartWindow(tk.Toplevel):
     def draw_slider(self):
         data = self.data()
         if data:
-            draw_slider(self.slider, data["c"], self.n_show, self.end, "mies." if self.period == "M" else "tyg.")
+            draw_slider(self.slider, self.vdata()["c"], self.n_show, self.end, "mies." if self.period == "M" else "tyg.")
         else:
             self.slider.delete("all")
 
     def _set(self, n_show, end):
-        total = len(self.data()["c"])
+        vd = self.vdata()
+        total, real = len(vd["c"]), vd["real"]
+        end = min(end, real + max(0, n_show - 2))   # zawsze zostają ≥ 2 prawdziwe świece w oknie
         self.n_show = None if n_show >= total else n_show
         self.end = None if end >= total else end
+        self.save_view(n=self.n_show)
         self.redraw()
 
     def slider_press(self, e):
         data = self.data()
         if not data:
             return
-        total, W = len(data["c"]), self.slider.winfo_width()
+        total, W = len(self.vdata()["c"]), self.slider.winfo_width()
         x0, x1 = slider_rect(total, self.n_show, self.end, W)
         mode = slider_mode(e.x, x0, x1)
         if mode == "jump":
@@ -1360,17 +1500,17 @@ class ChartWindow(tk.Toplevel):
         if not data or not self.drag:
             return
         mode, x, start = self.drag
-        self._set(*slider_drag(mode, start, e.x - x, len(data["c"]), self.slider.winfo_width()))
+        self._set(*slider_drag(mode, start, e.x - x, len(self.vdata()["c"]), self.slider.winfo_width()))
 
     def zoom(self, factor):
         data = self.data()
         if data:
-            self._set(*zoom(len(data["c"]), self.n_show, self.end, factor))
+            self._set(*zoom(len(self.vdata()["c"]), self.n_show, self.end, factor))
 
     def pan(self, d):
         data = self.data()
         if data:
-            total = len(data["c"])
+            total = len(self.vdata()["c"])
             i0, i1 = window(total, self.n_show, self.end)
             self._set(i1 - i0, max(i1 - i0, min(total, i1 + d)))
 
@@ -1386,13 +1526,18 @@ class ChartWindow(tk.Toplevel):
             return
         self.cv.create_line(e.x, (g["rs"] or g["price"])[0], e.x, g["macd"][1], fill="#3a4654", tags="tip")
         index = self.geom["i0"] + i
-        lines = [s for s in info_lines(data, index) if s]
-        if self.period == "W":
+        if index >= len(data["c"]):   # puste miejsce w przyszłości: tylko data (tu rysuje się linie)
+            lines = [f"{self.vdata()['d'][index]} · przyszłość"]
+        else:
+            lines = [s for s in info_lines(data, index) if s]
+        if index < len(data["c"]) and self.period == "W":
             cache = getattr(self, "earnings_cache_entry", None) or {}
             lines.extend(earnings_tooltip_lines(data, index, cache, self.period))
-        if self.period == "W" and self.rwb:   # Blue Dot w dymku świecy (tygodniowy)
-            row = self.app.store.row(self.ticker) or {}
-            if index in calc.blue_dots(data["h"], data["l"], data["c"], row.get("glb")):
+        if index < len(data["c"]) and self.rwb:   # Blue Dot w dymku świecy
+            level, _ = glb_peak(data, self.app.store.row(self.ticker) or {}, self.period)
+            if index in calc.rwb_starts([v or 0 for v in data["c"]]):
+                lines.append(f"RWB START · dokup (stop pod Low {fmt(data['l'][index])})")
+            if index in calc.blue_dots(data["h"], data["l"], data["c"], level):
                 lines.extend([f"BLUE DOT · {data['d'][index]}", f"Stop pod Low: {fmt(data['l'][index])}"])
         tip_w = 252
         x = e.x + 14 if e.x < g["x1"] - tip_w - 14 else e.x - tip_w - 14
@@ -1406,11 +1551,10 @@ class ChartWindow(tk.Toplevel):
         return [ln for ln in self.app.store.alerts["lines"].get(self.ticker, []) if ln.get("period", "W") == self.period]
 
     def shown_lines(self):
-        """Linie do narysowania: własne + (na tygodniowym) linie narysowane na miesięcznym jako tylko do odczytu."""
+        """Linie do narysowania: własne + linie drugiego interwału (M na T / Z, T / Z na M) jako tylko do odczytu."""
         own = self.lines()
-        if self.period == "W":
-            own = own + [{**ln, "ro": True} for ln in self.app.store.alerts["lines"].get(self.ticker, []) if ln.get("period") == "M"]
-        return own
+        other = "M" if self.period == "W" else "W"   # linie z drugiego interwału (też narysowane w widoku Z) — pomocniczo, bez edycji
+        return own + [{**ln, "ro": True} for ln in self.app.store.alerts["lines"].get(self.ticker, []) if ln.get("period", "W") == other]
 
     def find(self, lid):
         return next((x for x in self.lines() if x["id"] == lid), None)
@@ -1429,7 +1573,7 @@ class ChartWindow(tk.Toplevel):
 
     def value(self, x, y):
         """Punkt wykresu -> (data tygodnia, cena z magnesem do High / Low, indeks)."""
-        g, data = self.geom["g"], self.data()
+        g, data = self.geom["g"], self.vdata()
         y0, y1 = g["price"]
         lmin, lmax = self.geom["lmin"], self.geom["lmax"]
         k = self.geom["i0"] + max(0, min(self.geom["n"] - 1, int((x - g["x0"]) / self.geom["step"])))
@@ -1444,13 +1588,17 @@ class ChartWindow(tk.Toplevel):
         if not self.geom or not self.data():
             return
         self.cv.focus_set()
+        g = self.geom["g"]
+        if e.x > g["x1"] and g["price"][0] <= e.y <= g["price"][1]:   # oś ceny: przeciąganie = przesuwanie skali ceny w pionie
+            self.gest = {"mode": "axis", "y": e.y, "s": self.view()["pv"][1]}
+            return
         hit = L.hit_line(self.geom["segs"], e.x, e.y, 9)   # linie trendu: tygodniowy i miesięczny (miesięczne na tygodniowym są tylko do odczytu)
         if not hit and self.near_stop(e.x, e.y):   # chwycona linia ręcznego stopu: przeciąganie w pionie
             self.gest = {"mode": "stop"}
             return
         if hit:
             self.sel = hit[0]
-            ln, d = self.find(hit[0]), self.data()["d"]
+            ln, d = self.find(hit[0]), self.vdata()["d"]
             self.gest = {"mode": hit[1], "x": e.x, "y": e.y, "orig": dict(ln), "ka": d.index(ln["d1"]) if ln["d1"] in d else -1,
                          "kb": d.index(ln["d2"]) if ln["d2"] in d else -1, "snap": self.lines_json()}
             self.tools()
@@ -1464,6 +1612,11 @@ class ChartWindow(tk.Toplevel):
             return
         if gs["mode"] == "stop":
             self.drag_stop(e)
+            return
+        if gs["mode"] == "axis":
+            y0, y1 = self.geom["g"]["price"]
+            self.save_view(s=gs["s"] + (e.y - gs["y"]) / (y1 - y0) / self.view()["pv"][0], save=False)
+            self.redraw()
             return
         if gs["mode"] == "pend":
             if math.hypot(e.x - gs["x"], e.y - gs["y"]) <= 4:
@@ -1493,11 +1646,11 @@ class ChartWindow(tk.Toplevel):
             if flat:
                 p = ln["p" + other]
             ln["d" + me], ln["p" + me] = d, p
-            dates = self.data()["d"]
+            dates = self.vdata()["d"]
             k1 = dates.index(ln["d" + other]) if ln["d" + other] in dates else k
             hint = (g["x0"] + (k - geo["i0"] + 0.5) * geo["step"], yf(p), flat, ruler_text(ln["p" + other], p, k1, k, self.period) + (" · poziomo" if flat else ""))
         elif gs["mode"] == "body" and gs["ka"] >= 0 and gs["kb"] >= 0:
-            dates, g = self.data()["d"], self.geom["g"]
+            dates, g = self.vdata()["d"], self.geom["g"]
             db = round((e.x - gs["x"]) / self.geom["step"])
             db = max(-min(gs["ka"], gs["kb"]), min(len(dates) - 1 - max(gs["ka"], gs["kb"]), db))
             ratio = math.exp(-(e.y - gs["y"]) / (g["price"][1] - g["price"][0]) * (self.geom["lmax"] - self.geom["lmin"]))
@@ -1514,7 +1667,7 @@ class ChartWindow(tk.Toplevel):
         gs, self.gest = self.gest, None
         if not gs:
             return
-        if gs["mode"] == "stop":
+        if gs["mode"] in ("stop", "axis"):
             self.app.store.save_settings()
             return
         self.cv.delete("hint")
@@ -1759,7 +1912,10 @@ class ChartWindow(tk.Toplevel):
         if not self.geom or not self.data():
             return
         g = self.geom["g"]
-        if g["price"][0] <= e.y <= g["price"][1] and g["x0"] <= e.x <= g["x1"]:
+        if e.x > g["x1"] and g["price"][0] <= e.y <= g["price"][1]:   # dwuklik na osi ceny = skala automatyczna
+            self.gest = None
+            self.reset_price()
+        elif g["price"][0] <= e.y <= g["price"][1] and g["x0"] <= e.x <= g["x1"]:
             self.gest = None
             self.set_manual_stop(self.value(e.x, e.y)[1])
 

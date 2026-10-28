@@ -160,9 +160,14 @@ def position_plan(pos, data, row):
             "half": last is not None and half_at is not None and last <= half_at, "glb_exit": bool(last is not None and glb and last < glb)}
 
 
+def _floor4(x):
+    """Akcje ułamkowe: w dół do 0,0001 (poprawka 1e-9 na błędy zmiennoprzecinkowe, żeby 20 nie wyszło 19,9999)."""
+    return math.floor(x * 1e4 + 1e-9) / 1e4
+
+
 def position_size(capital_pln, usdpln, entry, stop, risk_pct):
     """Wielkość pozycji w USD z kapitału w PLN: kapitał / kurs (usdpln = PLN za 1 USD); ryzyko = risk_pct % kapitału; akcje = ryzyko / (wejście − stop),
-    nie więcej niż za cały kapitał (całe akcje, w dół). -> dict albo None (brak danych, kurs ≤ 0 albo stop nie jest pod ceną wejścia)."""
+    nie więcej niż za cały kapitał (akcje ułamkowe, w dół do 4 miejsc po przecinku). -> dict albo None (brak danych, kurs ≤ 0 albo stop nie jest pod ceną wejścia)."""
     try:
         capital_pln, usdpln, entry, stop, risk_pct = (float(x) for x in (capital_pln, usdpln, entry, stop, risk_pct))
     except (TypeError, ValueError):
@@ -172,7 +177,7 @@ def position_size(capital_pln, usdpln, entry, stop, risk_pct):
     capital_usd = capital_pln / usdpln
     risk_usd = capital_usd * risk_pct / 100
     per_share = entry - stop
-    by_risk, by_capital = int(risk_usd // per_share), int(capital_usd // entry)
+    by_risk, by_capital = _floor4(risk_usd / per_share), _floor4(capital_usd / entry)
     shares = min(by_risk, by_capital)
     value_usd, loss_usd = shares * entry, shares * per_share
     return {"capital_usd": capital_usd, "risk_usd": risk_usd, "risk_pln": risk_usd * usdpln, "per_share": per_share, "shares": shares,

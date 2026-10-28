@@ -702,6 +702,9 @@ def test_position_size_pln_to_usd():
     assert r["full_shares"] == 100 and r["full_loss_usd"] == 500 and abs(r["full_loss_pct"] - 5) < 1e-9
     tight = lines.position_size(4000, 4.0, 100.0, 99.0, 5.0)         # 1000 USD: ryzyko 50 USD / 1 USD = 50 akcji, ale kapitał starcza na 10
     assert tight["shares"] == 10 and tight["limited_by"] == "kapitał" and tight["value_usd"] == 1000
+    frac = lines.position_size(4000, 4.0, 300.0, 285.0, 1.0)          # 1000 USD, ryzyko 10 USD / 15 USD = 0,6666 akcji (ułamkowe, w dół)
+    assert frac["shares"] == 0.6666 and frac["limited_by"] == "ryzyko" and frac["loss_usd"] <= 10 and A_chart.shares_text(frac["shares"]) == "0,6666"
+    assert A_chart.shares_text(20.0) == "20" and A_chart.shares_text(12.5) == "12,5"
     assert lines.position_size(1000, 4.0, 100.0, 100.0, 1.0) is None and lines.position_size(1000, 4.0, 100.0, 120.0, 1.0) is None
     assert lines.position_size(1000, 0, 100.0, 90.0, 1.0) is None and lines.position_size("x", 4.0, 100.0, 90.0, 1.0) is None
     assert A_chart.num("12 345,5") == 12345.5 and A_chart.num("abc") is None and A_chart.money(1234567.891, 2) == "1 234 567,89"

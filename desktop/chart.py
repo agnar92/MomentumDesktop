@@ -466,9 +466,7 @@ def draw_simple(cv, data, row, w, h, n_show, end, tlines, sel, spx, period, stop
         if data["l"][i] and pmin < data["l"][i] < pmax:
             py = yf(data["l"][i]) + 9
             cv.create_oval(xf(i - i0) - 4, py - 4, xf(i - i0) + 4, py + 4, fill=BLUE_DOT, outline="")
-    pts = [(xf(i), yc(v)) for i, v in enumerate(sma10) if v]
-    if len(pts) > 1:
-        cv.create_line(*[p for xy in pts for p in xy], fill=SMA_C, width=2.4)
+    draw_poly(cv, [(xf(i), yf(v)) for i, v in enumerate(sma10) if v], g, fill=SMA_C, width=2.4)   # SMA 10 znika poza widoczną skalą ceny
     if ly is not None:   # Green Line: kropkowana od świecy rekordu, cena nad świecą i na osi
         cv.create_line(xs, ly, x1, ly, fill=GLB_COLOR, width=2, dash=(2, 4))
         if at is not None and i0 <= at < i1 and data["h"][at]:
@@ -760,6 +758,34 @@ def draw_rs_panel(cv, data, i0, i1, xf, g, spx, row=None, period="W"):
     if r.get("rs") is not None:   # na końcu linii: siła względna 52 tyg. w pp vs SPY (jak kolumna RS)
         boxed(cv, x1 + 4, pts[-1][1], f"{r['rs']:+.0f} pp", RS_C)
     cv.create_line(x0, s1 + 3, x1, s1 + 3, fill=GRID)
+
+
+def clip_seg(xa, ya, xb, yb, rect):
+    """Odcinek przycięty do prostokąta (x0, y0, x1, y1) (Liang–Barsky) albo None, gdy leży poza nim."""
+    x0, y0, x1, y1 = rect
+    t0, t1, dx, dy = 0.0, 1.0, xb - xa, yb - ya
+    for p, q in ((-dx, xa - x0), (dx, x1 - xa), (-dy, ya - y0), (dy, y1 - ya)):
+        if p == 0:
+            if q < 0:
+                return None
+            continue
+        r = q / p
+        if p < 0:
+            t0 = max(t0, r)
+        else:
+            t1 = min(t1, r)
+        if t0 > t1:
+            return None
+    return xa + t0 * dx, ya + t0 * dy, xa + t1 * dx, ya + t1 * dy
+
+
+def draw_poly(cv, pts, g, **kw):
+    """Linia łamana przycięta do panelu ceny: poza widoczną skalą linia znika (nie przykleja się do krawędzi)."""
+    rect = (g["x0"], g["price"][0], g["x1"], g["price"][1])
+    for a, b in zip(pts, pts[1:]):
+        seg = clip_seg(*a, *b, rect)
+        if seg:
+            cv.create_line(*seg, **kw)
 
 
 def draw_lines(cv, data, tlines, sel, i0, i1, xf, yf, g, step, w):

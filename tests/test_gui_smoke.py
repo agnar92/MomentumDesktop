@@ -281,9 +281,10 @@ def test_guide_position_and_ibd_panels(app):
     ch.update()
     ch.redraw()
     texts = [ch.cv.itemcget(i, "text") for i in ch.cv.find_all() if ch.cv.type(i) == "text"]
-    assert not any(t.startswith("RS Line") or t.startswith("Przychody kw.") or t.startswith("S&P 500") for t in texts)   # T: prosty układ bez RS Line i przychodów
+    assert any(t.startswith("RS Line") or t.startswith("RS /") for t in texts)   # T: panel RS Line jest
+    assert not any(t.startswith("Przychody kw.") or t.startswith("S&P 500") for t in texts)   # ale bez przychodów
     g = ch.geom["g"]
-    assert g["rs"] is None and g["rev"] is None and g["price"][1] < g["vol"][0] < g["vol"][1] < g["macd"][0] < g["macd"][1]
+    assert g["rs"] and g["rs"][1] < g["price"][0] and g["rev"] is None and g["price"][1] < g["vol"][0] < g["vol"][1] < g["macd"][0] < g["macd"][1]
     bands = [i for i in ch.cv.find_all() if ch.cv.type(i) == "rectangle" and ch.cv.itemcget(i, "fill") == A_chart.REGIME_BG]
     assert bands and any(ch.cv.type(i) == "line" and ch.cv.itemcget(i, "fill") == A_chart.SMA_C for i in ch.cv.find_all())   # tło SPY > SMA 10 i niebieska SMA 10
     panel_text = ch.ptext.get("1.0", "end")
@@ -470,7 +471,7 @@ def test_exit_method_toggle_and_position_plan(app):
     assert app.store.settings["exit"] == "MACD"
 
 
-def test_period_buttons_without_daily_and_no_rs_panel(app):
+def test_period_buttons_without_daily_with_rs_panel(app):
     st = app.store
     w = st.weekly("AAA")
     st.series["SPY"] = {**w, "c": [400 - i for i in range(len(w["c"]))]}   # SPY spada -> RS rośnie, na szczycie 52 tyg.
@@ -480,8 +481,8 @@ def test_period_buttons_without_daily_and_no_rs_panel(app):
     ch.redraw()
     assert set(ch.per_btns) == {"M", "W"} and ch.per_btns["W"].cget("text") == "T" and ch.per_btns["W"].cget("bg") == "#1f3b5c"
     texts = [ch.cv.itemcget(i, "text") for i in ch.cv.find_all() if ch.cv.type(i) == "text"]
-    assert not any("pp" in t or t.startswith("RS") for t in texts)   # T: bez panelu RS Line
-    assert not hasattr(A_chart, "rs_line") and not hasattr(ch, "daily_style")        # dziennego wykresu ani RS Line już nie ma
+    assert any(t.startswith("RS") for t in texts)   # T: panel RS Line (akcja / SPY)
+    assert hasattr(A_chart, "rs_line") and not hasattr(ch, "daily_style")        # RS Line wrócił, dziennego wykresu nie ma
     ch.toggle_period()
     assert ch.period == "M" and ch.per_btns["M"].cget("bg") == "#1f3b5c"
     ch.toggle_period()

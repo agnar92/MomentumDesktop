@@ -27,6 +27,7 @@ FONT = ("Consolas", 9)
 RIGHT, LEFT, TOP = 64, 6, 22
 ZONE_C, ZONE_ALPHA = "#9aa3ad", 0.16   # strefa kupna 0–10 % nad GLB (jednolity pas = ZONE_C zmieszany z tłem w proporcji ZONE_ALPHA) i przerywana na 5 %
 BAR_C, SMA_C, REGIME_BG = "#a9b1bb", "#2f6bff", "#0f2a1c"   # wykres T / M: szare słupki, niebieska SMA 10, tło „SPY nad SMA 10”
+RS_C = "#38bdf8"   # panel RS Line (akcja / SPY)
 VOL_UP, VOL_DOWN = "#1f7a6d", "#7d3c38"
 HIST_C = {(True, True): "#00e676", (True, False): "#2e8b57", (False, False): "#ff5252", (False, True): "#8b8f98"}   # (hist ≥ 0, rośnie)
 MACD_LINE, SIGNAL_LINE = "#2f6bff", "#c850e8"
@@ -260,13 +261,15 @@ def mix(base, top, alpha):
 
 
 def simple_geometry(w, h):
-    """Panele wykresu T / M: cena 64 %, wolumen 13 %, MACD reszta (odstęp na oś czasu na dole)."""
+    """Panele wykresu T / M: RS Line 12 %, cena 52 %, wolumen 11 %, MACD reszta (odstęp na oś czasu na dole)."""
     top = 8
     ph = h - top - 22
-    p1 = top + ph * 0.64
+    s1 = top + ph * 0.12
+    p0 = s1 + 8
+    p1 = p0 + ph * 0.52
     v0 = p1 + 6
-    v1 = v0 + ph * 0.13
-    return {"rs": None, "price": (top, p1), "vol": (v0, v1), "rev": None, "macd": (v1 + 10, h - 22), "x0": LEFT, "x1": w - RIGHT}
+    v1 = v0 + ph * 0.11
+    return {"rs": (top, s1), "price": (p0, p1), "vol": (v0, v1), "rev": None, "macd": (v1 + 10, h - 22), "x0": LEFT, "x1": w - RIGHT}
 
 
 def _near(a, b, period):
@@ -348,6 +351,7 @@ def draw_simple(cv, data, row, w, h, n_show, end, tlines, sel, spx, period, stop
         elif not on and a is not None:
             cv.create_rectangle(xf(a) - step / 2, y0, xf(i - 1) + step / 2, v1, fill=REGIME_BG, outline="")
             a = None
+    draw_rs_panel(cv, data, i0, i1, xf, g, spx, row, period)
     ly = yf(level) if level and pmin < level < pmax else None
     xs = xf(at - i0) if at is not None and i0 <= at < i1 else x0   # Green Line i jej strefa zaczynają się na świecy rekordu
     last = c[-1]
@@ -624,6 +628,75 @@ def draw_patterns(cv, row, dates, xf, yf, g, step, pmin, pmax):
             cv.create_line(x0, y, x1, y, fill=PARABOLA_COLOR, dash=(2, 3))
             boxed(cv, x0 + 4, y + 9, ("PARABOLA · ZŁAMANA najbardziej stroma linia — sprzedaż" + (f" · wol. {para['vol_x']:.1f}×" if para.get("vol_x") else "")
                                       if para.get("state") == "ZŁAMANA" else f"PARABOLA · wyjście: zamknięcie tyg. pod linią 3 ({fmt(para['exit'])})"), PARABOLA_COLOR)
+
+
+def rs_line(closes, spx_closes):
+    """RS Line: zamknięcie akcji / zamknięcie SPY w tym samym tygodniu (sesji) — None, gdy brak."""
+    return [c / s if c and s else None for c, s in zip(closes, spx_closes)]
+
+
+RS_HIGH_C, RS_EARLY_C, RS_MA_C = "#3ddc84", "#f472b6", "#f0b429"
+
+
+def rs_markers(rs, highs, lookback):
+    """Szczyty RS Line jak w Deepvue: {indeks: True (nowy szczyt RS i ceny) / False (RS przed ceną)} — RS powyżej maksimum z `lookback` poprzednich."""
+    out = {}
+    for i in range(lookback, len(rs)):
+        v = rs[i]
+        prior = [x for x in rs[i - lookback:i] if x]
+        if not v or not prior or v <= max(prior):
+            continue
+        ph = [x for x in highs[i - lookback:i] if x]
+        out[i] = not ph or (highs[i] or 0) > max(ph)
+    return out
+
+
+def draw_rs_panel(cv, data, i0, i1, xf, g, spx, row=None, period="W"):
+    """Panel RS Line (Deepvue): akcja / SPY na skali log okna, średnia 52 tyg. (252 sesje na D, 12 mies. na M), ● zielony = nowy szczyt RS
+    i ceny, ● różowy = szczyt RS przed ceną; RS 52 tyg. w pp na końcu linii."""
+    s0, s1 = g["rs"]
+    x0, x1 = g["x0"], g["x1"]
+    dates, closes = data.get("d") or [], data.get("c") or []
+    highs = data.get("h") or closes
+    sv = []
+    if spx and spx.get("d"):
+        for d in dates:
+            k = L.date_index(spx["d"], d)
+            sv.append(spx["c"][k] if k >= 0 else None)
+    rs_full = rs_line(closes, sv) if sv else []
+    lookback = 252 if period == "D" else 12 if period == "M" else 52
+    ma_full = [None] * len(rs_full)
+    for i in range(lookback - 1, len(rs_full)):
+        win = rs_full[i - lookback + 1:i + 1]
+        if all(win):
+            ma_full[i] = sum(win) / lookback
+    rs, ma = rs_full[i0:i1], ma_full[i0:i1]
+    ok = [v for v in rs if v]
+    if len(ok) < 2:
+        cv.create_text(x0 + 4, s0 + 6, text="RS Line — brak danych SPY (zrób Sync)", anchor="w", fill=DIM, font=FONT)
+        cv.create_line(x0, s1 + 3, x1, s1 + 3, fill=GRID)
+        return
+    vals = ok + [v for v in ma if v]
+    lo_, hi_ = math.log(min(vals)), math.log(max(vals))
+
+    def yr(v):
+        return s1 - (math.log(v) - lo_) / ((hi_ - lo_) or 1) * (s1 - s0 - 4) - 2
+    pts = [(xf(i), yr(v)) for i, v in enumerate(rs) if v]
+    cv.create_line(*[p for xy in pts for p in xy], fill=RS_C, width=1.6)
+    mpts = [(xf(i), yr(v)) for i, v in enumerate(ma) if v]
+    if len(mpts) > 1:
+        cv.create_line(*[p for xy in mpts for p in xy], fill=RS_MA_C, width=1.3)
+    for i, with_price in rs_markers(rs_full, highs, lookback).items():
+        if i0 <= i < i1:
+            x, y = xf(i - i0), yr(rs_full[i])
+            cv.create_oval(x - 3.5, y - 3.5, x + 3.5, y + 3.5, fill=RS_HIGH_C if with_price else RS_EARLY_C, outline="")
+    r = row or {}
+    unit = "252 sesji" if period == "D" else "12 mies." if period == "M" else "52 tyg."
+    full = f"RS Line (akcja / SPY) · średnia {unit} · ● zielony = nowy szczyt RS · ● różowy = RS przed ceną"
+    boxed(cv, x0 + 4, s0 + 6, full if x1 - x0 > 7 * len(full) else f"RS / MA {unit}", RS_C)
+    if r.get("rs") is not None:   # na końcu linii: siła względna 52 tyg. w pp vs SPY (jak kolumna RS)
+        boxed(cv, x1 + 4, pts[-1][1], f"{r['rs']:+.0f} pp", RS_C)
+    cv.create_line(x0, s1 + 3, x1, s1 + 3, fill=GRID)
 
 
 def draw_lines(cv, data, tlines, sel, i0, i1, xf, yf, g, step, w):

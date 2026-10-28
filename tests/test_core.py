@@ -704,3 +704,12 @@ def test_rwb_starts_mark_return_of_rwb_after_pullback():
     assert starts and all(r[i] and not r[i - 1] for i in starts)
     assert all(i >= 60 for i in starts) and starts[-1] > 145        # ostatni start po cofnięciu
     assert calc.rwb_starts([100 + i for i in range(50)]) == []      # za krótka historia
+
+
+def test_rwb_days_counts_days_since_start_of_current_rwb():
+    c = [100 + i for i in range(120)] + [220 - 3 * i for i in range(25)] + [145 + 2 * i for i in range(60)]
+    d = [(dt.date(2023, 1, 2) + dt.timedelta(weeks=i)).isoformat() for i in range(len(c))]
+    start = calc.rwb_starts(c)[-1]
+    assert calc.rwb_days(c, d) == 7 * (len(c) - 1 - start)           # dni od ostatniego startu RWB
+    assert calc.rwb_days([100 - i * 0.5 for i in range(100)], d[:100]) is None   # RWB wyłączone
+    assert calc.rwb_days(c[:40], d[:40]) is None                    # za krótka historia

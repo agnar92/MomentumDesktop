@@ -86,6 +86,19 @@ def rwb_starts(closes, warmup=60):
     return [i for i in range(max(1, warmup), len(r)) if r[i] and not r[i - 1]]
 
 
+def rwb_days(closes, dates):
+    """Ile dni trwa bieżące RWB (od świecy startu serii do ostatniej); None, gdy RWB jest wyłączone albo brak danych."""
+    if len(closes) < 61 or len(dates) != len(closes):
+        return None
+    r = rwb(closes)
+    if not r[-1]:
+        return None
+    i = len(r) - 1
+    while i > 0 and r[i - 1]:
+        i -= 1
+    return (dt.date.fromisoformat(dates[-1][:10]) - dt.date.fromisoformat(dates[i][:10])).days
+
+
 def stoch_k(highs, lows, closes, n=10):
     """Stochastic (n, 1) %K -> lista (None, gdy brak n świec albo zerowy zakres)."""
     out = []
@@ -820,6 +833,7 @@ def build_row(base, weekly, months, fund, spy=None, est=None, conditions=None):
     row["trend"] = s10 > s30 if s10 is not None and s30 is not None else None   # trend tygodniowy: SMA 10 > SMA 30 (filtr listy)
     row["rvol_w"] = rel_volume(v, RVOL_W)
     row["cc52w"] = price_ratio(c)
+    row["rwb_days"] = rwb_days([x or 0 for x in c], weekly["d"])   # dni od startu bieżącego RWB (sortowanie: świeże starty na górze)
     bdot = fresh_blue_dot(weekly, level) if row["glb_state"] == "NAD" else None   # > 10 % nad linią, nie tydzień przebicia: wejście po Blue Dot na tygodniowym
     if bdot:
         row["glb_state"], row["bdot"] = "BLUE DOT", bdot

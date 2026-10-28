@@ -755,3 +755,146 @@ def test_spy_regime_background_weekly_and_monthly():
     wk = A_chart.spy_regime(weekly["d"], weekly, "W")
     assert wk[9:] == [True] * 5 and wk[0] is None
     assert A_chart.spy_regime(["2025-05-14"], {"d": ["2025-01-06", "2025-03-03"], "c": [1, 2]}, "W") == [None]   # świeca SPY sprzed miesięcy to nie ta sama świeca
+
+
+def test_position_size_pln_to_usd():
+    from desktop import lines
+    r = lines.position_size(40000, 4.0, 100.0, 95.0, 1.0)           # 10 000 USD kapitału, ryzyko 100 USD, 5 USD na akcję
+    assert r["capital_usd"] == 10000 and r["risk_usd"] == 100 and r["shares"] == 20 and r["limited_by"] == "ryzyko"
+    assert r["value_usd"] == 2000 and r["value_pln"] == 8000 and r["loss_usd"] == 100 and r["loss_pln"] == 400 and abs(r["loss_pct"] - 1) < 1e-9
+    assert r["full_shares"] == 100 and r["full_loss_usd"] == 500 and abs(r["full_loss_pct"] - 5) < 1e-9
+    tight = lines.position_size(4000, 4.0, 100.0, 99.0, 5.0)         # 1000 USD: ryzyko 50 USD / 1 USD = 50 akcji, ale kapitał starcza na 10
+    assert tight["shares"] == 10 and tight["limited_by"] == "kapitał" and tight["value_usd"] == 1000
+    assert lines.position_size(1000, 4.0, 100.0, 100.0, 1.0) is None and lines.position_size(1000, 4.0, 100.0, 120.0, 1.0) is None
+    assert lines.position_size(1000, 0, 100.0, 90.0, 1.0) is None and lines.position_size("x", 4.0, 100.0, 90.0, 1.0) is None
+    assert A_chart.num("12 345,5") == 12345.5 and A_chart.num("abc") is None and A_chart.money(1234567.891, 2) == "1 234 567,89"
+
+
+def test_usdpln_from_yfinance(monkeypatch):
+    import pandas as pd
+    from desktop import prices
+    idx = pd.to_datetime(["2026-10-26", "2026-10-27", "2026-10-28"])
+    df = pd.DataFrame({"Open": [3.6, 3.7, 3.7], "High": [3.7, 3.7, 3.8], "Low": [3.6, 3.6, 3.7], "Close": [3.65, 3.7, 3.72], "Volume": [0, 0, 0]}, index=idx)
+    yf = type("YF", (), {"download": staticmethod(lambda *a, **k: df)})
+    monkeypatch.setattr(prices, "_yf", lambda: yf)
+    assert prices.usdpln() == 3.72
+    monkeypatch.setattr(prices, "_yf", lambda: type("YF", (), {"download": staticmethod(lambda *a, **k: pd.DataFrame())}))
+    assert prices.usdpln() is None
+
+
+def test_position_size_dialog_uses_position_stop_and_saves_capital(app, monkeypatch):
+    from desktop import prices
+    monkeypatch.setattr(prices, "usdpln", lambda: 4.0)
+    app.store.save_cache("fx", {"usdpln": 4.0, "date": __import__("datetime").date.today().isoformat()})
+    app.open_chart("AAA")
+    ch = app.chart
+    ch.update()
+    ch.open_size()
+    dlg = ch.size_dialog
+    app.root.update()
+    row = app.store.row("AAA")
+    entry0, stop0, src = ch.size_defaults()
+    assert "Bez pozycji" in src and stop0 < entry0                              # bez pozycji: cena i Green Line / −10 %
+    dlg.vars["capital"].set("40000")
+    dlg.vars["risk"].set("1")
+    dlg.vars["entry"].set("100")
+    dlg.vars["stop"].set("95")
+    assert "POZYCJA AAA: 20 akcji" in dlg.out.cget("text") and "8 000 PLN" in dlg.out.cget("text")   # 40 000 PLN / 4,0 = 10 000 USD
+    assert app.store.settings["capital_pln"] == 40000 and app.store.settings["risk_pct"] == 1
+    dlg.vars["stop"].set("100")
+    assert "ryzyka nie da się policzyć" in dlg.out.cget("text")
+    ch.set_manual_stop(None)                                                     # stop wpisany w oknie to ręczny stop z wykresu — usuwamy go
+    ch.toggle_pos()                                                              # pozycja: wejście z pozycji, stop = max(−10 %, MACD)
+    entry1, stop1, src1 = ch.size_defaults()
+    assert "pozycja" in src1 and entry1 == app.store.alerts["pos"]["AAA"]["price"] and stop1 >= entry1 * 0.9 - 1e-9
+    assert dlg.vars["entry"].get() == f"{entry1:.2f}" and row is not None
+    dlg.destroy()
+
+
+def test_glb_zone_grey_band_and_dashed_5_percent_line(app):
+    app.open_chart("AAA")
+    ch = app.chart
+    ch.update()
+    ch.redraw()
+    band = [i for i in ch.cv.find_all() if ch.cv.type(i) == "rectangle" and ch.cv.itemcget(i, "stipple") == "gray12" and ch.cv.itemcget(i, "fill") == A_chart.ZONE_C]
+    dashed = [i for i in ch.cv.find_all() if ch.cv.type(i) == "line" and ch.cv.itemcget(i, "fill") == A_chart.ZONE_C and ch.cv.itemcget(i, "dash")]
+    texts = [ch.cv.itemcget(i, "text") for i in ch.cv.find_all() if ch.cv.type(i) == "text"]
+    if app.store.row("AAA").get("glb"):
+        assert len(band) == 1 and len(dashed) == 1 and "+5 %" in texts
+        x1, y1, x2, y2 = ch.cv.coords(band[0])
+        assert y1 < ch.cv.coords(dashed[0])[1] < y2                               # przerywana 5 % leży w pasie 0–10 %
+
+
+def test_manual_stop_drag_double_click_persistence_and_dialog_sync(app, monkeypatch):
+    import datetime as dt
+    from desktop import prices
+    from desktop.store import Store
+    monkeypatch.setattr(prices, "usdpln", lambda: 4.0)
+    app.store.save_cache("fx", {"usdpln": 4.0, "date": dt.date.today().isoformat()})
+    E = lambda x, y: type("E", (), {"x": x, "y": y, "x_root": 0, "y_root": 0})()   # noqa: E731
+    app.open_chart("AAA")
+    ch = app.chart
+    ch.update()
+    ch.redraw()
+    assert ch.manual_stop() is None and ch.geom["stop_y"] is None
+    ch.toggle_stop()                                                             # domyślny stop (Green Line albo −10 %) do przeciągnięcia
+    s0 = ch.manual_stop()
+    assert s0 and ch.stop_btn.cget("text") == "🛑 Stop ✕" and ch.geom["stop_y"] is not None
+    red = [i for i in ch.cv.find_all() if ch.cv.type(i) == "line" and ch.cv.itemcget(i, "fill") == A_chart.STOP_COLOR and ch.cv.itemcget(i, "dash")]
+    assert red and any(t.startswith("STOP ") for t in (ch.cv.itemcget(i, "text") for i in ch.cv.find_all() if ch.cv.type(i) == "text"))
+    g = ch.geom["g"]
+    x = (g["x0"] + g["x1"]) / 2
+    ch.on_motion(E(x, ch.geom["stop_y"]))
+    assert ch.cv.cget("cursor") == "sb_v_double_arrow"                           # kursor „przeciągnij" nad linią stopu
+    ch.open_size()
+    dlg = ch.size_dialog
+    ch.press(E(x, ch.geom["stop_y"]))
+    assert ch.gest and ch.gest["mode"] == "stop"
+    ch.drag_line(E(x, ch.geom["stop_y"] - 40))                                   # w górę = wyższy stop
+    ch.release(E(x, ch.geom["stop_y"]))
+    s1 = ch.manual_stop()
+    assert s1 > s0 and Store(app.store.dir).settings["stops"]["AAA"] == s1       # zapisany w settings.json
+    assert dlg.vars["stop"].get() == f"{s1:.2f}"                                 # okno wielkości pozycji widzi nowy stop
+    ch.stop_here(E(x, g["price"][0] + (g["price"][1] - g["price"][0]) * 0.8))    # dwuklik = stop w tym miejscu
+    s2 = ch.manual_stop()
+    assert s2 < s1 and dlg.vars["stop"].get() == f"{s2:.2f}"
+    dlg.vars["stop"].set("55")                                                   # wpisany w oknie = stop na wykresie
+    assert ch.manual_stop() == 55
+    dlg.vars["capital"].set("40000")
+    dlg.vars["risk"].set("1")
+    entry = float(dlg.vars["entry"].get())
+    label = ch.stop_label()
+    assert label.startswith("STOP 55.00") and "akcji" in label and f"{(55 / entry - 1) * 100:+.1f} %" in label
+    ch.right_click(E(x, g["price"][0] + 5))                                      # prawy przycisk poza linią stopu = miarka, stop zostaje
+    assert ch.manual_stop() == 55
+    ch.toggle_stop()                                                             # ✕ usuwa
+    assert ch.manual_stop() is None and ch.stop_btn.cget("text") == "🛑 Stop" and "AAA" not in app.store.settings["stops"]
+    dlg.destroy()
+
+
+def test_manual_stop_is_drawn_on_monthly_and_zanger_views(app, monkeypatch):
+    import time
+    from desktop import prices
+    h = [10, 12, 30, 20, 21, 22, 25, 28, 29, 31, 29, 28, 27]
+    d = [f"2025-{m:02d}-01" for m in range(1, 13)] + ["2026-01-01"]
+    monkeypatch.setattr(prices, "monthly_ohlc", lambda t: {"d": d, "o": h, "h": h, "l": [x * 0.9 for x in h], "c": h, "v": [1e6] * len(h)})
+    app.open_chart("AAA")
+    ch = app.chart
+    ch.update()
+    ch.set_manual_stop(25.0)
+    ch.toggle_period("M")
+    for _ in range(50):
+        app.root.update()
+        if ch.geom and ch.geom["n"] == len(h):
+            break
+        time.sleep(0.02)
+    assert ch.period == "M" and ch.geom["stop_y"] is not None                    # ten sam stop na wykresie miesięcznym
+    ch.toggle_period("W")
+    ch.toggle_zanger()
+    ch.update()
+    assert ch.zanger and ch.manual_stop() == 25.0
+    ch.set_manual_stop(1.0)                                                      # poza widocznym zakresem: tylko strzałka przy dolnej krawędzi
+    texts = [ch.cv.itemcget(i, "text") for i in ch.cv.find_all() if ch.cv.type(i) == "text"]
+    assert ch.geom["stop_y"] is None and any(t.startswith("▼ STOP") for t in texts)
+    ch.set_manual_stop(90.0)
+    assert ch.geom["stop_y"] is not None                                         # w widoku Zangera stop jest nadal rysowany (obok stopu MACD)

@@ -146,6 +146,28 @@ def position_plan(pos, data, row):
             "half": last is not None and half_at is not None and last <= half_at, "glb_exit": bool(last is not None and glb and last < glb)}
 
 
+def position_size(capital_pln, usdpln, entry, stop, risk_pct):
+    """Wielkość pozycji w USD z kapitału w PLN: kapitał / kurs (usdpln = PLN za 1 USD); ryzyko = risk_pct % kapitału; akcje = ryzyko / (wejście − stop),
+    nie więcej niż za cały kapitał (całe akcje, w dół). -> dict albo None (brak danych, kurs ≤ 0 albo stop nie jest pod ceną wejścia)."""
+    try:
+        capital_pln, usdpln, entry, stop, risk_pct = (float(x) for x in (capital_pln, usdpln, entry, stop, risk_pct))
+    except (TypeError, ValueError):
+        return None
+    if min(capital_pln, usdpln, entry) <= 0 or risk_pct < 0 or not 0 < stop < entry:
+        return None
+    capital_usd = capital_pln / usdpln
+    risk_usd = capital_usd * risk_pct / 100
+    per_share = entry - stop
+    by_risk, by_capital = int(risk_usd // per_share), int(capital_usd // entry)
+    shares = min(by_risk, by_capital)
+    value_usd, loss_usd = shares * entry, shares * per_share
+    return {"capital_usd": capital_usd, "risk_usd": risk_usd, "risk_pln": risk_usd * usdpln, "per_share": per_share, "shares": shares,
+            "limited_by": "kapitał" if by_capital < by_risk else "ryzyko", "value_usd": value_usd, "value_pln": value_usd * usdpln,
+            "value_pct": value_usd / capital_usd * 100, "loss_usd": loss_usd, "loss_pln": loss_usd * usdpln, "loss_pct": loss_usd / capital_usd * 100,
+            "full_shares": by_capital, "full_loss_usd": by_capital * per_share, "full_loss_pln": by_capital * per_share * usdpln,
+            "full_loss_pct": by_capital * per_share / capital_usd * 100}
+
+
 def position_status(plan, row, exit_method="MACD"):
     """Co zrobić z pozycją teraz -> lista komunikatów (pusta = trzymaj): stop −10 %, ½ przy −20 % od szczytu, wyjście wg metody, hamowanie."""
     out, r, pl = [], row or {}, plan or {}

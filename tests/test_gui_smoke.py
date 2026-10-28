@@ -816,13 +816,17 @@ def test_glb_zone_grey_band_and_dashed_5_percent_line(app):
     ch = app.chart
     ch.update()
     ch.redraw()
-    band = [i for i in ch.cv.find_all() if ch.cv.type(i) == "rectangle" and ch.cv.itemcget(i, "stipple") == "gray12" and ch.cv.itemcget(i, "fill") == A_chart.ZONE_C]
+    fills = {A_chart.mix(A_chart.BG, A_chart.ZONE_C, A_chart.ZONE_ALPHA), A_chart.mix(A_chart.REGIME_BG, A_chart.ZONE_C, A_chart.ZONE_ALPHA)}
+    band = [i for i in ch.cv.find_all() if ch.cv.type(i) == "rectangle" and ch.cv.itemcget(i, "fill") in fills]
+    assert all(not ch.cv.itemcget(i, "stipple") for i in band)                   # jednolity pas, bez kropkowania (migotanie)
     dashed = [i for i in ch.cv.find_all() if ch.cv.type(i) == "line" and ch.cv.itemcget(i, "fill") == A_chart.ZONE_C and ch.cv.itemcget(i, "dash")]
     texts = [ch.cv.itemcget(i, "text") for i in ch.cv.find_all() if ch.cv.type(i) == "text"]
-    if app.store.row("AAA").get("glb"):
-        assert len(band) == 1 and len(dashed) == 1 and "+5 %" in texts
-        x1, y1, x2, y2 = ch.cv.coords(band[0])
-        assert y1 < ch.cv.coords(dashed[0])[1] < y2                               # przerywana 5 % leży w pasie 0–10 %
+    assert app.store.row("AAA").get("glb") and band and len(dashed) == 1 and "+5 %" in texts
+    top = min(ch.cv.coords(i)[1] for i in band)
+    bottom = max(ch.cv.coords(i)[3] for i in band)
+    assert top < ch.cv.coords(dashed[0])[1] < bottom                              # przerywana 5 % leży w pasie 0–10 %
+    assert A_chart.mix("#000000", "#ffffff", 0.5) == "#808080" and A_chart.mix("#102030", "#ffffff", 0) == "#102030"
+
 
 
 def test_manual_stop_drag_double_click_persistence_and_dialog_sync(app, monkeypatch):

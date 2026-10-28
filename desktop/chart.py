@@ -1,5 +1,7 @@
-"""Jeden wykres: tygodniowy słupkowy (High–Low, kreska zamknięcia) z ostatnich 3 lat, SMA 10 i 30 tyg., Green Line, wolumen ze średnią 10 tyg.
-i MACD (12, 26, 9) ze znacznikiem przecięcia w dół. Skala ceny logarytmiczna. ↑/↓ przełącza spółki z listy, ruch myszy = dane tygodnia.
+"""Wykres tygodniowy (T, ostatnie 3 lata) i miesięczny (M, cała historia) w prostym układzie: szare słupki OHLC, niebieska SMA 10 interwału, zielona
+kropkowana Green Line od świecy rekordu (z ceną nad świecą i na osi), zielone tło tam, gdzie SPY jest nad własną SMA 10 tego samego interwału,
+wolumen (zielony / czerwony + średnia 10) i MACD (12, 26, 9). Skala ceny logarytmiczna. Dzienny (D) i widok Zangera (Z) mają własne, rozbudowane rysowanie.
+↑/↓ przełącza spółki z listy, ruch myszy = dane świecy.
 Suwak nad wykresem (minimapa całej historii): przeciągnij ramkę = przesuń okno, krawędzie = zmień długość, klik obok = skok, kółko = zoom.
 Średnie i MACD liczymy na całej historii, więc okno nie zmienia ich wartości.
 Linie trendu (lines.py): przeciągnij myszą po wykresie ceny = nowa linia (koniec przyciąga się do High / Low tygodnia), chwyć koniec = zmień punkt,
@@ -26,6 +28,10 @@ FAST_C, SLOW_C, RWB_BG, BLUE_DOT = "#e5484d", "#3b82f6", "#232a33", "#4aa3ff"
 RS_C = "#38bdf8"   # RS Line (akcja / SPY), jak w Deepvue
 FONT = ("Consolas", 9)
 RIGHT, LEFT, TOP = 64, 6, 22
+BAR_C, SMA_C, REGIME_BG = "#a9b1bb", "#2f6bff", "#0f2a1c"   # wykres T / M: szare słupki, niebieska SMA 10, tło „SPY nad SMA 10”
+VOL_UP, VOL_DOWN = "#1f7a6d", "#7d3c38"
+HIST_C = {(True, True): "#00e676", (True, False): "#2e8b57", (False, False): "#ff5252", (False, True): "#8b8f98"}   # (hist ≥ 0, rośnie)
+MACD_LINE, SIGNAL_LINE = "#2f6bff", "#c850e8"
 
 
 def ticks(lo, hi, n=7, log=True):
@@ -258,6 +264,174 @@ def draw_slider(cv, closes, n_show, end, unit="tyg."):
     cv.create_text(x1 - 6 if right else x1 + 6, 4, text=f"{i1 - i0} {unit}", fill=FG, font=FONT, anchor="ne" if right else "nw")
 
 
+def simple_geometry(w, h):
+    """Panele wykresu T / M: cena 64 %, wolumen 13 %, MACD reszta (odstęp na oś czasu na dole)."""
+    top = 8
+    ph = h - top - 22
+    p1 = top + ph * 0.64
+    v0 = p1 + 6
+    v1 = v0 + ph * 0.13
+    return {"rs": None, "price": (top, p1), "vol": (v0, v1), "rev": None, "macd": (v1 + 10, h - 22), "x0": LEFT, "x1": w - RIGHT}
+
+
+def _near(a, b, period):
+    """Czy data świecy SPY `b` jest tą samą świecą co `a` (ten sam miesiąc / ten sam tydzień)."""
+    if period == "M":
+        return a[:7] == b[:7]
+    try:
+        return abs((dt.date.fromisoformat(a[:10]) - dt.date.fromisoformat(b[:10])).days) < 7
+    except ValueError:
+        return False
+
+
+def spy_regime(dates, spx, period="W", n=10):
+    """Dla każdej świecy: True, gdy zamknięcie SPY jest nad SMA 10 tego samego interwału (tygodniowa na T, miesięczna na M); None = brak danych SPY."""
+    if not spx or not spx.get("d") or not spx.get("c"):
+        return [None] * len(dates)
+    sma = calc.sma([v if v is not None else 0 for v in spx["c"]], n)
+    out = []
+    for d in dates:
+        k = L.date_index(spx["d"], d)
+        if k < 0 or not _near(d, spx["d"][k], period) or sma[k] is None or not spx["c"][k]:
+            out.append(None)
+        else:
+            out.append(spx["c"][k] > sma[k])
+    return out
+
+
+def glb_peak(data, row, period):
+    """Poziom Green Line i indeks świecy rekordu, z którego powstała (None, gdy go nie ma w serii). M: z zamkniętych miesięcy wykresu; T: poziom wiersza, świeca z takim High."""
+    hs = data["h"]
+    if period == "M":
+        return calc.green_line(hs[:-1] if data.get("open_last") else hs)
+    level = (row or {}).get("glb")
+    if not level:
+        return None, None
+    return level, next((i for i in range(len(hs) - 1, -1, -1) if hs[i] and abs(hs[i] / level - 1) < 0.003), None)
+
+
+def draw_simple(cv, data, row, w, h, n_show, end, tlines, sel, spx, period):
+    """Prosty wykres T / M: szare słupki OHLC, niebieska SMA 10, kropkowana Green Line od świecy rekordu, tło zielone, gdy SPY > SMA 10 interwału,
+    wolumen i MACD; linie trendu rysują się na cenie. -> geometria jak z `draw`."""
+    total = len(data["c"])
+    i0, i1 = window(total, n_show, end)
+    cfull = [v if v is not None else 0 for v in data["c"]]
+    sma10 = calc.sma(cfull, 10)[i0:i1]
+    mac, sig, hist = (x[i0:i1] for x in calc.macd(cfull))
+    vavg = calc.sma([x or 0 for x in data["v"]], calc.RVOL_W)[i0:i1]
+    c, hi, lo, vol, dates = (data[k][i0:i1] for k in ("c", "h", "l", "v", "d"))
+    op = (data.get("o") or [None] * total)[i0:i1]
+    n = len(c)
+    g = simple_geometry(w, h)
+    x0, x1 = g["x0"], g["x1"]
+    step = (x1 - x0) / n
+    y0, y1 = g["price"]
+    v0, v1 = g["vol"]
+    m0, m1 = g["macd"]
+    u = "mies." if period == "M" else "tyg."
+
+    def xf(i):
+        return x0 + (i + 0.5) * step
+
+    level, at = glb_peak(data, row, period)
+    vals = [v for v in hi + lo if v]
+    if level and min(vals) * 0.5 < level < max(vals) * 2:
+        vals.append(level)
+    pmin, pmax = min(vals) * 0.97, max(vals) * 1.03
+    lmin, lmax = math.log(pmin), math.log(pmax)
+
+    def yf(p):
+        return y1 - (math.log(p) - lmin) / (lmax - lmin) * (y1 - y0)
+
+    # tło: zielone, gdy SPY nad SMA 10 tego samego interwału (pod ceną i wolumenem)
+    regime = spy_regime(dates, spx, period)
+    a = None
+    for i, on in enumerate([bool(x) for x in regime] + [False]):
+        if on and a is None:
+            a = i
+        elif not on and a is not None:
+            cv.create_rectangle(xf(a) - step / 2, y0, xf(i - 1) + step / 2, v1, fill=REGIME_BG, outline="")
+            a = None
+    ly = yf(level) if level and pmin < level < pmax else None
+    last = c[-1]
+    last_y, _ = axis_spots(ly, yf(last) if last else None, None)
+    taken = [v for v in (ly, last_y) if v is not None]
+    for t in ticks(pmin, pmax):
+        y = yf(t)
+        cv.create_line(x0, y, x1, y, fill=GRID)
+        if all(abs(y - v) >= 13 for v in taken):
+            cv.create_text(x1 + 4, y, text=fmt(t), anchor="w", fill=DIM, font=FONT)
+    yrs = max(1, math.ceil(60 / max(1e-9, step * 12)))     # miesięczny: co ile lat podpis
+    every = max(1, math.ceil(62 / max(1e-9, step * 13)))   # tygodniowy: co który kwartał podpis
+    q_no = 0
+    for i in range(n):   # oś czasu: początek kwartału (T) / styczeń co `yrs` lat (M)
+        new_q = dates[i][5:7] in ("01", "04", "07", "10") and (i == 0 or dates[i - 1][5:7] != dates[i][5:7])
+        if period == "M":
+            new_q = dates[i][5:7] == "01" and int(dates[i][:4]) % yrs == 0
+        if new_q:
+            cv.create_line(xf(i), y0, xf(i), h - 22, fill=GRID)
+            q_no += 1
+            if xf(i) > x0 + 28 and (period == "M" or (q_no - 1) % every == 0):
+                cv.create_text(xf(i), h - 10, text=dates[i][:4] if period == "M" else dates[i][:7], fill=DIM, font=FONT)
+    # słupki OHLC: jeden szary kolor
+    for i in range(n):
+        if hi[i] is None or lo[i] is None or c[i] is None:
+            continue
+        x = xf(i)
+        cv.create_line(x, yf(hi[i]), x, yf(lo[i]), fill=BAR_C, width=min(2.5, max(1, step * 0.2)))
+        if op[i]:
+            cv.create_line(x - step * 0.4, yf(op[i]), x, yf(op[i]), fill=BAR_C, width=min(2, max(1, step * 0.12)))
+        cv.create_line(x, yf(c[i]), x + step * 0.4, yf(c[i]), fill=BAR_C, width=min(2, max(1, step * 0.12)))
+    pts = [(xf(i), yf(v)) for i, v in enumerate(sma10) if v]
+    if len(pts) > 1:
+        cv.create_line(*[p for xy in pts for p in xy], fill=SMA_C, width=2.4)
+    if ly is not None:   # Green Line: kropkowana od świecy rekordu, cena nad świecą i na osi
+        xs = xf(at - i0) if at is not None and i0 <= at < i1 else x0
+        cv.create_line(xs, ly, x1, ly, fill=GLB_COLOR, width=2, dash=(2, 4))
+        if at is not None and i0 <= at < i1 and data["h"][at]:
+            px, py = xf(at - i0), yf(data["h"][at])
+            cv.create_oval(px - 3.5, py - 3.5, px + 3.5, py + 3.5, fill=GLB_COLOR, outline="")
+        tx = min(max(xs, x0 + 24), x1 - 24)
+        ty = max(y0 + 10, ly - 12)
+        t = cv.create_text(tx, ty, text=fmt(level), fill="#06210f", font=("Consolas", 9, "bold"))
+        bb = cv.bbox(t)
+        if bb:
+            r = cv.create_rectangle(bb[0] - 3, bb[1] - 1, bb[2] + 3, bb[3] + 1, fill=GLB_COLOR, outline="")
+            cv.tag_lower(r, t)
+        cv.create_rectangle(x1 + 1, ly - 9, w - 2, ly + 9, fill="#ffffff", outline="")
+        cv.create_text(x1 + 4, ly, text=fmt(level), anchor="w", fill="#000", font=FONT)
+    if last:   # ostatnia cena: cienka kropkowana + znacznik na osi
+        cv.create_line(x0, yf(last), x1, yf(last), fill="#4b5563", dash=(1, 3))
+        cv.create_rectangle(x1 + 1, last_y - 8, w - 2, last_y + 8, fill="#4b5563", outline="")
+        cv.create_text(x1 + 4, last_y, text=fmt(last), anchor="w", fill="#ffffff", font=("Consolas", 9, "bold"))
+    segs = draw_lines(cv, data, tlines, sel, i0, i1, xf, yf, g, step, w)
+    # wolumen + średnia 10
+    vv = [x or 0 for x in vol]
+    vmax = max(vv) or 1
+    for i in range(n):
+        up = i == 0 or (c[i] or 0) >= (c[i - 1] or 0)
+        cv.create_rectangle(xf(i) - step * 0.35, v1 - vv[i] / vmax * (v1 - v0) * 0.9, xf(i) + step * 0.35, v1, fill=VOL_UP if up else VOL_DOWN, outline="")
+    pts = [(xf(i), v1 - a_ / vmax * (v1 - v0) * 0.9) for i, a_ in enumerate(vavg) if a_]
+    if len(pts) > 1:
+        cv.create_line(*[p for xy in pts for p in xy], fill=SMA_C, width=1.3)
+    # MACD (12, 26, 9): histogram w 4 kolorach (znak × rośnie / maleje), linia MACD i sygnału
+    rng = (max(abs(x) for x in mac + sig + hist) or 1) * 1.25
+    mid = (m0 + m1) / 2
+
+    def ym(v):
+        return mid - v / rng * (m1 - m0) / 2
+
+    cv.create_line(x0, mid, x1, mid, fill=GRID)
+    for i in range(n):
+        rising = i == 0 or hist[i] >= hist[i - 1]
+        cv.create_rectangle(xf(i) - step * 0.3, ym(hist[i]), xf(i) + step * 0.3, mid, fill=HIST_C[(hist[i] >= 0, rising)], outline="")
+    for s_, col in ((mac, MACD_LINE), (sig, SIGNAL_LINE)):
+        cv.create_line(*[p for i, v in enumerate(s_) for p in (xf(i), ym(v))], fill=col, width=1.4)
+    legend = f"SMA 10 {u}" + ("" if any(x is not None for x in regime) else " · brak danych SPY (zrób Sync)") + f" · zielone tło = SPY nad SMA 10 {u}"
+    boxed(cv, x0 + 4, y0 + 10, legend, SMA_C)
+    return {"g": g, "step": step, "n": n, "i0": i0, "lmin": lmin, "lmax": lmax, "segs": segs}
+
+
 def draw(cv, data, row=None, w=None, h=None, n_show=None, end=None, tlines=(), sel=None, spx=None, period="W", daily_style="line", earnings_dates=(), zanger=False):
     """Rysuje wykres okna (n_show tygodni kończące się na `end`, domyślnie cała historia) na canvas `cv`; data = {d, o, h, l, c, v};
     tlines = linie trendu, sel = id zaznaczonej. -> geometria (do dymka i linii; `i0` = indeks pierwszego tygodnia okna w pełnej serii, segs = linie w px)."""
@@ -267,6 +441,8 @@ def draw(cv, data, row=None, w=None, h=None, n_show=None, end=None, tlines=(), s
     total = len(data["c"])
     if total < 2:
         return None
+    if period in ("W", "M") and not zanger:
+        return draw_simple(cv, data, row, w, h, n_show, end, tlines, sel, spx, period)
     i0, i1 = window(total, n_show, end)
     earnings_local = {i - i0 for i in earnings_indices(data.get("d", []), earnings_dates, period) if i0 <= i < i1}
     cfull = [v if v is not None else 0 for v in data["c"]]
@@ -438,8 +614,6 @@ def draw(cv, data, row=None, w=None, h=None, n_show=None, end=None, tlines=(), s
         cv.create_text(x0 + 4, m0 + 6, text=f"MACD (12, 26, 9) {u}" + (" · ▼ = stop pod Low tygodnia przecięcia" if period == "W" else ""),
                        anchor="w", fill=DIM, font=FONT)
     legend = (("  ".join(DAILY_MA_COLORS) + " · ● Blue Dot") if daily_style == "bars" else "GMMA: szybkie EMA (czerwone) / wolne (niebieskie) · jasne tło = RWB · ● Blue Dot") if period == "D" else "  ".join(f"SMA {k} {u}" for k in ((4, 10, 30) if period == "W" else (10, 30)))
-    if period == "M":
-        draw_glb_history(cv, data, i0, i1, xf, yf, g, pmin, pmax, level)
     if zanger:
         legend = "Widok Zangera: cena (skala log.) + wolumen · wzorce: " + (", ".join(p["name"] for p in (row or {}).get("patterns") or []) or "brak")
     boxed(cv, x0 + 4, y1 - 10 if period == "D" else y0 + 10, legend, FG)
@@ -676,41 +850,6 @@ def draw_rwb(cv, data, row, i0, i1, xf, yf, g, step, cfull):
             y = yf(lo) + 9
             cv.create_oval(xf(i - i0) - 4, y - 4, xf(i - i0) + 4, y + 4, fill=BLUE_DOT, outline="")
     return dots
-
-
-def draw_glb_history(cv, data, i0, i1, xf, yf, g, pmin, pmax, level):
-    """Wykres miesięczny: historia Green Line (schodki z zamkniętych miesięcy, jak w calc.green_line) i miesiąc obecnego rekordu — do sprawdzenia linii."""
-    x0 = g["x0"]
-    hs = data["h"]
-    closed = hs[:-1] if data.get("open_last") else hs           # bieżący miesiąc nie jest zamknięty
-    hist = calc.green_line_series(closed) + ([calc.green_line(closed)[0]] if data.get("open_last") else [])
-    pts = []
-    for i in range(i0, i1):
-        v = hist[i] if i < len(hist) else None
-        if v and pmin < v < pmax:
-            y = yf(v)
-            if pts and pts[-1][1] != y:
-                pts.append((xf(i - i0) - (xf(1) - xf(0)) / 2, pts[-1][1]))
-                pts.append((xf(i - i0) - (xf(1) - xf(0)) / 2, y))
-            pts.append((xf(i - i0), y))
-        elif len(pts) > 1:
-            cv.create_line(*[p for xy in pts for p in xy], fill=GLB_COLOR, width=1, dash=(3, 3))
-            pts = []
-        else:
-            pts = []
-    if len(pts) > 1:
-        cv.create_line(*[p for xy in pts for p in xy], fill=GLB_COLOR, width=1, dash=(3, 3))
-    lv, at = calc.green_line(closed)
-    if lv is not None and i0 <= at < i1:
-        x, y = xf(at - i0), yf(hs[at])
-        cv.create_oval(x - 6, y - 6, x + 6, y + 6, outline=GLB_COLOR, width=2)
-        stood = len(closed) - 1 - at
-        right = x > g["x1"] - 320    # przy prawej krawędzi napis po lewej stronie znacznika
-        cv.create_text(x - 9 if right else x + 9, y + 16, text=f"rekord {data['d'][at][:7]} · High {fmt(hs[at])} · stoi {stood} mies.",
-                       anchor="e" if right else "w", fill=GLB_COLOR, font=FONT)
-    cmp = f"Green Line z wykresu {fmt(lv)}" + (f" · z listy {fmt(level)}" + ("" if level and lv and abs(lv / level - 1) < 0.005 else "  ⚠ różnica") if level else "")
-    cv.create_text(x0 + 4, g["price"][1] - 8, text=cmp + " · przerywana = linia w czasie (rekord High, który stoi 3 mies. łącznie: szczyt + 2 zamknięte)",
-                   anchor="w", fill=GLB_COLOR, font=FONT)
 
 
 def _stop_level(row):
@@ -1107,9 +1246,43 @@ class ChartWindow(tk.Toplevel):
             return
         self.daily_style_btn.config(state="normal" if self.period == "D" else "disabled",
                                     text="D: RWB" if self.daily_style == "bars" else "D: słupki")
+        spx = (self.period == "D" and self.app.store.daily("SPY")) or (self.spy_monthly() if self.period == "M" else self.app.store.weekly("SPY"))
         self.geom = draw(self.cv, data, self.row_for_chart(), n_show=self.n_show, end=self.end, tlines=self.lines(), sel=self.sel,
-                         spx=(self.period == "D" and self.app.store.daily("SPY")) or self.app.store.weekly("SPY"), period=self.period, daily_style=self.daily_style,
+                         spx=spx, period=self.period, daily_style=self.daily_style,
                          earnings_dates=self.earnings_dates, zanger=self.zanger and self.period == "W")
+
+    def spy_monthly(self):
+        """SPY miesięczny do tła wykresu M (SPY nad SMA 10 mies.): z cache `monthly_ohlc`; brak albo starszy niż 2 miesiące -> pobranie w tle
+        (nie częściej niż co 5 min) i ponowne rysowanie."""
+        if getattr(self, "_spy_m", None) is None:
+            self._spy_m = self.app.store.cache("monthly_ohlc").get("SPY")
+        m = self._spy_m
+        stale = not m or m["d"][-1] < (dt.date.today() - dt.timedelta(days=62)).isoformat()
+        if stale and time.time() - getattr(self, "_spy_m_try", 0) > 300:
+            self._spy_m_try = time.time()
+            box = []
+
+            def work():
+                try:
+                    box.append(prices.monthly_ohlc("SPY"))
+                except Exception:   # brak sieci: tło po prostu się nie pojawi
+                    box.append(None)
+            threading.Thread(target=work, daemon=True).start()
+
+            def poll():
+                if not box:
+                    if self.winfo_exists():
+                        self.after(100, poll)
+                    return
+                if box[0]:
+                    self._spy_m = {**box[0], "period": "M"}
+                    cache = self.app.store.cache("monthly_ohlc")
+                    cache["SPY"] = self._spy_m
+                    self.app.store.save_cache("monthly_ohlc", cache)
+                    if self.winfo_exists() and self.period == "M":
+                        self.redraw()
+            self.after(100, poll)
+        return m
 
     def plan(self):
         st = self.app.store

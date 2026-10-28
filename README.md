@@ -29,9 +29,10 @@ Heurystyka z backtestu (spółki z dzisiejszej listy, bez spółek wycofanych z 
   Brak danych P/S nie odrzuca spółki, zgodnie z dotychczasową regułą.
 - **Filtry…** (pasek): kilka warunków naraz po kolumnach — stan GLB, MACD, warunki, sektor (zaznacz wartości), liczby od–do (np. do linii %, Δ marży,
   obrót w mln $). Gotowe zestawy, np. „Nad GLB + MACD dodatni”. Filtry zostają zapamiętane w ustawieniach.
-- **Wykres** (jeden, tygodniowy, 3 lata): słupki High–Low z kreską zamknięcia, SMA 10 i 30 tyg., **Green Line** (z ceną i górną granicą kupna +10 %),
-  stop z MACD (czerwona przerywana), wolumen ze średnią 10 tyg., MACD z ▼ w tygodniach przecięcia w dół. ↑ / ↓ = następna / poprzednia spółka, ruch myszy = dane tygodnia.
-  **E pod Low świecy** oznacza dzień publikacji wyników finansowych (dzienny: sesja raportu, tygodniowy: tydzień raportu). Po najechaniu na świecę E dymek podaje **Earnings Surprise** i **Revenue Surprise** w %; jeśli źródło nie udostępnia historycznego konsensusu przychodów, pokazuje N/D zamiast szacować wartość.
+- **Wykres T (tygodniowy, 3 lata) i M (miesięczny, cała historia)** — prosty układ: **szare słupki OHLC**, **niebieska SMA 10** danego interwału, **zielona kropkowana
+  Green Line** od świecy rekordu (z ceną nad świecą i na osi), **zielone tło tam, gdzie SPY jest nad własną SMA 10** tego samego interwału (na T tygodniową, na M miesięczną;
+  SPY miesięczny pobiera się w tle raz), wolumen (zielony / czerwony ze średnią 10) i MACD (12, 26, 9; histogram w 4 kolorach). ↑ / ↓ = następna / poprzednia spółka, ruch myszy = dane
+  świecy (w dymku także Earnings / Revenue Surprise, gdy świeca zawiera raport wyników; brak konsensusu przychodów = N/D). Dzienny (D) i widok Zangera (Z) mają własne, rozbudowane rysowanie.
   **Suwak** nad wykresem (minimapa całej historii): przeciągnij ramkę = przesuń okno, krawędzie = zmień długość, klik obok ramki = skok, kółko myszy / + − = zoom, ← / → = przesuń o 4 tygodnie.
   Przycisk **⟳ Sync** w oknie wykresu odświeża tylko aktualną spółkę (świece tygodniowe, fundamenty oraz dane dzienne i miesięczne) w tle, bez ponownego skanowania całego Finviz.
 - **Linie trendu**: na wykresie tygodniowym i dziennym przeciągnij myszą po panelu ceny, aby narysować linię (punkty przyciągają się do High / Low świecy).
@@ -44,7 +45,7 @@ Heurystyka z backtestu (spółki z dzisiejszej listy, bez spółek wycofanych z 
   względna (RS ≥ 50 pp nad SPY) i 2 raporty EPS powyżej konsensusu można włączyć ręcznie. Starsze zapisane ustawienia warunków są raz resetowane do nowych domyślnych. Wcześniejszy backtest (płynny rynek): Backtest 2015–2026: +15,6 % na transakcję, portfel wszystkich sygnałów
   36,6 % rocznie (S&P 500 13,6 %), ale mało sygnałów naraz i spadek portfela do −55 %. **Hamuje ⚠**: tempo przychodów spadło o ≥ 10 pp (⚠⚠ z marżą brutto
   w dół). Liczby w 📖 Poradniku.
-- **RS jak w Deepvue** (zamiast panelu S&P 500): nad ceną RS Line = akcja / SPY ze średnią 52 tyg. (252 sesje na D), ● zielony = nowy szczyt RS i ceny, ● różowy = szczyt RS przed ceną;
+- **RS jak w Deepvue** (tylko wykres dzienny D): nad ceną RS Line = akcja / SPY ze średnią 252 sesje, ● zielony = nowy szczyt RS i ceny, ● różowy = szczyt RS przed ceną;
   na końcu linii „+x pp” (RS 52 tyg.). Kolumna **C/C[52 tyg.]** = zamknięcie / zamknięcie sprzed 252 sesji.
 - **Wejście:** zamknięcie tygodnia **0–10 % nad Green Line** po przebiciu od dołu (WYBICIE = tydzień przebicia, SYGNAŁ = kolejny tydzień w strefie; po rajdzie > 10 % nad linią kolejne wejście dopiero na nowej Green Line). Dalej niż 10 % (także BLUE DOT)
   i Blue Line — tylko informacyjnie (w badaniu 2011–2025 dawały mniej).
@@ -56,7 +57,7 @@ Heurystyka z backtestu (spółki z dzisiejszej listy, bez spółek wycofanych z 
   klik = wykres, usuwanie pozycji i obserwowanych.
 - **🚪 Wyjście** (przycisk na wykresie, zapamiętany): **MACD** (stop pod Low tygodnia przecięcia w dół) albo **pod GLB** (zamknięcie tygodnia pod Green Line,
   jak u Dr Wisha — trzyma największe ruchy, np. SNDK, MU, NVDA 2023). Zawsze: stop 10 % pod kupnem i **spadek 20 % od szczytu = sprzedaj połowę**. Przy 📌 pozycji
-  wykres pokazuje „stop −10 %” i „½ przy”, panel / lista kontrolna plan wyjścia, a alerty: zamknięcie pod Green Line i spadek 20 % od szczytu. Liczby w 📖 Poradniku.
+  panel / lista kontrolna pokazują plan wyjścia (stop −10 %, „½ przy”; linie planu rysuje już tylko wykres D), a alerty: zamknięcie pod Green Line i spadek 20 % od szczytu. Liczby w 📖 Poradniku.
 - **Okno wykresu** jest wyższe niż szersze; po prawej rozwijany panel **FUNDAMENTY** (pasek ze strzałką na całej wysokości): warunki, wartości z ostatnich
   raportów, lista kontrolna i ostrzeżenie dla pozycji (stan panelu zostaje zapamiętany).
 - **M / T / D** (osobne przyciski na wykresie; klawisze m / w / d) — dzienny: 2 lata świec z yfinance, domyślnie słupkowy High–Low z kreskami otwarcia/zamknięcia i średnimi EMA 8/10/20 oraz SMA 50.

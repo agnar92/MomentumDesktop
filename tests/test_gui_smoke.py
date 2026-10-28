@@ -303,10 +303,11 @@ def test_guide_position_and_ibd_panels(app):
     ch.update()
     ch.redraw()
     texts = [ch.cv.itemcget(i, "text") for i in ch.cv.find_all() if ch.cv.type(i) == "text"]
-    assert any("RS" in t and "MA" in t or "RS Line (akcja / SPY)" in t for t in texts) and any(t.startswith("Przychody kw.") and "1.2 mld" in t for t in texts)
-    assert not any(t.startswith("S&P 500") for t in texts)   # panel S&P 500 zastąpiony RS Line (Deepvue)
+    assert not any(t.startswith("RS Line") or t.startswith("Przychody kw.") or t.startswith("S&P 500") for t in texts)   # T: prosty układ bez RS Line i przychodów
     g = ch.geom["g"]
-    assert g["rs"][1] < g["price"][0] and g["vol"][1] < g["rev"][0] < g["rev"][1] < g["macd"][0]
+    assert g["rs"] is None and g["rev"] is None and g["price"][1] < g["vol"][0] < g["vol"][1] < g["macd"][0] < g["macd"][1]
+    bands = [i for i in ch.cv.find_all() if ch.cv.type(i) == "rectangle" and ch.cv.itemcget(i, "fill") == A_chart.REGIME_BG]
+    assert bands and any(ch.cv.type(i) == "line" and ch.cv.itemcget(i, "fill") == A_chart.SMA_C for i in ch.cv.find_all())   # tło SPY > SMA 10 i niebieska SMA 10
     panel_text = ch.ptext.get("1.0", "end")
     assert "Growth Score" not in panel_text and "CAN SLIM" not in panel_text and "RS Rating" not in panel_text
     ch.toggle_pos()
@@ -321,7 +322,7 @@ def test_guide_position_and_ibd_panels(app):
     assert A.cell(12.34, "x") == "12.3" and A.cell("HAMUJE", "w") == "⚠ hamuje"
 
 
-def test_monthly_chart_shows_green_line_history(app, monkeypatch):
+def test_monthly_chart_shows_dotted_green_line(app, monkeypatch):
     import time
     from desktop import calc as C, prices
     h = [10, 12, 30, 20, 21, 22, 25, 28, 29, 31, 29, 28, 27]          # rekord 30 (3. mies.) + 2 zamknięte miesiące = linia; 31 (10. mies.) ma dopiero 2 kolejne świece
@@ -340,7 +341,9 @@ def test_monthly_chart_shows_green_line_history(app, monkeypatch):
         time.sleep(0.02)
     assert ch.period == "M" and ch.geom["n"] == len(h)
     texts = [ch.cv.itemcget(i, "text") for i in ch.cv.find_all() if ch.cv.type(i) == "text"]
-    assert any(t.startswith("rekord ") for t in texts) and any(t.startswith("Green Line z wykresu") for t in texts)
+    assert texts.count("31.00") == 2   # Green Line 31 (rekord ze 10. miesiąca + 2 zamknięte, 4. po nim jest bieżący): cena nad świecą rekordu i na osi
+    dotted = [i for i in ch.cv.find_all() if ch.cv.type(i) == "line" and ch.cv.itemcget(i, "fill") == A_chart.GLB_COLOR and ch.cv.itemcget(i, "dash")]
+    assert len(dotted) == 1
     ch.toggle_period("W")
     assert ch.period == "W" and ch.geom["n"] == 156
 
@@ -417,7 +420,7 @@ def test_earnings_markers_on_weekly_and_daily_charts(app, monkeypatch):
     ch.update()
     ch.redraw()
     texts = [ch.cv.itemcget(i, "text") for i in ch.cv.find_all() if ch.cv.type(i) == "text"]
-    assert "E" in texts   # raport trafia pod świecę tygodnia zawierającego datę publikacji
+    assert "E" not in texts   # prosty wykres T nie ma liter E (wyniki tylko w dymku)
     g = ch.geom["g"]
     from desktop.chart import earnings_indices
     weekly_index = earnings_indices(weekly["d"], [week_event], "W")[0]
@@ -515,8 +518,6 @@ def test_exit_method_toggle_and_position_plan(app):
     ch.toggle_exit()
     assert app.store.settings["exit"] == "GLB" and ch.exit_btn.cget("text") == "🚪 Wyjście: pod GLB"
     ch.redraw()
-    texts = [ch.cv.itemcget(i, "text") for i in ch.cv.find_all() if ch.cv.type(i) == "text"]
-    assert any("wyjście: zamknięcie tyg. pod linią" in t for t in texts) and any(t.startswith("stop −10 %") for t in texts)
     assert "PLAN WYJŚCIA" in ch.ptext.get("1.0", "end")
     ch.toggle_exit()
     assert app.store.settings["exit"] == "MACD"
@@ -532,8 +533,7 @@ def test_period_buttons_and_ibd_rs_line(app):
     ch.redraw()
     assert set(ch.per_btns) == {"M", "W", "D"} and ch.per_btns["W"].cget("text") == "T" and ch.per_btns["W"].cget("bg") == "#1f3b5c"
     texts = [ch.cv.itemcget(i, "text") for i in ch.cv.find_all() if ch.cv.type(i) == "text"]
-    rs = st.row("AAA")["rs"]
-    assert f"{rs:+.0f} pp" in texts and not any(t.startswith("RS (cena") for t in texts)   # na końcu linii RS tylko liczba pp
+    assert not any("pp" in t or t.startswith("RS") for t in texts)   # T: bez panelu RS Line
     assert A_chart.rs_line([10, 20, None], [5, 4, 2]) == [2, 5, None]
 
 
@@ -740,3 +740,18 @@ def test_new_trend_line_has_no_alert_and_no_extension_until_alert_is_enabled(app
     ch.redraw()
     s = ch.geom["segs"][0]
     assert app.store.alerts["lines"]["AAA"][0]["alert"] is True and s["xe"] > s["x2"]   # z alarmem: przedłużenie do ostatniego tygodnia
+
+
+def test_spy_regime_background_weekly_and_monthly():
+    rising = {"d": [f"2025-{m:02d}-01" for m in range(1, 13)], "c": [10 + m for m in range(12)]}
+    falling = {"d": rising["d"], "c": [30 - m for m in range(12)]}
+    dates = rising["d"]
+    r = A_chart.spy_regime(dates, rising, "M")
+    assert r[:9] == [None] * 9 and r[9:] == [True, True, True]          # SMA 10 liczy się od 10. świecy
+    assert A_chart.spy_regime(dates, falling, "M")[9:] == [False, False, False]
+    assert A_chart.spy_regime(dates, None, "M") == [None] * 12
+    import datetime as dt
+    weekly = {"d": [(dt.date(2026, 1, 5) + dt.timedelta(days=7 * i)).isoformat() for i in range(14)], "c": list(range(1, 15))}
+    wk = A_chart.spy_regime(weekly["d"], weekly, "W")
+    assert wk[9:] == [True] * 5 and wk[0] is None
+    assert A_chart.spy_regime(["2025-05-14"], {"d": ["2025-01-06", "2025-03-03"], "c": [1, 2]}, "W") == [None]   # świeca SPY sprzed miesięcy to nie ta sama świeca

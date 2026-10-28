@@ -456,8 +456,8 @@ def draw_simple(cv, data, row, w, h, n_show, end, tlines, sel, spx, period, stop
             cv.create_line(x - step * 0.4, yf(op[i]), x, yf(op[i]), fill=BAR_C, width=min(2, max(1, step * 0.12)))
         if pmin < c[i] < pmax:
             cv.create_line(x, yf(c[i]), x + step * 0.4, yf(c[i]), fill=BAR_C, width=min(2, max(1, step * 0.12)))
-    starts = [i for i in calc.rwb_starts(cfull) if i0 <= i < i1] if rwb else []
-    for i in starts:   # początek RWB = sygnał „dokup”: sama żółta strzałka pod Low świecy (bez napisu, żeby było widać całą świecę)
+    starts = [i for i in calc.rwb_dokup(data["l"][:real], cfull) if i0 <= i < i1] if rwb else []
+    for i in starts:   # dokup = RWB trwa, a Low / zamknięcie weszło w przerwę między czerwonym a niebieskim pasem: sama żółta strzałka pod Low (bez napisu, żeby było widać całą świecę)
         if data["l"][i] and pmin < data["l"][i] < pmax:
             tx, ty = xf(i - i0), yf(data["l"][i]) + 8
             cv.create_polygon(tx, ty - 5, tx - 5, ty + 4, tx + 5, ty + 4, fill=RWB_START_C, outline="")
@@ -512,7 +512,7 @@ def draw_simple(cv, data, row, w, h, n_show, end, tlines, sel, spx, period, stop
         cv.create_rectangle(xf(i) - step * 0.3, ym(hist[i]), xf(i) + step * 0.3, mid, fill=HIST_C[(hist[i] >= 0, rising)], outline="")
     for s_, col in ((mac, MACD_LINE), (sig, SIGNAL_LINE)):
         cv.create_line(*[p for i, v in enumerate(s_) for p in (xf(i), ym(v))], fill=col, width=1.4)
-    legend = f"SMA 10 {u}" + ("" if any(x is not None for x in regime) else " · brak danych SPY (zrób Sync)") + f" · zielone tło = SPY nad SMA 10 {u}" + (" · szary pas = 0–10 % nad GLB" if ly is not None else "") + (" · pasek RWB, ● Blue Dot, ▲ start RWB = dokup" if rwb else "")
+    legend = f"SMA 10 {u}" + ("" if any(x is not None for x in regime) else " · brak danych SPY (zrób Sync)") + f" · zielone tło = SPY nad SMA 10 {u}" + (" · szary pas = 0–10 % nad GLB" if ly is not None else "") + (" · pasek RWB, ● Blue Dot, ▲ dokup = cena w przerwie RWB" if rwb else "")
     boxed(cv, x0 + 4, y0 + 10, legend, SMA_C)
     return {"g": g, "step": step, "n": n, "i0": i0, "lmin": lmin, "lmax": lmax, "segs": segs, "stop_y": stop_y, "real": real}
 
@@ -1614,8 +1614,8 @@ class ChartWindow(tk.Toplevel):
             lines.extend(earnings_tooltip_lines(data, index, cache, self.period))
         if index < len(data["c"]) and self.rwb:   # Blue Dot w dymku świecy
             level, _ = glb_peak(data, self.app.store.row(self.ticker) or {}, self.period)
-            if index in calc.rwb_starts([v or 0 for v in data["c"]]):
-                lines.append(f"RWB START · dokup (stop pod Low {fmt(data['l'][index])})")
+            if index in calc.rwb_dokup(data["l"][:len(data["c"])], [v or 0 for v in data["c"]]):
+                lines.append(f"DOKUP · RWB + cena w przerwie (stop pod Low {fmt(data['l'][index])})")
             if index in calc.blue_dots(data["h"], data["l"], data["c"], level):
                 lines.extend([f"BLUE DOT · {data['d'][index]}", f"Stop pod Low: {fmt(data['l'][index])}"])
         tip_w = 252

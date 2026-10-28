@@ -951,3 +951,25 @@ def test_full_weekly_history_is_loaded_on_open_cached_and_joined(app, monkeypatc
     assert "AAA" in app.store.cache("weekly_full")                                          # zapisane w cache
     assert prices.join_weekly(full, {**w, "c": [x * 2 for x in w["c"]]}) is None            # split po zapisaniu -> bez sklejania
     assert ch.n_show == 156                                                                 # domyślne okno nadal 3 lata
+
+
+def test_rwb_dokup_arrow_marks_price_entering_the_gap(app):
+    import datetime as dt
+    n = 170
+    c = [100 + i for i in range(n)]
+    d = [(dt.date(2023, 1, 2) + dt.timedelta(weeks=i)).isoformat() for i in range(n)]
+    lo_, hi_ = calc.rwb_gap(c)[150]
+    low = [x - 1 for x in c]
+    low[150] = (lo_ + hi_) / 2
+    app.store.series["AAA"] = {"d": d, "o": c, "h": [x + 1 for x in c], "l": low, "c": c, "v": [1e6] * n}
+    app.open_chart("AAA")
+    ch = app.chart
+    ch.update()
+    ch.toggle_rwb()
+    ch.update()
+    arrows = [i for i in ch.cv.find_all() if ch.cv.type(i) == "polygon" and ch.cv.itemcget(i, "fill") == A_chart.RWB_START_C]
+    assert len(arrows) == 1                                            # jedna strzałka: świeca 150 (Low w przerwie), nie start RWB
+    g = ch.geom["g"]
+    ch.on_motion(type("E", (), {"x": g["x0"] + (150 - ch.geom["i0"] + 0.5) * ch.geom["step"], "y": (g["price"][0] + g["price"][1]) / 2})())
+    tip = [ch.cv.itemcget(i, "text") for i in ch.cv.find_withtag("tip") if ch.cv.type(i) == "text"]
+    assert any(t.startswith("DOKUP") for t in tip)

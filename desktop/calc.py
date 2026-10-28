@@ -86,6 +86,31 @@ def rwb_starts(closes, warmup=60):
     return [i for i in range(max(1, warmup), len(r)) if r[i] and not r[i - 1]]
 
 
+def rwb_gap(closes):
+    """Przerwa RWB (tło między czerwonym pasem szybkich EMA a niebieskim wolnych) -> (dolna granica = najwyższa wolna EMA, górna = najniższa szybka EMA) dla każdej świecy;
+    przerwa istnieje tylko, gdy RWB trwa (szybkie nad wolnymi), inaczej (None, None)."""
+    f, s = gmma(closes)
+    out = []
+    for i in range(len(closes)):
+        lo, hi = max(x[i] for x in s), min(x[i] for x in f)
+        out.append((lo, hi) if hi > lo else (None, None))
+    return out
+
+
+def rwb_dokup(lows, closes, warmup=60):
+    """Dokup: RWB trwa (czerwony pas nad niebieskim, między nimi przerwa), a Low (albo zamknięcie) świecy weszło w przerwę, czyli zeszło do najniższej czerwonej linii lub niżej.
+    Zaznaczamy pierwszą świecę każdego takiego wejścia (kolejne świece w przerwie to ta sama okazja) -> lista indeksów. lows[i] = None -> liczy się zamknięcie."""
+    gap, out, prev = rwb_gap(closes), [], False
+    for i in range(len(closes)):
+        lo, hi = gap[i]
+        px = closes[i] if lows[i] is None else min(lows[i], closes[i])
+        touch = hi is not None and px <= hi
+        if touch and not prev and i >= warmup:
+            out.append(i)
+        prev = touch
+    return out
+
+
 def rwb_weeks(closes):
     """Ile tygodni trwa bieżące RWB (od świecy startu serii do ostatniej; 0 = start w tym tygodniu); None, gdy RWB jest wyłączone albo brak danych."""
     if len(closes) < 61:

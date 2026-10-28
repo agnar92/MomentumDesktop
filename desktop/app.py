@@ -15,7 +15,7 @@ from .theme import BG, FG, PANEL, apply_dark, autowrap, setup_style
 
 COLUMNS = [  # (klucz, nagłówek, szerokość, format)
     ("ticker", "Ticker", 70, "s"), ("company", "Spółka", 200, "s"), ("sector", "Sektor", 140, "s"), ("sector_rs", "RS sektora %", 105, "%"), ("price", "Cena", 80, "p"),
-    ("glb", "Green Line", 90, "p"), ("glb_pct", "Do linii %", 85, "%"), ("glb_state", "GLB", 85, "s"), ("macd", "MACD", 60, "s"), ("trend", "SMA 10>30", 85, "b"), ("rwb_days", "RWB dni", 75, "i"),
+    ("glb", "Green Line", 90, "p"), ("glb_pct", "Do linii %", 85, "%"), ("glb_state", "GLB", 85, "s"), ("macd", "MACD", 60, "s"), ("trend", "SMA 10>30", 85, "b"), ("rwb_weeks", "RWB tyg.", 75, "i"),
     ("macd_stop", "Stop MACD", 85, "p"), ("dopm", "Δ marża oper. pp", 120, "%"), ("rev_rr", "Przychody r/r %", 115, "%"),
     ("eps_rating", "EPS Rating", 90, "i"), ("dgm", "Δ marża brutto pp", 125, "%"), ("pattern", "Wzorzec Zangera", 130, "s"), ("pattern_pct", "Do kupna wzorca %", 115, "%"), ("pattern_exit", "Ostrzeżenie wzorca", 125, "s"), ("quarter", "Kwartał", 105, "s"), ("turnover", "Obrót mln $", 95, "m"),
     ("ps", "P/S", 60, "x"), ("peg", "PEG", 70, "x2"), ("pegy", "PEGY", 75, "x2"),
@@ -177,8 +177,9 @@ class App:
                     else:
                         display_columns.append(key)
                     changed = True
-            if "rwb_days" not in display_columns:   # nowa kolumna: RWB dni (od startu bieżącego RWB) obok SMA 10>30
-                display_columns.insert(display_columns.index("trend") + 1 if "trend" in display_columns else len(display_columns), "rwb_days")
+            display_columns = [k for k in display_columns if k != "rwb_days"]   # poprzednia wersja kolumny (dni)
+            if "rwb_weeks" not in display_columns:   # nowa kolumna: RWB tyg. (od startu bieżącego RWB) obok SMA 10>30
+                display_columns.insert(display_columns.index("trend") + 1 if "trend" in display_columns else len(display_columns), "rwb_weeks")
                 changed = True
             if changed:
                 self.store.settings["main_columns"] = display_columns
@@ -300,7 +301,7 @@ class App:
 
 
     def sort_by(self, key):
-        self.sort = (key, not self.sort[1]) if self.sort and self.sort[0] == key else (key, key not in ("ticker", "company", "sector", "rwb_days"))   # RWB dni: najpierw najświeższe starty
+        self.sort = (key, not self.sort[1]) if self.sort and self.sort[0] == key else (key, key not in ("ticker", "company", "sector", "rwb_weeks"))   # RWB tyg.: najpierw najświeższe starty
         self.refresh()
 
     def current(self):

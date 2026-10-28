@@ -55,6 +55,9 @@ def test_monthly_line_alert_uses_weekly_close_and_deduplicates():
     assert fresh[0]["key"] == "L:AAA:m-1:2026-10-19:up"
     assert "zamknięcie tyg. (linia miesięczna) nad linią trendu" in fresh[0]["msg"]
     assert L.eval_alerts(st, lambda t: None, lambda t: weekly, "2026-10-22T10:00") == []
+    legacy = {"id": "d-1", "period": "D", "d1": dates[0], "p1": 100, "d2": dates[1], "p2": 100, "alert": True}   # stara linia dzienna: pomijana
+    st2 = {"lines": {"AAA": [legacy]}, "watch": {}, "pos": {}, "log": []}
+    assert L.eval_alerts(st2, lambda t: None, lambda t: weekly, "2026-10-22T09:00") == []
 
 
 def test_list_filters():

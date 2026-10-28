@@ -209,6 +209,8 @@ def eval_alerts(st, row_for, series_for, now, as_of=""):
     for t, ticker_lines in st.get("lines", {}).items():
         for ln in ticker_lines:
             period = ln.get("period", "W")
+            if period not in ("W", "M"):   # stare linie dzienne (wykresu dziennego już nie ma) są pomijane
+                continue
             data = series_for(t)
             if not data or len(data.get("c") or []) < 2:
                 continue

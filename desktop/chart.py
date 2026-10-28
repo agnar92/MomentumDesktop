@@ -457,12 +457,10 @@ def draw_simple(cv, data, row, w, h, n_show, end, tlines, sel, spx, period, stop
         if pmin < c[i] < pmax:
             cv.create_line(x, yf(c[i]), x + step * 0.4, yf(c[i]), fill=BAR_C, width=min(2, max(1, step * 0.12)))
     starts = [i for i in calc.rwb_starts(cfull) if i0 <= i < i1] if rwb else []
-    for k_, i in enumerate(starts):   # początek RWB = sygnał „dokup”: żółty trójkąt pod świecą (ostatni z podpisem)
+    for i in starts:   # początek RWB = sygnał „dokup”: sama żółta strzałka pod Low świecy (bez napisu, żeby było widać całą świecę)
         if data["l"][i] and pmin < data["l"][i] < pmax:
-            tx, ty = xf(i - i0), yf(data["l"][i]) + 10
+            tx, ty = xf(i - i0), yf(data["l"][i]) + 8
             cv.create_polygon(tx, ty - 5, tx - 5, ty + 4, tx + 5, ty + 4, fill=RWB_START_C, outline="")
-            if k_ == len(starts) - 1:
-                boxed(cv, tx, ty + 17, "RWB START · dokup", RWB_START_C, anchor="center")
     for i in blue_dots:
         if data["l"][i] and pmin < data["l"][i] < pmax:
             py = yf(data["l"][i]) + 9

@@ -713,3 +713,36 @@ def test_rwb_weeks_counts_weeks_since_start_of_current_rwb():
     assert calc.rwb_weeks(c[:start + 1]) == 0                        # start w tym tygodniu
     assert calc.rwb_weeks([100 - i * 0.5 for i in range(100)]) is None   # RWB wyłączone
     assert calc.rwb_weeks(c[:40]) is None                            # za krótka historia
+
+
+def _trend(n=170):
+    return [100 + i for i in range(n)]
+
+
+def test_rwb_gap_exists_only_while_red_band_is_above_blue_band():
+    c = _trend()
+    gap = calc.rwb_gap(c)
+    lo, hi = gap[150]
+    assert lo is not None and hi > lo                                  # przerwa: najwyższa wolna < najniższa szybka
+    f, s = calc.gmma(c)
+    assert lo == max(x[150] for x in s) and hi == min(x[150] for x in f)
+    down = calc.rwb_gap([300 - i for i in range(120)])
+    assert all(g == (None, None) for g in down[60:])                   # w spadku nie ma RWB, więc nie ma przerwy
+
+
+def test_rwb_dokup_is_price_entering_the_gap_while_rwb_lasts():
+    c = _trend()
+    low = [x - 1 for x in c]                                           # zwykłe świece nie dochodzą do czerwonego pasa
+    assert calc.rwb_dokup(low, c) == []
+    lo, hi = calc.rwb_gap(c)[120]
+    assert lo < hi
+    low[120] = (lo + hi) / 2                                           # Low w środku przerwy
+    low[121] = hi - 0.01                                               # kolejna świeca nadal w przerwie = ta sama okazja
+    low[135] = hi - 0.01                                               # po wyjściu nad czerwony pas kolejne wejście = nowa strzałka
+    assert calc.rwb_dokup(low, c) == [120, 135]
+    close_in = list(c)
+    close_in[150] = calc.rwb_gap(c)[150][1] - 4                      # samo zamknięcie w przerwie też liczy się (Low = None)
+    assert 150 in calc.rwb_dokup([None] * len(c), close_in)
+    assert calc.rwb_dokup([x - 5 for x in c[:50]], c[:50]) == []        # za krótka historia (rozgrzewka 60 świec)
+    d = [300 - i for i in range(120)]
+    assert calc.rwb_dokup([x - 30 for x in d], d) == []                # bez RWB nie ma dokupu, choćby cena spadała

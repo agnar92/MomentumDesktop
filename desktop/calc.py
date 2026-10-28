@@ -30,7 +30,7 @@ DEFAULT_CONDITIONS = {
 RS_WEEKS = 52
 STOP_PCT = 10.0         # stop początkowy pod wejściem
 SURPRISE_DAYS = 120     # niespodzianka EPS: ostatni raport nie starszy niż 120 dni (jak w backteście)
-RVOL_W, RVOL_D = 10, 50  # wolumen relatywny: tydzień vs średnia 10 poprzednich tygodni, sesja vs średnia 50 poprzednich sesji
+RVOL_W = 10  # wolumen relatywny: tydzień vs średnia 10 poprzednich tygodni
 SLOW_ACCEL = -10.0      # hamowanie: tempo przychodów spadło o ≥ 10 pp względem kwartału wcześniej (cena 3 mies. −0,5 % vs +2,1 %, spadek ≥ 20 %: 44 % vs 33 %)
 
 
@@ -102,12 +102,12 @@ def blue_dots(highs, lows, closes, level, lvl=20):
             and _ok(level) and _ok(closes[i]) and closes[i] >= level]
 
 
-def fresh_blue_dot(daily, level, sessions=5):
-    """Blue Dot na dziennym w ostatnich `sessions` sesjach (wejście, gdy cena jest > 10 % nad Green Line i to nie tydzień przebicia) -> data albo None."""
-    if not daily or not daily.get("c") or not _ok(level):
+def fresh_blue_dot(weekly, level, weeks=2):
+    """Blue Dot na TYGODNIOWYM w ostatnich `weeks` tygodniach (wejście, gdy cena jest > 10 % nad Green Line i to nie tydzień przebicia) -> data albo None."""
+    if not weekly or not weekly.get("c") or not _ok(level):
         return None
-    dots = blue_dots(daily["h"], daily["l"], daily["c"], level)
-    return daily["d"][dots[-1]] if dots and dots[-1] >= len(daily["c"]) - sessions else None
+    dots = blue_dots(weekly["h"], weekly["l"], weekly["c"], level)
+    return weekly["d"][dots[-1]] if dots and dots[-1] >= len(weekly["c"]) - weeks else None
 
 
 def glb_armed(closes, level, max_pct=ENTRY_MAX_PCT):
@@ -129,7 +129,7 @@ def glb_armed(closes, level, max_pct=ENTRY_MAX_PCT):
 
 def glb_state(price, prev, level, max_pct=ENTRY_MAX_PCT, armed=True):
     """Stan na zamknięciu tygodnia: WYBICIE (tydzień przebicia — poprzedni pod linią — przy dowolnej wysokości), SYGNAŁ (0–max_pct % nad linią
-    po przebiciu od dołu, `glb_armed`), NAD (dalej albo linia wygasła po rajdzie; wejście tylko po Blue Dot na dziennym — stan „BLUE DOT”,
+    po przebiciu od dołu, `glb_armed`), NAD (dalej albo linia wygasła po rajdzie; wejście tylko po Blue Dot na tygodniowym — stan „BLUE DOT”,
     `fresh_blue_dot`), POD, BRAK. `armed` liczone z zamknięć sprzed bieżącego tygodnia."""
     if not (_ok(price) and _ok(level) and level > 0):
         return "BRAK"
@@ -290,11 +290,11 @@ def _latest_surprise(history, known_through):
     return latest[1] if 0 <= age <= SURPRISE_DAYS else None
 
 
-def price_ratio(closes, sessions=252):
-    """C/C[52 tyg.]: aktualne zamknięcie / zamknięcie sprzed 252 sesji; przy krótszej historii najstarsze (jak w webowym Momentum)."""
+def price_ratio(closes, weeks=52):
+    """C/C[52 tyg.]: aktualne zamknięcie tygodnia / zamknięcie sprzed 52 tygodni; przy krótszej historii najstarsze."""
     if len(closes or []) < 2:
         return None
-    base = closes[max(0, len(closes) - (sessions + 1))]
+    base = closes[max(0, len(closes) - (weeks + 1))]
     return closes[-1] / base if base else None
 
 
@@ -813,7 +813,10 @@ def build_row(base, weekly, months, fund, spy=None, est=None, conditions=None):
     s10, s30 = sma(c, 10)[-1] if len(c) >= 10 else None, sma(c, 30)[-1] if len(c) >= 30 else None
     row["trend"] = s10 > s30 if s10 is not None and s30 is not None else None   # trend tygodniowy: SMA 10 > SMA 30 (filtr listy)
     row["rvol_w"] = rel_volume(v, RVOL_W)
-    row["rvol_d"] = None   # dzienny: uzupełnia odświeżenie ze świec dziennych (rel_volume(v_dzienne, RVOL_D))
+    row["cc52w"] = price_ratio(c)
+    bdot = fresh_blue_dot(weekly, level) if row["glb_state"] == "NAD" else None   # > 10 % nad linią, nie tydzień przebicia: wejście po Blue Dot na tygodniowym
+    if bdot:
+        row["glb_state"], row["bdot"] = "BLUE DOT", bdot
     row.update({k: (fund or {}).get(k) for k in ("rev_rr", "rev_rr1", "accel", "dopm", "dopm1", "opm", "dgm", "quarter", "qs", "op_d", "rev_q", "ttm_rev", "dil")})
     f = fund or {}
     mcap = row.get("market_cap") or (price * f["shares"] if _ok(price) and _ok(f.get("shares")) else None)

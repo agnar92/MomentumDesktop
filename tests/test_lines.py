@@ -44,19 +44,21 @@ def test_eval_alerts_dedup():
 
 
 
-def test_daily_line_alert_uses_daily_close_and_deduplicates():
-    dates = ["2026-10-19", "2026-10-20", "2026-10-21"]
-    daily = {"d": dates, "c": [98, 99, 101]}
-    ln = {"id": "daily-1", "period": "D", "d1": dates[0], "p1": 100, "d2": dates[1], "p2": 100, "alert": True}
+def test_monthly_line_alert_uses_weekly_close_and_deduplicates():
+    dates = ["2026-10-05", "2026-10-12", "2026-10-19"]
+    weekly = {"d": dates, "c": [98, 99, 101]}
+    ln = {"id": "m-1", "period": "M", "d1": dates[0], "p1": 100, "d2": dates[1], "p2": 100, "alert": True}
     st = {"lines": {"AAA": [ln]}, "watch": {}, "pos": {}, "log": []}
 
-    fresh = L.eval_alerts(st, lambda t: None, lambda t: None, "2026-10-22T09:00",
-                          daily_for=lambda t: daily)
+    fresh = L.eval_alerts(st, lambda t: None, lambda t: weekly, "2026-10-22T09:00")
     assert len(fresh) == 1
-    assert fresh[0]["key"] == "L:AAA:D:daily-1:2026-10-21:up"
-    assert "zamknięcie dzienne nad linią trendu" in fresh[0]["msg"]
-    assert L.eval_alerts(st, lambda t: None, lambda t: None, "2026-10-22T10:00",
-                         daily_for=lambda t: daily) == []
+    assert fresh[0]["key"] == "L:AAA:m-1:2026-10-19:up"
+    assert "zamknięcie tyg. (linia miesięczna) nad linią trendu" in fresh[0]["msg"]
+    assert L.eval_alerts(st, lambda t: None, lambda t: weekly, "2026-10-22T10:00") == []
+    legacy = {"id": "d-1", "period": "D", "d1": dates[0], "p1": 100, "d2": dates[1], "p2": 100, "alert": True}   # stara linia dzienna: pomijana
+    st2 = {"lines": {"AAA": [legacy]}, "watch": {}, "pos": {}, "log": []}
+    assert L.eval_alerts(st2, lambda t: None, lambda t: weekly, "2026-10-22T09:00") == []
+
 
 def test_list_filters():
     from desktop.app import FILTER_PRESETS, active_filters, pass_filters

@@ -78,7 +78,6 @@ def test_list_chart_and_navigation(app):
 
 
 def test_ctrl_space_ticker_stays_open_after_chart_sync_refreshes_table(app, monkeypatch):
-    import datetime as dt
     import time
     from desktop import prices, sync
 
@@ -97,13 +96,6 @@ def test_ctrl_space_ticker_stays_open_after_chart_sync_refreshes_table(app, monk
     refreshed_row = {**previous_row, "ticker": "ZZZ", "company": "ZZZ Inc", "price": 123.45}
     refreshed_row["glb_state"] = "SYGNAŁ"
 
-    daily_closes = [20 + i * 0.2 for i in range(160)]
-    daily_dates = [(dt.date(2026, 1, 1) + dt.timedelta(days=i)).isoformat() for i in range(160)]
-    daily = {
-        "d": daily_dates, "o": daily_closes,
-        "h": [v + 1 for v in daily_closes], "l": [v - 1 for v in daily_closes],
-        "c": daily_closes, "v": [1e6] * len(daily_closes),
-    }
     monthly_closes = [20, 22, 21, 24, 23, 25]
     monthly = {
         "d": [f"2026-{i:02d}-01" for i in range(1, 7)],
@@ -117,7 +109,6 @@ def test_ctrl_space_ticker_stays_open_after_chart_sync_refreshes_table(app, monk
         return dict(refreshed_row), dict(refreshed_weekly)
 
     monkeypatch.setattr(sync, "symbol", fake_symbol)
-    monkeypatch.setattr(prices, "daily_ohlc", lambda ticker: dict(daily))
     monkeypatch.setattr(prices, "monthly_ohlc", lambda ticker: dict(monthly))
 
     ch.sync_btn.invoke()
@@ -135,7 +126,6 @@ def test_ctrl_space_ticker_stays_open_after_chart_sync_refreshes_table(app, monk
 
 
 def test_chart_sync_button_refreshes_only_the_open_ticker(app, monkeypatch):
-    import datetime as dt
     import time
     from desktop import prices, sync
 
@@ -148,13 +138,6 @@ def test_chart_sync_button_refreshes_only_the_open_ticker(app, monkeypatch):
     refreshed_weekly["c"][-1] = refreshed_weekly["c"][-1] + 1
     refreshed_row = {**original, "price": 123.45, "glb_state": "SYGNAŁ"}
 
-    daily_closes = [20 + i * 0.2 for i in range(160)]
-    daily_dates = [(dt.date(2026, 1, 1) + dt.timedelta(days=i)).isoformat() for i in range(160)]
-    daily = {
-        "d": daily_dates, "o": daily_closes,
-        "h": [v + 1 for v in daily_closes], "l": [v - 1 for v in daily_closes],
-        "c": daily_closes, "v": [1e6] * len(daily_closes),
-    }
     monthly_closes = [20, 22, 21, 24, 23, 25]
     monthly = {
         "d": [f"2026-{i:02d}-01" for i in range(1, 7)],
@@ -168,7 +151,6 @@ def test_chart_sync_button_refreshes_only_the_open_ticker(app, monkeypatch):
         return dict(refreshed_row), dict(refreshed_weekly)
 
     monkeypatch.setattr(sync, "symbol", fake_symbol)
-    monkeypatch.setattr(prices, "daily_ohlc", lambda ticker: dict(daily))
     monkeypatch.setattr(prices, "monthly_ohlc", lambda ticker: dict(monthly))
 
     ch.sync_btn.invoke()
@@ -181,10 +163,6 @@ def test_chart_sync_button_refreshes_only_the_open_ticker(app, monkeypatch):
     assert calls == ["AAA"]
     assert app.store.row("AAA")["price"] == 123.45
     assert app.store.weekly("AAA")["c"][-1] == refreshed_weekly["c"][-1]
-    assert app.store.daily("AAA")["c"] == daily_closes
-    assert app.store.row("AAA")["rvol_d"] == 1.0
-    assert app.store.row("AAA")["cc52w"] == daily_closes[-1] / daily_closes[0]
-    assert ch.other["D"]["AAA"]["c"] == daily_closes
     assert ch.other["M"]["AAA"]["c"] == monthly_closes
     assert ch.sync_btn["text"] == "⟳ Sync"
     assert "Odświeżono AAA" in app.status.cget("text")
@@ -348,41 +326,38 @@ def test_monthly_chart_shows_dotted_green_line(app, monkeypatch):
     assert ch.period == "W" and ch.geom["n"] == 156
 
 
-def test_daily_chart_rwb_and_blue_dot(app, monkeypatch):
-    import time
-    from desktop import calc as C, prices
+def test_weekly_rwb_toggle_draws_gmma_rwb_strip_and_blue_dot(app):
+    import datetime as dt
+    from desktop import calc as C
     n = 160
     c = [50 + i * 0.4 for i in range(n)]
     c[150:154] = [c[149] - 3, c[149] - 6, c[149] - 7, c[149] - 1]       # korekta w trendzie, potem odbicie: Stochastic przecina 20 w górę
-    d = [f"2026-{1 + i // 28:02d}-{1 + i % 28:02d}" for i in range(n)]
-    m = {"d": d, "o": c, "h": [x + 1 for x in c], "l": [x - 1 for x in c], "c": c, "v": [1e6] * n}
+    d = [(dt.date(2023, 1, 2) + dt.timedelta(weeks=i)).isoformat() for i in range(n)]
+    w = {"d": d, "o": c, "h": [x + 1 for x in c], "l": [x - 1 for x in c], "c": c, "v": [1e6] * n}
     assert C.rwb(c)[148] and not C.rwb([100 - i for i in range(80)])[-1]   # spadek: szybkie pod wolnymi
-    dots = C.blue_dots(m["h"], m["l"], c, 40)
-    assert dots and dots[-1] >= 150 and not C.blue_dots(m["h"], m["l"], c, 1e9)   # pod Green Line nie ma kropek
-    monkeypatch.setattr(prices, "daily_ohlc", lambda t: dict(m))
+    dots = C.blue_dots(w["h"], w["l"], c, 40)
+    assert dots and dots[-1] >= 150 and not C.blue_dots(w["h"], w["l"], c, 1e9)   # pod Green Line nie ma kropek
+    app.store.series["AAA"] = w
     app.store.row("AAA")["glb"] = 40
     app.open_chart("AAA")
     ch = app.chart
     ch.update()
-    ch.toggle_period("D")
-    for _ in range(50):
-        app.root.update()
-        if ch.geom and ch.geom["n"] == min(n, 260):
-            break
-        time.sleep(0.02)
-    assert ch.period == "D" and ch.geom["n"] == min(n, 260)
-    assert ch.daily_style == "bars" and ch.daily_style_btn.cget("text") == "D: RWB"
-    blue_dot_items = [
-        item for item in ch.cv.find_all()
-        if ch.cv.type(item) == "oval" and ch.cv.itemcget(item, "fill") == "#4aa3ff"
-    ]
-    assert blue_dot_items, "Blue Dot markers should also be visible on the daily OHLC bar chart"
-    ch.toggle_daily_style()     # nadal można przełączyć dzienny na RWB / GMMA
     ch.redraw()
-    assert ch.daily_style == "line" and ch.daily_style_btn.cget("text") == "D: słupki"
-    texts = [ch.cv.itemcget(i, "text") for i in ch.cv.find_all() if ch.cv.type(i) == "text"]
-    assert not any(t.startswith("Stochastic") or t.startswith("Przychody kw.") or t.startswith("MACD") for t in texts)   # dzienny: RWB + Blue Dot + GLB
-    assert any("Blue Dot" in t for t in texts) and ch.geom["g"]["rev"] is None
+    dot_items = lambda: [i for i in ch.cv.find_all() if ch.cv.type(i) == "oval" and ch.cv.itemcget(i, "fill") == A_chart.BLUE_DOT]   # noqa: E731
+    assert not ch.rwb and not dot_items() and ch.rwb_btn.cget("state") == "normal"
+    gmma_lines = lambda: [i for i in ch.cv.find_all() if ch.cv.type(i) == "line" and ch.cv.itemcget(i, "fill") in (A_chart.FAST_C, A_chart.SLOW_C)]   # noqa: E731
+    assert not gmma_lines()
+    ch.toggle_rwb()                                                                # RWB tylko na wykresie tygodniowym
+    assert ch.rwb and ch.rwb_btn.cget("bg") == "#1f3b5c"
+    assert len(gmma_lines()) >= 12 and dot_items()                                 # 12 średnich Guppy + ● Blue Dot
+    strip = [i for i in ch.cv.find_all() if ch.cv.type(i) == "rectangle" and ch.cv.itemcget(i, "fill") == A_chart.SLOW_C]
+    assert strip                                                                   # pasek RWB u dołu panelu ceny
+    g = ch.geom["g"]
+    ch.on_motion(type("E", (), {"x": g["x0"] + (dots[-1] - ch.geom["i0"] + 0.5) * ch.geom["step"], "y": (g["price"][0] + g["price"][1]) / 2})())
+    tooltip = [ch.cv.itemcget(i, "text") for i in ch.cv.find_withtag("tip") if ch.cv.type(i) == "text"]
+    assert any(t.startswith("BLUE DOT") for t in tooltip)
+    ch.toggle_period("M")
+    assert ch.rwb_btn.cget("state") == "disabled"                                  # na miesięcznym RWB nie ma
 
 
 def test_revenue_surprise_is_computed_if_actual_and_estimate_are_supplied():
@@ -393,28 +368,16 @@ def test_revenue_surprise_is_computed_if_actual_and_estimate_are_supplied():
     assert _revenue_surprise({"Reported Revenue": 90, "Revenue Estimate": 0}) is None
 
 
-def test_earnings_markers_on_weekly_and_daily_charts(app, monkeypatch):
-    import datetime as dt
-    import time
-    from desktop import prices
-
+def test_earnings_tooltip_on_weekly_chart(app):
     weekly = app.store.weekly("AAA")
     week_event = weekly["d"][80]
-    n = 120
-    daily_dates = [(dt.date(2026, 1, 1) + dt.timedelta(days=i)).isoformat() for i in range(n)]
-    closes = [50 + i * 0.2 for i in range(n)]
-    daily_event = daily_dates[70]
-    daily = {"d": daily_dates, "o": closes, "h": [x + 1 for x in closes], "l": [x - 1 for x in closes],
-             "c": closes, "v": [1e6] * n}
-    monkeypatch.setattr(prices, "daily_ohlc", lambda ticker: dict(daily))
     app.store.save_cache("estimates", {"AAA": {
         "at": "2026-10-20",
-        "surp": [[week_event, 6.7], [daily_event, -2.5]],
-        "revenue_surp": [[week_event, 4.1], [daily_event, 8.2]],
+        "surp": [[week_event, 6.7]],
+        "revenue_surp": [[week_event, 4.1]],
         "rev90": None,
-        "earnings_dates": [week_event, daily_event],
+        "earnings_dates": [week_event],
     }})
-
     app.open_chart("AAA")
     ch = app.chart
     ch.update()
@@ -424,90 +387,74 @@ def test_earnings_markers_on_weekly_and_daily_charts(app, monkeypatch):
     g = ch.geom["g"]
     from desktop.chart import earnings_indices
     weekly_index = earnings_indices(weekly["d"], [week_event], "W")[0]
+    assert earnings_indices(weekly["d"], [week_event], "M") == []
     x = g["x0"] + (weekly_index + 0.5) * ch.geom["step"]
     ch.on_motion(type("E", (), {"x": x, "y": (g["price"][0] + g["price"][1]) / 2})())
     tooltip = [ch.cv.itemcget(i, "text") for i in ch.cv.find_withtag("tip") if ch.cv.type(i) == "text"]
     assert "Earnings Surprise: +6.7%" in tooltip
     assert "Revenue Surprise: +4.1%" in tooltip
 
-    ch.toggle_period("D")
-    for _ in range(60):
-        app.root.update()
-        if ch.geom and ch.geom.get("n") == n:
-            break
-        time.sleep(0.02)
-    assert ch.period == "D" and ch.geom and ch.geom.get("n") == n
-    texts = [ch.cv.itemcget(i, "text") for i in ch.cv.find_all() if ch.cv.type(i) == "text"]
-    assert "E" in texts   # w interwale dziennym E jest pod sesją raportu
-    g = ch.geom["g"]
-    x = g["x0"] + (70 + 0.5) * ch.geom["step"]
-    ch.on_motion(type("E", (), {"x": x, "y": (g["price"][0] + g["price"][1]) / 2})())
-    tooltip = [ch.cv.itemcget(i, "text") for i in ch.cv.find_withtag("tip") if ch.cv.type(i) == "text"]
-    assert "Earnings Surprise: -2.5%" in tooltip
-    assert "Revenue Surprise: +8.2%" in tooltip
 
-def test_daily_trend_lines_right_click_menu_and_preserve_weekly_lines(app, monkeypatch):
-    import datetime as dt
+def test_monthly_trend_lines_are_drawn_on_monthly_and_shown_read_only_on_weekly(app, monkeypatch):
     import time
     from desktop import prices
 
-    n = 100
-    dates = [(dt.date(2026, 5, 1) + dt.timedelta(days=i)).isoformat() for i in range(n)]
-    close = [40 + i * 0.2 for i in range(n)]
-    daily = {"d": dates, "o": close, "h": [x + 1 for x in close], "l": [x - 1 for x in close],
-             "c": close, "v": [1e6] * n}
-    monkeypatch.setattr(prices, "daily_ohlc", lambda ticker: dict(daily))
+    n = 60
+    close = [40 + i * 0.5 for i in range(n)]
+    dates = [f"{2021 + i // 12}-{i % 12 + 1:02d}-01" for i in range(n)]
+    monthly = {"d": dates, "o": close, "h": [x + 2 for x in close], "l": [x - 2 for x in close], "c": close, "v": [1e6] * n}
+    monkeypatch.setattr(prices, "monthly_ohlc", lambda ticker: dict(monthly))
     weekly = app.store.weekly("AAA")
     weekly_line = {"id": "weekly-line", "d1": weekly["d"][20], "p1": 55, "d2": weekly["d"][50], "p2": 62, "alert": True}
     app.store.alerts["lines"]["AAA"] = [weekly_line]
     app.store.save_alerts()
-    app.refresh_daily_alerts = lambda: None
 
     app.open_chart("AAA")
     ch = app.chart
     ch.update()
-    ch.toggle_period("D")
+    ch.toggle_period("M")
     for _ in range(50):
         app.root.update()
         if ch.geom and ch.geom["n"] == n:
             break
         time.sleep(0.02)
-    assert ch.period == "D" and ch.daily_style == "bars"
-    assert app.store.daily("AAA")["d"] == dates
+    assert ch.period == "M" and ch.geom["n"] == n and ch.lines() == []            # tygodniowa linia nie jest na miesięcznym
 
     g = ch.geom["g"]
-    E = lambda x, y, xr=300, yr=300: type("E", (), {"x": x, "y": y, "x_root": xr, "y_root": yr})()
-    x0 = g["x0"] + 25
-    x1 = g["x0"] + (g["x1"] - g["x0"]) * 0.7
+    E = lambda x, y, xr=300, yr=300: type("E", (), {"x": x, "y": y, "x_root": xr, "y_root": yr})()   # noqa: E731
+    x0 = g["x0"] + (g["x1"] - g["x0"]) * 0.6          # lata 2024–2025: mieszczą się w 3-letniej historii tygodniowej
+    x1 = g["x0"] + (g["x1"] - g["x0"]) * 0.9
     y0 = (g["price"][0] + g["price"][1]) / 2
     ch.press(E(x0, y0))
     ch.drag_line(E(x0 + 15, y0 - 10))
     ch.drag_line(E(x1, y0 - 35))
     ch.release(E(x1, y0 - 35))
-    daily_lines = [ln for ln in app.store.alerts["lines"]["AAA"] if ln.get("period") == "D"]
-    assert len(daily_lines) == 1 and daily_lines[0]["alert"] is False
-    daily_id = daily_lines[0]["id"]
+    monthly_lines = [ln for ln in app.store.alerts["lines"]["AAA"] if ln.get("period") == "M"]
+    assert len(monthly_lines) == 1 and monthly_lines[0]["alert"] is False       # rysowanie na miesięcznym; nowa linia bez alarmu
+    mid = monthly_lines[0]["id"]
 
     menus = []
     monkeypatch.setattr(tk.Menu, "tk_popup", lambda self, x, y: menus.append(self))
     monkeypatch.setattr(tk.Menu, "grab_release", lambda self: None)
     seg = ch.geom["segs"][0]
     ch.right_click(E((seg["x1"] + seg["x2"]) / 2, (seg["y1"] + seg["y2"]) / 2))
-    menu = menus[-1]
-    labels = [menu.entrycget(i, "label") for i in range(menu.index("end") + 1) if menu.type(i) != "separator"]
+    labels = [menus[-1].entrycget(i, "label") for i in range(menus[-1].index("end") + 1) if menus[-1].type(i) != "separator"]
     assert "Dodaj alert linii" in labels and "Usuń linię" in labels
-    menu.invoke(0)
-    assert next(ln for ln in app.store.alerts["lines"]["AAA"] if ln["id"] == daily_id)["alert"] is True
-    assert any(ln["id"] == "weekly-line" for ln in app.store.alerts["lines"]["AAA"])
 
+    ch.toggle_period("W")                                                          # na tygodniowym ta linia jest widoczna, ale tylko do odczytu
+    assert ch.period == "W" and [ln["id"] for ln in ch.lines()] == ["weekly-line"]
+    ro = [ln for ln in ch.shown_lines() if ln.get("ro")]
+    assert [ln["id"] for ln in ro] == [mid] and len(ch.geom["segs"]) == 1          # w segs tylko własna linia tygodniowa
+    pale = [i for i in ch.cv.find_all() if ch.cv.type(i) == "line" and ch.cv.itemcget(i, "fill") == A_chart.TLINE_RO]
+    assert pale and all(ch.cv.itemcget(i, "dash") for i in pale)
+    ch.save_lines()                                                                # zapis tygodniowych nie kasuje miesięcznych
+    assert {ln["id"] for ln in app.store.alerts["lines"]["AAA"]} == {"weekly-line", mid}
+
+    ch.toggle_period("M")
     seg = ch.geom["segs"][0]
     ch.right_click(E((seg["x1"] + seg["x2"]) / 2, (seg["y1"] + seg["y2"]) / 2))
-    menu = menus[-1]
-    assert menu.entrycget(0, "label") == "Wyłącz alert linii"
-    menu.invoke(2)
-    remaining = app.store.alerts["lines"]["AAA"]
-    assert all(ln["id"] != daily_id for ln in remaining)
-    assert any(ln["id"] == "weekly-line" for ln in remaining)
+    menus[-1].invoke(menus[-1].index("end"))                                       # „Usuń linię"
+    assert {ln["id"] for ln in app.store.alerts["lines"]["AAA"]} == {"weekly-line"}
 
 
 def test_exit_method_toggle_and_position_plan(app):
@@ -523,7 +470,7 @@ def test_exit_method_toggle_and_position_plan(app):
     assert app.store.settings["exit"] == "MACD"
 
 
-def test_period_buttons_and_ibd_rs_line(app):
+def test_period_buttons_without_daily_and_no_rs_panel(app):
     st = app.store
     w = st.weekly("AAA")
     st.series["SPY"] = {**w, "c": [400 - i for i in range(len(w["c"]))]}   # SPY spada -> RS rośnie, na szczycie 52 tyg.
@@ -531,10 +478,14 @@ def test_period_buttons_and_ibd_rs_line(app):
     ch = app.chart
     ch.update()
     ch.redraw()
-    assert set(ch.per_btns) == {"M", "W", "D"} and ch.per_btns["W"].cget("text") == "T" and ch.per_btns["W"].cget("bg") == "#1f3b5c"
+    assert set(ch.per_btns) == {"M", "W"} and ch.per_btns["W"].cget("text") == "T" and ch.per_btns["W"].cget("bg") == "#1f3b5c"
     texts = [ch.cv.itemcget(i, "text") for i in ch.cv.find_all() if ch.cv.type(i) == "text"]
     assert not any("pp" in t or t.startswith("RS") for t in texts)   # T: bez panelu RS Line
-    assert A_chart.rs_line([10, 20, None], [5, 4, 2]) == [2, 5, None]
+    assert not hasattr(A_chart, "rs_line") and not hasattr(ch, "daily_style")        # dziennego wykresu ani RS Line już nie ma
+    ch.toggle_period()
+    assert ch.period == "M" and ch.per_btns["M"].cget("bg") == "#1f3b5c"
+    ch.toggle_period()
+    assert ch.period == "W" and ch.per_btns["W"].cget("bg") == "#1f3b5c"
 
 
 def test_positions_and_watch_panel(app):
@@ -595,14 +546,6 @@ def test_chart_ticker_entry_uses_cached_symbol_without_network(app, monkeypatch)
     from desktop import sync
 
     monkeypatch.setattr(sync, "symbol", lambda *args, **kwargs: pytest.fail("cached ticker should not trigger a download"))
-    daily_close = [10 + i * 0.1 for i in range(80)]
-    daily_dates = [f"2026-01-{(i % 28) + 1:02d}" for i in range(80)]
-    daily = {
-        "d": daily_dates, "o": daily_close,
-        "h": [v + 1 for v in daily_close], "l": [v - 1 for v in daily_close],
-        "c": daily_close, "v": [1e6] * len(daily_close),
-    }
-    app.store.save_daily_series("BBB", daily)
     monthly_close = [10, 11, 12, 13]
     monthly = {
         "d": ["2025-01-01", "2025-04-01", "2025-07-01", "2025-10-01"],
@@ -620,8 +563,6 @@ def test_chart_ticker_entry_uses_cached_symbol_without_network(app, monkeypatch)
     assert chart.ticker == "BBB"
     assert chart.symbol_entry.get() == "BBB"
     assert chart.head.cget("text") == "  ·  BBB Inc"
-    chart.toggle_period("D")
-    assert chart.other["D"]["BBB"] == daily
     chart.toggle_period("M")
     assert chart.other["M"]["BBB"] == monthly
     assert app.root.bind("<Control-space>")
@@ -658,13 +599,6 @@ def test_chart_ticker_entry_fetches_and_saves_missing_symbol(app, monkeypatch):
     assert app.store.weekly("ZZZ") is not None
     assert app.store.row("ZZZ")["company"] == "ZZZ Corp"
     assert app.store.settings["symbols"][0] == "ZZZ"
-
-
-def test_rs_markers_deepvue():
-    """● zielony = nowy szczyt RS i ceny, ● różowy = szczyt RS przed ceną."""
-    rs = [1.0, 1.0, 1.0, 1.2, 1.3]
-    highs = [10, 10, 10, 11, 9]
-    assert A_chart.rs_markers(rs, highs, 3) == {3: True, 4: False}
 
 
 def test_zanger_view_draws_patterns_and_hides_indicators(app):
@@ -816,13 +750,17 @@ def test_glb_zone_grey_band_and_dashed_5_percent_line(app):
     ch = app.chart
     ch.update()
     ch.redraw()
-    band = [i for i in ch.cv.find_all() if ch.cv.type(i) == "rectangle" and ch.cv.itemcget(i, "stipple") == "gray12" and ch.cv.itemcget(i, "fill") == A_chart.ZONE_C]
+    fills = {A_chart.mix(A_chart.BG, A_chart.ZONE_C, A_chart.ZONE_ALPHA), A_chart.mix(A_chart.REGIME_BG, A_chart.ZONE_C, A_chart.ZONE_ALPHA)}
+    band = [i for i in ch.cv.find_all() if ch.cv.type(i) == "rectangle" and ch.cv.itemcget(i, "fill") in fills]
+    assert all(not ch.cv.itemcget(i, "stipple") for i in band)                   # jednolity pas, bez kropkowania (migotanie)
     dashed = [i for i in ch.cv.find_all() if ch.cv.type(i) == "line" and ch.cv.itemcget(i, "fill") == A_chart.ZONE_C and ch.cv.itemcget(i, "dash")]
     texts = [ch.cv.itemcget(i, "text") for i in ch.cv.find_all() if ch.cv.type(i) == "text"]
-    if app.store.row("AAA").get("glb"):
-        assert len(band) == 1 and len(dashed) == 1 and "+5 %" in texts
-        x1, y1, x2, y2 = ch.cv.coords(band[0])
-        assert y1 < ch.cv.coords(dashed[0])[1] < y2                               # przerywana 5 % leży w pasie 0–10 %
+    assert app.store.row("AAA").get("glb") and band and len(dashed) == 1 and "+5 %" in texts
+    top = min(ch.cv.coords(i)[1] for i in band)
+    bottom = max(ch.cv.coords(i)[3] for i in band)
+    assert top < ch.cv.coords(dashed[0])[1] < bottom                              # przerywana 5 % leży w pasie 0–10 %
+    assert A_chart.mix("#000000", "#ffffff", 0.5) == "#808080" and A_chart.mix("#102030", "#ffffff", 0) == "#102030"
+
 
 
 def test_manual_stop_drag_double_click_persistence_and_dialog_sync(app, monkeypatch):

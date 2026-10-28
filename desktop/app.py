@@ -19,7 +19,7 @@ COLUMNS = [  # (klucz, nagłówek, szerokość, format)
     ("macd_stop", "Stop MACD", 85, "p"), ("dopm", "Δ marża oper. pp", 120, "%"), ("rev_rr", "Przychody r/r %", 115, "%"),
     ("eps_rating", "EPS Rating", 90, "i"), ("dgm", "Δ marża brutto pp", 125, "%"), ("pattern", "Wzorzec Zangera", 130, "s"), ("pattern_pct", "Do kupna wzorca %", 115, "%"), ("pattern_exit", "Ostrzeżenie wzorca", 125, "s"), ("quarter", "Kwartał", 105, "s"), ("turnover", "Obrót mln $", 95, "m"),
     ("ps", "P/S", 60, "x"), ("peg", "PEG", 70, "x2"), ("pegy", "PEGY", 75, "x2"),
-    ("rs", "RS 52 tyg. pp", 105, "%"), ("surp", "Niesp. EPS %", 95, "%"), ("beat2", "2× nad konsensus", 115, "b"), ("eps_rev", "Rewizja EPS 90 dni %", 140, "%"), ("rvol_w", "RVol tyg.", 80, "x"), ("rvol_d", "RVol dz.", 75, "x"), ("cc52w", "C/C[52 tyg.]", 95, "r"), ("ok", "Warunki", 75, "b"), ("slow", "Hamuje", 95, "w"),
+    ("rs", "RS 52 tyg. pp", 105, "%"), ("surp", "Niesp. EPS %", 95, "%"), ("beat2", "2× nad konsensus", 115, "b"), ("eps_rev", "Rewizja EPS 90 dni %", 140, "%"), ("rvol_w", "RVol tyg.", 80, "x"), ("cc52w", "C/C[52 tyg.]", 95, "r"), ("ok", "Warunki", 75, "b"), ("slow", "Hamuje", 95, "w"),
 ]
 SIGNAL = ("WYBICIE", "SYGNAŁ")
 ENTRY_MAX = calc.ENTRY_MAX_PCT   # kupno: zamknięcie tygodnia 0–10 % nad Green Line (BLUE DOT i wyżej — tylko informacyjnie)
@@ -118,7 +118,6 @@ class App:
         apply_dark(self.root)
         self.store = Store(base)
         self.q, self.chart, self.sort = queue.Queue(), None, None
-        self._daily_alert_refreshing = False
         self._symbol_syncs = set()
         self._symbol_openings = set()
         self._last_follow_ticker = None
@@ -371,16 +370,11 @@ class App:
             try:
                 row, weekly = sync.symbol(ticker, self.store, log=log)
                 try:
-                    daily = prices.daily_ohlc(ticker)
-                except Exception as exc:
-                    log(f"Dane dzienne {ticker}: {exc}")
-                    daily = None
-                try:
                     monthly = prices.monthly_ohlc(ticker)
                 except Exception as exc:
                     log(f"Dane miesięczne {ticker}: {exc}")
                     monthly = None
-                self.q.put(("symbol_synced", (ticker, row, weekly, daily, monthly)))
+                self.q.put(("symbol_synced", (ticker, row, weekly, monthly)))
             except Exception as exc:
                 self.q.put(("symbol_sync_error", (ticker, str(exc))))
 
@@ -470,23 +464,8 @@ class App:
                         chart.render_panel()
                     self.status.config(text=f"  ❌ Nie udało się pobrać {ticker}: {error}")
                 elif kind == "symbol_synced":
-                    ticker, row, weekly, daily, monthly = val
+                    ticker, row, weekly, monthly = val
                     self._symbol_syncs.discard(ticker)
-                    old = self.store.row(ticker) or {}
-                    if daily and daily.get("c"):
-                        row["rvol_d"] = calc.rel_volume(daily.get("v") or [], calc.RVOL_D)
-                        row["cc52w"] = calc.price_ratio(daily["c"])
-                        blue_dot = calc.fresh_blue_dot(daily, row.get("glb")) if row.get("glb_state") == "NAD" else None
-                        if blue_dot:
-                            row["glb_state"], row["bdot"] = "BLUE DOT", blue_dot
-                        else:
-                            row.pop("bdot", None)
-                        daily["period"] = "D"
-                        self.store.save_daily_series(ticker, daily)
-                    else:
-                        for key in ("rvol_d", "cc52w", "bdot"):
-                            if key in old:
-                                row[key] = old[key]
                     if monthly:
                         monthly["period"] = "M"
                         monthly["open_last"] = monthly["d"][-1][:7] == dt.date.today().strftime("%Y-%m")
@@ -497,21 +476,17 @@ class App:
                     chart = self.chart if self.chart is not None and self.chart.winfo_exists() else None
                     if chart is not None:
                         chart.set_sync_state(ticker, False)
-                        if daily:
-                            chart.other["D"][ticker] = daily
                         if monthly:
                             chart.other["M"][ticker] = monthly
                         if chart.ticker == ticker:
                             chart.load_period()
                             chart.render_panel()
                     self.refresh()
-                    self.check_alerts(refresh_daily=False)
+                    self.check_alerts()
                     dlg = getattr(self, "_positions_dialog", None)
                     if dlg is not None and dlg.winfo_exists():
                         dlg.fill()
                     parts = ["tygodniowe i fundamenty"]
-                    if daily:
-                        parts.append("dzienne")
                     if monthly:
                         parts.append("miesięczne")
                     self.status.config(text=f"  ✓ Odświeżono {ticker}: " + ", ".join(parts))
@@ -522,15 +497,6 @@ class App:
                     if chart is not None:
                         chart.set_sync_state(ticker, False)
                     self.status.config(text=f"  ❌ Nie udało się odświeżyć {ticker}: {error}")
-                elif kind == "daily_alert_data":
-                    self._daily_alert_refreshing = False
-                    for ticker, series in val.items():
-                        self.store.save_daily_series(ticker, series)
-                        if self.chart is not None and self.chart.winfo_exists():
-                            self.chart.other["D"][ticker] = series
-                            if self.chart.ticker == ticker and self.chart.period == "D":
-                                self.chart.redraw()
-                    self.check_alerts(refresh_daily=False)
                 elif kind == "synced":
                     self.pframe.pack_forget()
                     self.sync_btn.config(state="normal")
@@ -550,44 +516,17 @@ class App:
         SettingsDialog(self)
 
     # --- alerty (linie trendu + obserwowane spółki), sprawdzane po starcie i po Sync
-    def check_alerts(self, refresh_daily=True):
+    def check_alerts(self):
         st = self.store
         weeks = [s["d"][-1] for s in st.series.values() if s and s.get("d")]
         fresh = lines.eval_alerts(
             st.alerts, st.row, st.weekly, dt.datetime.now().isoformat(timespec="seconds"),
-            max(weeks) if weeks else "", daily_for=st.daily,
+            max(weeks) if weeks else "",
         )
         st.save_alerts()
         self.alert_badge()
         if fresh:
             self.status.config(text=f"  🔔 {len(fresh)} nowych alertów: " + " · ".join(f"{a['t']} {a['msg']}" for a in fresh[:3]))
-        if refresh_daily:
-            self.refresh_daily_alerts()
-
-    def refresh_daily_alerts(self):
-        """Odświeża świece tylko dla dziennych linii, dla których włączono alert."""
-        if self._daily_alert_refreshing:
-            return
-        tickers = sorted(
-            ticker for ticker, items in self.store.alerts["lines"].items()
-            if any(ln.get("period") == "D" and ln.get("alert") is not False for ln in items)
-        )
-        if not tickers:
-            return
-        self._daily_alert_refreshing = True
-
-        def work():
-            fresh = {}
-            for ticker in tickers:
-                try:
-                    data = prices.daily_ohlc(ticker)
-                    if data:
-                        fresh[ticker] = data
-                except Exception as exc:
-                    self.q.put(("log", f"Alert dzienny {ticker}: {exc}"))
-            self.q.put(("daily_alert_data", fresh))
-
-        threading.Thread(target=work, daemon=True).start()
 
     def alert_badge(self):
         n = sum(1 for a in self.store.alerts["log"] if a["at"] > self.store.alerts["seen"])
@@ -1179,9 +1118,9 @@ RS 52 tyg. vs S&P 500, P/S, niespodzianki EPS (2× nad konsensus), rewizja EPS 9
 Płynność ustawiasz filtrem skanera w Finviz (np. średni wolumen).
 
 WYKRES
-Nad ceną RS Line jak w Deepvue (akcja / SPY, średnia 52 tyg., ● zielony = nowy szczyt RS i ceny, ● różowy = RS przed ceną); E = raport wyników;
-słupki przychodów pod wolumenem — zielony ≥ +25 % r/r, żółty ≥ +15 %; prawy przycisk myszy = miarka (% i liczba świec).
-Dzienny (przycisk D / klawisz d) — RWB, GMMA i ● Blue Dot tylko do podglądu (test: +1,0…+1,2 % na transakcję, trafność 14–15 %), NIE jako sygnał.
+Tygodniowy (T) i miesięczny (M): szare słupki, niebieska SMA 10, Green Line (kropkowana), zielone tło = SPY nad SMA 10 tego interwału, wolumen, MACD.
+Miesięczny — do Green Line i wzorców (linie trendu rysujesz i tu, i na T; miesięczne widać też na tygodniowym); tygodniowy — do wejść. Prawy przycisk myszy = miarka.
+RWB (przycisk RWB / klawisz r, tylko T) — GMMA i ● Blue Dot tygodniowe tylko do podglądu (test na dziennych: +1,0…+1,2 % na transakcję, trafność 14–15 %), NIE jako sygnał.
 
 CZEGO NIE SZUKAĆ (nic nie wnosiło)
 ROE / ROI, Blue Dot jako wejście, stan MACD przy wejściu, trend S&P 500, wolumen wybicia, długość bazy, kup +0,1 % / sprzedaj −0,1 % przy linii,

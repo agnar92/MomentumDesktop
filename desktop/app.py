@@ -559,6 +559,11 @@ class App:
                 done(res, err)
         self.root.after(200, poll)
 
+    def redraw_chart(self):
+        """Odświeża otwarty wykres (np. linia ceny wejścia po edycji pozycji)."""
+        if self.chart is not None and self.chart.winfo_exists():
+            self.chart.redraw()
+
     # --- alerty (linie trendu + obserwowane spółki), sprawdzane po starcie i po Sync
     def check_alerts(self):
         st = self.store
@@ -1002,6 +1007,7 @@ class PositionsDialog(tk.Toplevel):
             pos["price"] = price
             self.app.store.save_alerts()
             self.app.refresh()
+            self.app.redraw_chart()   # linia ceny wejścia na wykresie przesuwa się na nową cenę
             self.fill()
             dlg.destroy()
         buttons = tk.Frame(dlg, bg=PANEL)
@@ -1027,6 +1033,7 @@ class PositionsDialog(tk.Toplevel):
     def _save(self):
         self.app.store.save_alerts()
         self.app.refresh()
+        self.app.redraw_chart()
         self.fill()
 
 

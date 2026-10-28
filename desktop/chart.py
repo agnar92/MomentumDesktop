@@ -28,6 +28,7 @@ RIGHT, LEFT, TOP = 64, 6, 22
 ZONE_C, ZONE_ALPHA = "#9aa3ad", 0.16   # strefa kupna 0–10 % nad GLB (jednolity pas = ZONE_C zmieszany z tłem w proporcji ZONE_ALPHA) i przerywana na 5 %
 BAR_C, SMA_C, REGIME_BG = "#a9b1bb", "#2f6bff", "#0f2a1c"   # wykres T / M: szare słupki, niebieska SMA 10, tło „SPY nad SMA 10”
 RS_C, RWB_START_C = "#38bdf8", "#f5c518"   # panel RS Line (akcja / SPY)
+ENTRY_COLOR = "#ffb020"   # linia ceny wejścia 📌 pozycji (cena kupna z pozycji, także po edycji)
 VOL_UP, VOL_DOWN = "#1f7a6d", "#7d3c38"
 HIST_C = {(True, True): "#00e676", (True, False): "#2e8b57", (False, False): "#ff5252", (False, True): "#8b8f98"}   # (hist ≥ 0, rośnie)
 MACD_LINE, SIGNAL_LINE = "#2f6bff", "#c850e8"
@@ -250,6 +251,30 @@ def draw_manual_stop(cv, stop, yf, g, w, pmin, pmax, label):
     boxed(cv, x0 + 4, y - 9 if y - 9 > y0 + 8 else y + 9, label, STOP_COLOR)
     cv.create_rectangle(x1 + 1, y - 8, w - 2, y + 8, fill=STOP_COLOR, outline="")
     cv.create_text(x1 + 4, y, text=fmt(stop), anchor="w", fill="#ffffff", font=("Consolas", 9, "bold"))
+    return y
+
+
+def draw_entry(cv, entry, last, yf, g, w, pmin, pmax, taken=()):
+    """Linia ceny wejścia 📌 pozycji (przerywana, bursztynowa) na całą szerokość: napis „WEJŚCIE cena · wynik %” przy prawej krawędzi panelu, cena na osi
+    (odsunięta od innych napisów na osi, `taken` = ich y); poza widoczną skalą — strzałka przy krawędzi panelu ceny. -> y linii albo None."""
+    if not entry:
+        return None
+    x0, x1 = g["x0"], g["x1"]
+    y0, y1 = g["price"]
+    txt = f"WEJŚCIE {fmt(entry)}" + (f" · {(last / entry - 1) * 100:+.1f} %" if last else "")
+    if not pmin < entry < pmax:
+        below = entry <= pmin
+        boxed(cv, x1 - 4, y1 - 9 if below else y0 + 9, ("▼ " if below else "▲ ") + txt, ENTRY_COLOR, anchor="e")
+        return None
+    y = yf(entry)
+    cv.create_line(x0, y, x1, y, fill=ENTRY_COLOR, width=1.6, dash=(9, 4))
+    boxed(cv, x1 - 4, y - 9 if y - 9 > y0 + 8 else y + 9, txt, ENTRY_COLOR, anchor="e")
+    ay = y
+    for ref in taken:   # cena na osi nie nachodzi na GLB / ostatnią cenę / stop
+        if ref is not None and abs(ay - ref) < 16:
+            ay = ref + 16 if ay >= ref else ref - 16
+    cv.create_rectangle(x1 + 1, ay - 8, w - 2, ay + 8, fill=ENTRY_COLOR, outline="")
+    cv.create_text(x1 + 4, ay, text=fmt(entry), anchor="w", fill="#000000", font=("Consolas", 9, "bold"))
     return y
 
 
@@ -490,6 +515,7 @@ def draw_simple(cv, data, row, w, h, n_show, end, tlines, sel, spx, period, stop
         cv.create_text(x1 + 4, last_y, text=fmt(last), anchor="w", fill="#ffffff", font=("Consolas", 9, "bold"))
     segs = draw_lines(cv, data, tlines, sel, i0, i1, xf, yf, g, step, w)
     stop_y = draw_manual_stop(cv, stop, yf, g, w, pmin, pmax, stop_label)
+    draw_entry(cv, (row or {}).get("entry"), data["c"][real - 1], yf, g, w, pmin, pmax, (ly, last_y, stop_y))
     # wolumen + średnia 10
     vv = [x or 0 for x in vol]
     vmax = max(vv) or 1
@@ -605,6 +631,7 @@ def draw_zanger(cv, data, row, w, h, n_show, end, tlines, sel, stop, stop_label,
     draw_patterns(cv, row, dates, xf, yf, g, step, pmin, pmax)
     segs = draw_lines(cv, data, tlines, sel, i0, i1, xf, yf, g, step, w)
     manual_y = draw_manual_stop(cv, stop, yf, g, w, pmin, pmax, stop_label)
+    draw_entry(cv, (row or {}).get("entry"), data["c"][real - 1], yf, g, w, pmin, pmax, (ly, last_y, manual_y))
     if last:
         cv.create_text(x1 + 4, last_y, text=fmt(last), anchor="w", fill="#ffffff", font=("Consolas", 9, "bold"))
     v0, v1 = g["vol"]   # wolumen + średnia 10 tyg.
@@ -1536,7 +1563,8 @@ class ChartWindow(tk.Toplevel):
         return L.position_plan(p, st.weekly(self.ticker), st.row(self.ticker)) if p else None
 
     def row_for_chart(self):
-        return {**(self.app.store.row(self.ticker) or {}), "exit": self.app.store.settings.get("exit", "MACD"), "plan": self.plan()}
+        pos = self.app.store.alerts["pos"].get(self.ticker) or {}   # cena wejścia z 📌 pozycji (też po edycji w oknie Pozycje) -> linia na wykresie
+        return {**(self.app.store.row(self.ticker) or {}), "exit": self.app.store.settings.get("exit", "MACD"), "plan": self.plan(), "entry": pos.get("price")}
 
     def toggle_exit(self):
         st = self.app.store
@@ -2023,6 +2051,7 @@ class ChartWindow(tk.Toplevel):
         st.save_alerts()
         self.tools()
         self.app.refresh()
+        self.redraw()   # linia ceny wejścia pojawia się / znika od razu
         if self.size_dialog and self.size_dialog.winfo_exists():
             self.size_dialog.load_defaults()
 

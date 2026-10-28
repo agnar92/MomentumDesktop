@@ -28,6 +28,7 @@ FAST_C, SLOW_C, RWB_BG, BLUE_DOT = "#e5484d", "#3b82f6", "#232a33", "#4aa3ff"
 RS_C = "#38bdf8"   # RS Line (akcja / SPY), jak w Deepvue
 FONT = ("Consolas", 9)
 RIGHT, LEFT, TOP = 64, 6, 22
+ZONE_C = "#9aa3ad"   # strefa kupna 0–10 % nad GLB i przerywana na 5 %
 BAR_C, SMA_C, REGIME_BG = "#a9b1bb", "#2f6bff", "#0f2a1c"   # wykres T / M: szare słupki, niebieska SMA 10, tło „SPY nad SMA 10”
 VOL_UP, VOL_DOWN = "#1f7a6d", "#7d3c38"
 HIST_C = {(True, True): "#00e676", (True, False): "#2e8b57", (False, False): "#ff5252", (False, True): "#8b8f98"}   # (hist ≥ 0, rośnie)
@@ -336,7 +337,7 @@ def draw_simple(cv, data, row, w, h, n_show, end, tlines, sel, spx, period):
     level, at = glb_peak(data, row, period)
     vals = [v for v in hi + lo if v]
     if level and min(vals) * 0.5 < level < max(vals) * 2:
-        vals.append(level)
+        vals += [level, level * 1.1]   # strefa kupna 0–10 % nad linią ma się zmieścić w skali
     pmin, pmax = min(vals) * 0.97, max(vals) * 1.03
     lmin, lmax = math.log(pmin), math.log(pmax)
 
@@ -353,6 +354,7 @@ def draw_simple(cv, data, row, w, h, n_show, end, tlines, sel, spx, period):
             cv.create_rectangle(xf(a) - step / 2, y0, xf(i - 1) + step / 2, v1, fill=REGIME_BG, outline="")
             a = None
     ly = yf(level) if level and pmin < level < pmax else None
+    xs = xf(at - i0) if at is not None and i0 <= at < i1 else x0   # Green Line i jej strefa zaczynają się na świecy rekordu
     last = c[-1]
     last_y, _ = axis_spots(ly, yf(last) if last else None, None)
     taken = [v for v in (ly, last_y) if v is not None]
@@ -373,6 +375,12 @@ def draw_simple(cv, data, row, w, h, n_show, end, tlines, sel, spx, period):
             q_no += 1
             if xf(i) > x0 + 28 and (period == "M" or (q_no - 1) % every == 0):
                 cv.create_text(xf(i), h - 10, text=dates[i][:4] if period == "M" else dates[i][:7], fill=DIM, font=FONT)
+    if ly is not None:   # strefa kupna: 0–10 % nad Green Line (lekko przezroczysty szary pas) i przerywana na 5 %
+        zt, y5 = max(y0, yf(level * 1.1)), yf(level * 1.05)
+        if zt < ly:
+            cv.create_rectangle(xs, zt, x1, min(ly, y1), fill=ZONE_C, stipple="gray12", outline="")
+        if y0 < y5 < y1:
+            cv.create_line(xs, y5, x1, y5, fill=ZONE_C, dash=(6, 4))
     # słupki OHLC: jeden szary kolor
     for i in range(n):
         if hi[i] is None or lo[i] is None or c[i] is None:
@@ -386,7 +394,6 @@ def draw_simple(cv, data, row, w, h, n_show, end, tlines, sel, spx, period):
     if len(pts) > 1:
         cv.create_line(*[p for xy in pts for p in xy], fill=SMA_C, width=2.4)
     if ly is not None:   # Green Line: kropkowana od świecy rekordu, cena nad świecą i na osi
-        xs = xf(at - i0) if at is not None and i0 <= at < i1 else x0
         cv.create_line(xs, ly, x1, ly, fill=GLB_COLOR, width=2, dash=(2, 4))
         if at is not None and i0 <= at < i1 and data["h"][at]:
             px, py = xf(at - i0), yf(data["h"][at])
@@ -400,6 +407,10 @@ def draw_simple(cv, data, row, w, h, n_show, end, tlines, sel, spx, period):
             cv.tag_lower(r, t)
         cv.create_rectangle(x1 + 1, ly - 9, w - 2, ly + 9, fill="#ffffff", outline="")
         cv.create_text(x1 + 4, ly, text=fmt(level), anchor="w", fill="#000", font=FONT)
+        for k, lab in ((1.05, "+5 %"), (1.1, "+10 %")):   # opisy granic strefy kupna przy prawej krawędzi
+            yy = yf(level * k)
+            if y0 + 6 < yy < y1 - 4:
+                cv.create_text(x1 - 4, yy - 6, text=lab, anchor="e", fill=ZONE_C, font=FONT)
     if last:   # ostatnia cena: cienka kropkowana + znacznik na osi
         cv.create_line(x0, yf(last), x1, yf(last), fill="#4b5563", dash=(1, 3))
         cv.create_rectangle(x1 + 1, last_y - 8, w - 2, last_y + 8, fill="#4b5563", outline="")
@@ -427,7 +438,7 @@ def draw_simple(cv, data, row, w, h, n_show, end, tlines, sel, spx, period):
         cv.create_rectangle(xf(i) - step * 0.3, ym(hist[i]), xf(i) + step * 0.3, mid, fill=HIST_C[(hist[i] >= 0, rising)], outline="")
     for s_, col in ((mac, MACD_LINE), (sig, SIGNAL_LINE)):
         cv.create_line(*[p for i, v in enumerate(s_) for p in (xf(i), ym(v))], fill=col, width=1.4)
-    legend = f"SMA 10 {u}" + ("" if any(x is not None for x in regime) else " · brak danych SPY (zrób Sync)") + f" · zielone tło = SPY nad SMA 10 {u}"
+    legend = f"SMA 10 {u}" + ("" if any(x is not None for x in regime) else " · brak danych SPY (zrób Sync)") + f" · zielone tło = SPY nad SMA 10 {u}" + (" · szary pas = 0–10 % nad GLB" if ly is not None else "")
     boxed(cv, x0 + 4, y0 + 10, legend, SMA_C)
     return {"g": g, "step": step, "n": n, "i0": i0, "lmin": lmin, "lmax": lmax, "segs": segs}
 
@@ -951,6 +962,130 @@ def info_lines(data, i):
     return [f"{'mies.' if data.get('period') == 'M' else 'tydz.'} {d[i][:7] if data.get('period') == 'M' else d[i]}", f"O {fmt(o[i])}  H {fmt(hi[i])}", f"L {fmt(lo[i])}  C {fmt(c[i])}", f"zmiana {ch:+.1f} %" if ch is not None else "", f"wolumen {fmt_vol(v[i])}"]
 
 
+def num(text):
+    """Liczba z pola tekstowego (przecinek lub kropka, spacje jako separator tysięcy) albo None."""
+    try:
+        return float(str(text).replace(" ", "").replace("\u00a0", "").replace(",", "."))
+    except ValueError:
+        return None
+
+
+def money(v, d=0):
+    """1 234 567,89 — spacja tysięcy, przecinek dziesiętny."""
+    return f"{v:,.{d}f}".replace(",", " ").replace(".", ",")
+
+
+def size_lines(r, ticker=""):
+    """Wynik `lines.position_size` -> teksty okna „Wielkość pozycji" (PLN i USD)."""
+    if r is None:
+        return ["Podaj kapitał, ryzyko, kurs, cenę wejścia i stop pod ceną wejścia."]
+    shares = r["shares"]
+    out = [f"Kapitał {money(r['capital_usd'])} USD · ryzyko {money(r['risk_pln'])} PLN ({money(r['risk_usd'])} USD)",
+           f"Strata na akcję przy stopie: {money(r['per_share'], 2)} USD", ""]
+    if shares:
+        out += [f"POZYCJA {ticker}: {shares} akcji (ogranicza: {r['limited_by']})",
+                f"Wartość: {money(r['value_usd'])} USD = {money(r['value_pln'])} PLN ({money(r['value_pct'], 1)} % kapitału)",
+                f"Strata przy stopie: {money(r['loss_usd'])} USD = {money(r['loss_pln'])} PLN ({money(r['loss_pct'], 2)} % kapitału)"]
+    else:
+        out += ["POZYCJA: 0 akcji — ryzyko albo kapitał nie wystarczają na jedną akcję"]
+    out += ["", f"Cały kapitał: {r['full_shares']} akcji → strata przy stopie {money(r['full_loss_usd'])} USD = {money(r['full_loss_pln'])} PLN "
+                f"({money(r['full_loss_pct'], 2)} % kapitału)"]
+    return out
+
+
+class PositionSizeDialog(tk.Toplevel):
+    """Wielkość pozycji: kapitał w PLN -> USD (kurs z yfinance, można poprawić), ryzyko = % kapitału, akcje = ryzyko / (wejście − stop).
+    Przy 📌 pozycji wejście i stop biorą się z pozycji (stop = większy z −10 % i MACD od wejścia), bez pozycji: cena i Green Line (albo −10 %)."""
+
+    def __init__(self, chart):
+        super().__init__(chart)
+        self.chart = chart
+        self.title("Wielkość pozycji")
+        self.configure(bg=BG)
+        apply_dark(self)
+        st = chart.app.store
+        self.vars = {k: tk.StringVar() for k in ("capital", "risk", "fx", "entry", "stop")}
+        self.vars["capital"].set(f"{st.settings.get('capital_pln', 10000):g}")
+        self.vars["risk"].set(f"{st.settings.get('risk_pct', 1.0):g}")
+        fx = (st.cache("fx") or {}).get("usdpln")
+        self.vars["fx"].set(f"{fx:.4f}" if fx else "")
+        body = tk.Frame(self, bg=PANEL)
+        body.pack(fill="both", expand=True, padx=8, pady=8)
+        self.head = tk.Label(body, text="", bg=PANEL, fg=FG, font=("Consolas", 11, "bold"), anchor="w")
+        self.head.grid(row=0, column=0, columnspan=2, sticky="we", padx=6, pady=(6, 2))
+        for r, (key, lab) in enumerate((("capital", "Kapitał (PLN)"), ("risk", "Ryzyko (% kapitału)"), ("fx", "Kurs USD/PLN"),
+                                        ("entry", "Wejście (USD)"), ("stop", "Stop (USD)")), start=1):
+            tk.Label(body, text=lab, bg=PANEL, fg=FG, anchor="w").grid(row=r, column=0, sticky="w", padx=6, pady=2)
+            e = tk.Entry(body, textvariable=self.vars[key], width=14, relief="flat", bg="#0f1318", fg="#f0f4f8", insertbackground="#f0f4f8",
+                         font=("Consolas", 11), justify="right", highlightthickness=1, highlightbackground="#303a46", highlightcolor="#4da3ff")
+            e.grid(row=r, column=1, sticky="e", padx=6, pady=2)
+            self.vars[key].trace_add("write", lambda *a: self.recalc())
+        self.note = tk.Label(body, text="", bg=PANEL, fg="#a1adbb", font=("Segoe UI", 9), anchor="w", justify="left", wraplength=360)
+        self.note.grid(row=6, column=0, columnspan=2, sticky="we", padx=6, pady=(4, 2))
+        tk.Button(body, text="⟳ Kurs USD/PLN", command=self.refresh_fx, relief="flat").grid(row=7, column=0, sticky="w", padx=6, pady=4)
+        tk.Button(body, text="↺ Wejście i stop z wykresu", command=self.load_defaults, relief="flat").grid(row=7, column=1, sticky="e", padx=6, pady=4)
+        self.out = tk.Label(body, text="", bg="#10151c", fg="#e5ebf2", font=("Consolas", 10), anchor="nw", justify="left", padx=10, pady=8)
+        self.out.grid(row=8, column=0, columnspan=2, sticky="we", padx=6, pady=(4, 6))
+        self.fx_busy = False
+        self.load_defaults()
+        if not fx or (st.cache("fx") or {}).get("date") != dt.date.today().isoformat():
+            self.refresh_fx()
+
+    def load_defaults(self):
+        """Wejście i stop dla spółki z wykresu."""
+        c = self.chart
+        entry, stop, src = c.size_defaults()
+        self.head.config(text=f"{c.ticker}")
+        self._set("entry", entry)
+        self._set("stop", stop)
+        self.note.config(text=src)
+        self.recalc()
+
+    def _set(self, key, v):
+        self.vars[key].set("" if v is None else f"{v:.2f}")
+
+    def refresh_fx(self):
+        """Kurs USD/PLN z yfinance w tle; przy braku sieci zostaje poprzedni (można wpisać ręcznie)."""
+        if self.fx_busy:
+            return
+        self.fx_busy = True
+        box = []
+
+        def work():
+            try:
+                box.append(prices.usdpln())
+            except Exception:
+                box.append(None)
+        threading.Thread(target=work, daemon=True).start()
+
+        def poll():
+            if not self.winfo_exists():
+                return
+            if not box:
+                self.after(100, poll)
+                return
+            self.fx_busy = False
+            if box[0]:
+                self.vars["fx"].set(f"{box[0]:.4f}")
+                self.chart.app.store.save_cache("fx", {"usdpln": box[0], "date": dt.date.today().isoformat()})
+            elif not self.vars["fx"].get():
+                self.note.config(text="Brak sieci — wpisz kurs USD/PLN ręcznie.")
+        self.after(100, poll)
+
+    def recalc(self):
+        v = {k: num(x.get()) for k, x in self.vars.items()}
+        st = self.chart.app.store
+        if v["capital"] and v["capital"] > 0 and v["risk"] is not None and v["risk"] >= 0:   # zapamiętujemy kapitał i ryzyko
+            if (st.settings.get("capital_pln"), st.settings.get("risk_pct")) != (v["capital"], v["risk"]):
+                st.settings["capital_pln"], st.settings["risk_pct"] = v["capital"], v["risk"]
+                st.save_settings()
+        r = L.position_size(v["capital"], v["fx"], v["entry"], v["stop"], v["risk"])
+        lines_ = size_lines(r, self.chart.ticker)
+        if r is None and v["entry"] and v["stop"] and v["stop"] >= v["entry"]:
+            lines_ = ["Stop jest na poziomie ceny wejścia albo nad nią — ryzyka nie da się policzyć (wpisz stop pod ceną wejścia)."]
+        self.out.config(text="\n".join(lines_))
+
+
 class ChartWindow(tk.Toplevel):
     def __init__(self, app, ticker):
         super().__init__(app.root)
@@ -985,6 +1120,9 @@ class ChartWindow(tk.Toplevel):
         self.zanger_btn.pack(side="right", padx=1, pady=2)
         self.pos_btn = tk.Button(top, text="📌 Pozycja", command=self.toggle_pos, relief="flat")
         self.pos_btn.pack(side="right", padx=2, pady=2)
+        self.size_btn = tk.Button(top, text="💰 Wielkość", command=self.open_size, relief="flat")
+        self.size_btn.pack(side="right", padx=2, pady=2)
+        self.size_dialog = None
         self.exit_btn = tk.Button(top, text="🚪 Wyjście: MACD", command=self.toggle_exit, relief="flat")
         self.exit_btn.pack(side="right", padx=2, pady=2)
         self.del_btn = tk.Button(top, text="🗑 linia", command=self.delete_selected, relief="flat")
@@ -1229,6 +1367,8 @@ class ChartWindow(tk.Toplevel):
         self.head.config(text=f"  ·  {company}" if company else "")
         self.tools()
         self.load_period()
+        if self.size_dialog and self.size_dialog.winfo_exists():
+            self.size_dialog.load_defaults()
 
     def step(self, d):
         t = self.app.step(self.ticker, d)
@@ -1630,6 +1770,30 @@ class ChartWindow(tk.Toplevel):
         from .app import GuideDialog
         GuideDialog(self.app)
 
+    def size_defaults(self):
+        """Wejście, stop i opis źródła do okna wielkości pozycji: z 📌 pozycji (stop = większy z −10 % i MACD od wejścia) albo cena i Green Line / −10 %."""
+        st = self.app.store
+        r = st.row(self.ticker) or {}
+        w = st.weekly(self.ticker) or {}
+        pos = st.alerts["pos"].get(self.ticker)
+        if pos and pos.get("price"):
+            plan = self.plan() or {}
+            stop = max((v for v in (plan.get("macd_stop"), plan.get("stop_init")) if v), default=None)
+            return pos["price"], stop, "📌 pozycja: wejście z chwili kliknięcia, stop = większy z −10 % i stopu MACD od wejścia."
+        last = next((x for x in reversed(w.get("c") or []) if x), None) or r.get("price")
+        glb = r.get("glb")
+        if last and glb and glb < last:
+            return last, glb, "Bez pozycji: wejście = ostatnia cena, stop = Green Line."
+        return last, last * 0.9 if last else None, "Bez pozycji: wejście = ostatnia cena, stop = −10 % (Green Line nie jest pod ceną)."
+
+    def open_size(self):
+        """💰 Wielkość: okno z kalkulatorem pozycji (kapitał w PLN, kurs USD/PLN, ryzyko, wejście, stop)."""
+        if self.size_dialog and self.size_dialog.winfo_exists():
+            self.size_dialog.load_defaults()
+            self.size_dialog.lift()
+            return
+        self.size_dialog = PositionSizeDialog(self)
+
     def toggle_pos(self):
         st = self.app.store
         r = st.row(self.ticker) or {}
@@ -1642,6 +1806,8 @@ class ChartWindow(tk.Toplevel):
         st.save_alerts()
         self.tools()
         self.app.refresh()
+        if self.size_dialog and self.size_dialog.winfo_exists():
+            self.size_dialog.load_defaults()
 
     def tools(self):
         self.mark_period()

@@ -755,3 +755,70 @@ def test_spy_regime_background_weekly_and_monthly():
     wk = A_chart.spy_regime(weekly["d"], weekly, "W")
     assert wk[9:] == [True] * 5 and wk[0] is None
     assert A_chart.spy_regime(["2025-05-14"], {"d": ["2025-01-06", "2025-03-03"], "c": [1, 2]}, "W") == [None]   # świeca SPY sprzed miesięcy to nie ta sama świeca
+
+
+def test_position_size_pln_to_usd():
+    from desktop import lines
+    r = lines.position_size(40000, 4.0, 100.0, 95.0, 1.0)           # 10 000 USD kapitału, ryzyko 100 USD, 5 USD na akcję
+    assert r["capital_usd"] == 10000 and r["risk_usd"] == 100 and r["shares"] == 20 and r["limited_by"] == "ryzyko"
+    assert r["value_usd"] == 2000 and r["value_pln"] == 8000 and r["loss_usd"] == 100 and r["loss_pln"] == 400 and abs(r["loss_pct"] - 1) < 1e-9
+    assert r["full_shares"] == 100 and r["full_loss_usd"] == 500 and abs(r["full_loss_pct"] - 5) < 1e-9
+    tight = lines.position_size(4000, 4.0, 100.0, 99.0, 5.0)         # 1000 USD: ryzyko 50 USD / 1 USD = 50 akcji, ale kapitał starcza na 10
+    assert tight["shares"] == 10 and tight["limited_by"] == "kapitał" and tight["value_usd"] == 1000
+    assert lines.position_size(1000, 4.0, 100.0, 100.0, 1.0) is None and lines.position_size(1000, 4.0, 100.0, 120.0, 1.0) is None
+    assert lines.position_size(1000, 0, 100.0, 90.0, 1.0) is None and lines.position_size("x", 4.0, 100.0, 90.0, 1.0) is None
+    assert A_chart.num("12 345,5") == 12345.5 and A_chart.num("abc") is None and A_chart.money(1234567.891, 2) == "1 234 567,89"
+
+
+def test_usdpln_from_yfinance(monkeypatch):
+    import pandas as pd
+    from desktop import prices
+    idx = pd.to_datetime(["2026-10-26", "2026-10-27", "2026-10-28"])
+    df = pd.DataFrame({"Open": [3.6, 3.7, 3.7], "High": [3.7, 3.7, 3.8], "Low": [3.6, 3.6, 3.7], "Close": [3.65, 3.7, 3.72], "Volume": [0, 0, 0]}, index=idx)
+    yf = type("YF", (), {"download": staticmethod(lambda *a, **k: df)})
+    monkeypatch.setattr(prices, "_yf", lambda: yf)
+    assert prices.usdpln() == 3.72
+    monkeypatch.setattr(prices, "_yf", lambda: type("YF", (), {"download": staticmethod(lambda *a, **k: pd.DataFrame())}))
+    assert prices.usdpln() is None
+
+
+def test_position_size_dialog_uses_position_stop_and_saves_capital(app, monkeypatch):
+    from desktop import prices
+    monkeypatch.setattr(prices, "usdpln", lambda: 4.0)
+    app.store.save_cache("fx", {"usdpln": 4.0, "date": __import__("datetime").date.today().isoformat()})
+    app.open_chart("AAA")
+    ch = app.chart
+    ch.update()
+    ch.open_size()
+    dlg = ch.size_dialog
+    app.root.update()
+    row = app.store.row("AAA")
+    entry0, stop0, src = ch.size_defaults()
+    assert "Bez pozycji" in src and stop0 < entry0                              # bez pozycji: cena i Green Line / −10 %
+    dlg.vars["capital"].set("40000")
+    dlg.vars["risk"].set("1")
+    dlg.vars["entry"].set("100")
+    dlg.vars["stop"].set("95")
+    assert "POZYCJA AAA: 20 akcji" in dlg.out.cget("text") and "8 000 PLN" in dlg.out.cget("text")   # 40 000 PLN / 4,0 = 10 000 USD
+    assert app.store.settings["capital_pln"] == 40000 and app.store.settings["risk_pct"] == 1
+    dlg.vars["stop"].set("100")
+    assert "ryzyka nie da się policzyć" in dlg.out.cget("text")
+    ch.toggle_pos()                                                              # pozycja: wejście z pozycji, stop = max(−10 %, MACD)
+    entry1, stop1, src1 = ch.size_defaults()
+    assert "pozycja" in src1 and entry1 == app.store.alerts["pos"]["AAA"]["price"] and stop1 >= entry1 * 0.9 - 1e-9
+    assert dlg.vars["entry"].get() == f"{entry1:.2f}" and row is not None
+    dlg.destroy()
+
+
+def test_glb_zone_grey_band_and_dashed_5_percent_line(app):
+    app.open_chart("AAA")
+    ch = app.chart
+    ch.update()
+    ch.redraw()
+    band = [i for i in ch.cv.find_all() if ch.cv.type(i) == "rectangle" and ch.cv.itemcget(i, "stipple") == "gray12" and ch.cv.itemcget(i, "fill") == A_chart.ZONE_C]
+    dashed = [i for i in ch.cv.find_all() if ch.cv.type(i) == "line" and ch.cv.itemcget(i, "fill") == A_chart.ZONE_C and ch.cv.itemcget(i, "dash")]
+    texts = [ch.cv.itemcget(i, "text") for i in ch.cv.find_all() if ch.cv.type(i) == "text"]
+    if app.store.row("AAA").get("glb"):
+        assert len(band) == 1 and len(dashed) == 1 and "+5 %" in texts
+        x1, y1, x2, y2 = ch.cv.coords(band[0])
+        assert y1 < ch.cv.coords(dashed[0])[1] < y2                               # przerywana 5 % leży w pasie 0–10 %

@@ -31,10 +31,14 @@ Heurystyka z backtestu (spółki z dzisiejszej listy, bez spółek wycofanych z 
   obrót w mln $). Gotowe zestawy, np. „Nad GLB + MACD dodatni”. Filtry zostają zapamiętane w ustawieniach.
 - **Wykres T (tygodniowy, 3 lata) i M (miesięczny, cała historia)** — prosty układ: **szare słupki OHLC**, **niebieska SMA 10** danego interwału, **zielona kropkowana
   Green Line** od świecy rekordu (z ceną nad świecą i na osi), **zielone tło tam, gdzie SPY jest nad własną SMA 10** tego samego interwału (na T tygodniową, na M miesięczną;
-  SPY miesięczny pobiera się w tle raz), wolumen (zielony / czerwony ze średnią 10) i MACD (12, 26, 9; histogram w 4 kolorach). ↑ / ↓ = następna / poprzednia spółka, ruch myszy = dane
+  SPY miesięczny pobiera się w tle raz), **szary, lekko przezroczysty pas 0–10 % nad Green Line** (strefa kupna) z **przerywaną linią na 5 %**, wolumen (zielony / czerwony ze średnią 10) i MACD (12, 26, 9; histogram w 4 kolorach). ↑ / ↓ = następna / poprzednia spółka, ruch myszy = dane
   świecy (w dymku także Earnings / Revenue Surprise, gdy świeca zawiera raport wyników; brak konsensusu przychodów = N/D). Dzienny (D) i widok Zangera (Z) mają własne, rozbudowane rysowanie.
   **Suwak** nad wykresem (minimapa całej historii): przeciągnij ramkę = przesuń okno, krawędzie = zmień długość, klik obok ramki = skok, kółko myszy / + − = zoom, ← / → = przesuń o 4 tygodnie.
   Przycisk **⟳ Sync** w oknie wykresu odświeża tylko aktualną spółkę (świece tygodniowe, fundamenty oraz dane dzienne i miesięczne) w tle, bez ponownego skanowania całego Finviz.
+- **💰 Wielkość** (przycisk na wykresie): kalkulator pozycji. Podajesz **kapitał w PLN** i **ryzyko w % kapitału**; kurs USD/PLN pobiera się z yfinance (`PLN=X`, można poprawić ręcznie),
+  kapitał liczy się w USD, a liczba akcji = ryzyko / (wejście − stop), nie więcej niż za cały kapitał (całe akcje). Przy **📌 pozycji** wejście i stop biorą się z pozycji
+  (stop = większy z −10 % i stopu MACD od wejścia), bez pozycji: ostatnia cena i Green Line (albo −10 %); wejście i stop można edytować. Okno pokazuje wartość pozycji w USD i PLN,
+  stratę przy stopie oraz wariant „cały kapitał”. Kapitał i ryzyko są zapamiętywane.
 - **Linie trendu**: na wykresie tygodniowym i dziennym przeciągnij myszą po panelu ceny, aby narysować linię (punkty przyciągają się do High / Low świecy).
   Chwyć koniec, aby zmienić punkt; chwyć środek, aby przesunąć. Prawy klik na linii otwiera menu **Dodaj/wyłącz alert linii** lub **Usuń linię**; Delete usuwa zaznaczoną linię.
   **Miarka**: przytrzymaj prawy przycisk myszy na panelu ceny (poza linią) i przesuwaj — od punktu kliknięcia widać zmianę ceny w % i liczbę tygodni (sesji na D, miesięcy na M); puszczenie przycisku chowa miarkę.

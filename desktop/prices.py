@@ -189,6 +189,16 @@ def monthly_ohlc(ticker):
     return s if len(s["d"]) >= 2 else None
 
 
+def usdpln():
+    """Kurs USD/PLN (ile złotych za 1 dolara) = ostatnie zamknięcie PLN=X z yfinance -> liczba albo None."""
+    df = _yf().download(["PLN=X"], period="10d", interval="1d", auto_adjust=AUTO_ADJUST, group_by="ticker", progress=False, threads=False)
+    f = _frames(df, ["PLN=X"]).get("PLN=X")
+    if f is None:
+        return None
+    closes = [x for x in _series(f)["c"] if x]
+    return closes[-1] if closes else None
+
+
 def daily(tickers, log=print, period="3mo"):
     """Świece dzienne wielu spółek naraz (wolumen relatywny dzienny przy Sync) -> {ticker: {d, o, h, l, c, v}}."""
     out = {}

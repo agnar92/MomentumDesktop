@@ -941,6 +941,11 @@ def money(v, d=0):
     return f"{v:,.{d}f}".replace(",", " ").replace(".", ",")
 
 
+def shares_text(v):
+    """Liczba akcji (ułamkowych): do 4 miejsc po przecinku, bez zbędnych zer — 20 / 12,5 / 0,3333."""
+    return f"{v:.4f}".rstrip("0").rstrip(".").replace(".", ",")
+
+
 def size_lines(r, ticker=""):
     """Wynik `lines.position_size` -> teksty okna „Wielkość pozycji" (PLN i USD)."""
     if r is None:
@@ -949,12 +954,12 @@ def size_lines(r, ticker=""):
     out = [f"Kapitał {money(r['capital_usd'])} USD · ryzyko {money(r['risk_pln'])} PLN ({money(r['risk_usd'])} USD)",
            f"Strata na akcję przy stopie: {money(r['per_share'], 2)} USD", ""]
     if shares:
-        out += [f"POZYCJA {ticker}: {shares} akcji (ogranicza: {r['limited_by']})",
+        out += [f"POZYCJA {ticker}: {shares_text(shares)} akcji (ogranicza: {r['limited_by']})",
                 f"Wartość: {money(r['value_usd'])} USD = {money(r['value_pln'])} PLN ({money(r['value_pct'], 1)} % kapitału)",
                 f"Strata przy stopie: {money(r['loss_usd'])} USD = {money(r['loss_pln'])} PLN ({money(r['loss_pct'], 2)} % kapitału)"]
     else:
-        out += ["POZYCJA: 0 akcji — ryzyko albo kapitał nie wystarczają na jedną akcję"]
-    out += ["", f"Cały kapitał: {r['full_shares']} akcji → strata przy stopie {money(r['full_loss_usd'])} USD = {money(r['full_loss_pln'])} PLN "
+        out += ["POZYCJA: 0 akcji — kapitał albo ryzyko są za małe"]
+    out += ["", f"Cały kapitał: {shares_text(r['full_shares'])} akcji → strata przy stopie {money(r['full_loss_usd'])} USD = {money(r['full_loss_pln'])} PLN "
                 f"({money(r['full_loss_pct'], 2)} % kapitału)"]
     return out
 
@@ -1975,7 +1980,7 @@ class ChartWindow(tk.Toplevel):
         txt = f"STOP {fmt(s)}" + (f" · {(s / entry - 1) * 100:+.1f} %" if entry else "")
         cfg, fx = self.app.store.settings, self._fx_rate()
         r = L.position_size(cfg.get("capital_pln"), fx, entry, s, cfg.get("risk_pct", 1.0)) if fx and entry and cfg.get("capital_pln") else None
-        return txt + (f" · {r['shares']} akcji ({money(r['value_pln'])} PLN)" if r and r["shares"] else "")
+        return txt + (f" · {shares_text(r['shares'])} akcji ({money(r['value_pln'])} PLN)" if r and r["shares"] else "")
 
     def near_stop(self, x, y):
         sy = (self.geom or {}).get("stop_y")

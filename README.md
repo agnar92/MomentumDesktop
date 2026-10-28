@@ -39,6 +39,9 @@ Heurystyka z backtestu (spółki z dzisiejszej listy, bez spółek wycofanych z 
   kapitał liczy się w USD, a liczba akcji = ryzyko / (wejście − stop), nie więcej niż za cały kapitał (całe akcje). Przy **📌 pozycji** wejście i stop biorą się z pozycji
   (stop = większy z −10 % i stopu MACD od wejścia), bez pozycji: ostatnia cena i Green Line (albo −10 %); wejście i stop można edytować. Okno pokazuje wartość pozycji w USD i PLN,
   stratę przy stopie oraz wariant „cały kapitał”. Kapitał i ryzyko są zapamiętywane.
+- **🛑 Ręczny stop** (przycisk **Stop** na wykresie): czerwona przerywana linia, którą **przeciągasz myszą w pionie** (przyciąga się do High / Low świecy pod kursorem — wygodne przy stopie
+  pod dołkiem wzorca); **dwuklik** na panelu ceny = stop w tym miejscu, prawy przycisk na linii = usuń, przycisk **Stop ✕** też usuwa. Napis na linii: cena, % od wejścia i (po podaniu kapitału
+  w 💰 Wielkość) liczba akcji z wartością w PLN. Jeden poziom na spółkę, widoczny na T / M / D / Z (zapis w `settings.json`); okno 💰 Wielkość bierze go jako stop i zmienia go, gdy wpiszesz inny.
 - **Linie trendu**: na wykresie tygodniowym i dziennym przeciągnij myszą po panelu ceny, aby narysować linię (punkty przyciągają się do High / Low świecy).
   Chwyć koniec, aby zmienić punkt; chwyć środek, aby przesunąć. Prawy klik na linii otwiera menu **Dodaj/wyłącz alert linii** lub **Usuń linię**; Delete usuwa zaznaczoną linię.
   **Miarka**: przytrzymaj prawy przycisk myszy na panelu ceny (poza linią) i przesuwaj — od punktu kliknięcia widać zmianę ceny w % i liczbę tygodni (sesji na D, miesięcy na M); puszczenie przycisku chowa miarkę.

@@ -894,3 +894,17 @@ def test_weekly_lines_shown_on_monthly_and_zanger_has_spy_background(app):
     bg = [i for i in ch.cv.find_all() if ch.cv.type(i) == "rectangle" and ch.cv.itemcget(i, "fill") == A_chart.REGIME_BG]
     regime = A_chart.spy_regime(w["d"], spy, "W")
     assert bool(bg) == any(regime)                                          # tło SPY > SMA 10 także w widoku Z
+
+
+def test_sma_line_hidden_outside_price_scale(app):
+    app.open_chart("AAA")
+    ch = app.chart
+    ch.update()
+    ch.save_view(z=6.0, s=-3.0)   # skala daleko pod ceną: SMA poza widokiem
+    ch.redraw()
+    sma = [i for i in ch.cv.find_all() if ch.cv.type(i) == "line" and ch.cv.itemcget(i, "fill") == A_chart.SMA_C and float(ch.cv.itemcget(i, "width")) == 2.4]
+    assert not sma                                            # nie ma linii przyklejonej do krawędzi panelu
+    assert A_chart.clip_seg(0, -10, 10, 10, (0, 0, 10, 10)) == (5.0, 0.0, 10.0, 10.0) and A_chart.clip_seg(0, -5, 10, -1, (0, 0, 10, 10)) is None
+    ch.reset_price()
+    ch.redraw()
+    assert [i for i in ch.cv.find_all() if ch.cv.type(i) == "line" and ch.cv.itemcget(i, "fill") == A_chart.SMA_C and float(ch.cv.itemcget(i, "width")) == 2.4]

@@ -8,7 +8,7 @@ from tkinter import messagebox, ttk
 import datetime as dt
 import math
 
-from . import calc, finviz, lines, prices, sec, sync
+from . import calc, finviz, gist, lines, prices, sec, sync
 from .chart import ChartWindow
 from .store import DEFAULT_SCANNERS, Store, normalize_scanners
 from .theme import BG, FG, PANEL, apply_dark, autowrap, setup_style
@@ -145,6 +145,7 @@ class App:
         self.alert_btn.pack(side="left", padx=4)
         tk.Button(bar, text="📌 Pozycje", command=lambda: PositionsDialog(self), relief="flat").pack(side="left", padx=4)
         tk.Button(bar, text="Kolumny…", command=lambda: ColumnsDialog(self), relief="flat").pack(side="left", padx=4)
+        tk.Button(bar, text="☁ Web (gist)…", command=lambda: GistDialog(self), relief="flat").pack(side="left", padx=4)
         tk.Label(bar, text="Ctrl+Space — dowolny symbol (np. SPY, NVDA)", bg=PANEL, fg="#8b95a3").pack(side="left", padx=12)
         frame = tk.Frame(self.root, bg=BG)
         frame.pack(fill="both", expand=True)
@@ -506,8 +507,12 @@ class App:
                     self.sync_btn.config(state="normal")
                     self.refresh()
                     self.check_alerts()
+                    if (self.store.settings.get("gist") or {}).get("auto") and (self.store.settings.get("gist") or {}).get("token"):
+                        self.gist_send()   # opcja „wysyłaj po każdym Sync”
                     if self.chart is not None and self.chart.winfo_exists():
                         self.chart.set_ticker(self.chart.ticker)
+                elif kind == "gist_log":
+                    self.status.config(text=f"  ☁ {val}")
                 elif kind == "error":
                     self.pframe.pack_forget()
                     self.sync_btn.config(state="normal")
@@ -518,6 +523,41 @@ class App:
 
     def open_settings(self):
         SettingsDialog(self)
+
+    def gist_send(self, done=None):
+        """Wysyła listę i serie do tajnego gista (strona webowa czyta go po ID); w tle, wynik w pasku statusu i w `done(wynik albo błąd)`."""
+        cfg = self.store.settings.setdefault("gist", {})
+        try:
+            files, info = gist.build_files(self.store)
+        except Exception as e:
+            self.status.config(text=f"  ❌ Gist: {e}")
+            if done:
+                done(None, str(e))
+            return
+        token, gist_id, box = cfg.get("token", ""), cfg.get("id") or None, []
+        self.status.config(text=f"  ☁ Gist: wysyłam {info['tickers']} spółek ({info['bytes'] / 1e6:.1f} MB)…")
+
+        def work():
+            try:
+                box.append((gist.upload(files, token, gist_id, log=lambda m: self.q.put(("gist_log", m))), None))
+            except Exception as e:
+                box.append((None, str(e)))
+        threading.Thread(target=work, daemon=True).start()
+
+        def poll():
+            if not box:
+                self.root.after(200, poll)
+                return
+            res, err = box[0]
+            if res:
+                cfg["id"] = res["id"]
+                self.store.save_settings()
+                self.status.config(text=f"  ✓ Gist wysłany ({info['tickers']} spółek) — ID {res['id']}")
+            else:
+                self.status.config(text=f"  ❌ Gist: {err}")
+            if done:
+                done(res, err)
+        self.root.after(200, poll)
 
     def redraw_chart(self):
         """Odświeża otwarty wykres (np. linia ceny wejścia po edycji pozycji)."""
@@ -995,6 +1035,64 @@ class PositionsDialog(tk.Toplevel):
         self.app.refresh()
         self.app.redraw_chart()
         self.fill()
+
+
+class GistDialog(tk.Toplevel):
+    """☁ Web (gist): wysyła listę i serie tygodniowe / miesięczne do TAJNEGO gista GitHub, z którego czyta strona webowa (agnar92/momentum) —
+    działa też, gdy Weekly Refresh na GitHubie jeszcze nie przeliczył danych. Token GitHub z uprawnieniem „gist” zapisujemy w settings.json."""
+
+    def __init__(self, app):
+        super().__init__(app.root)
+        self.app = app
+        self.title("Wyślij dane do strony webowej (gist)")
+        self.configure(bg=PANEL)
+        apply_dark(self)
+        cfg = app.store.settings.get("gist") or {}
+        tk.Label(self, text="Lista, serie tygodniowe i miesięczne z desktopa trafiają do tajnego gista; strona webowa (przycisk ☁ Gist) bierze nowsze dane: z gista albo z repo.",
+                 bg=PANEL, fg="#a1adbb", wraplength=470, justify="left").pack(anchor="w", padx=12, pady=(10, 6))
+        grid = tk.Frame(self, bg=PANEL)
+        grid.pack(fill="x", padx=12)
+        self.token, self.gid, self.auto = tk.StringVar(value=cfg.get("token", "")), tk.StringVar(value=cfg.get("id", "")), tk.BooleanVar(value=bool(cfg.get("auto")))
+        for r, (lab, var, show) in enumerate((("Token GitHub (gist)", self.token, "•"), ("ID gista (puste = utwórz nowy)", self.gid, ""))):
+            tk.Label(grid, text=lab, bg=PANEL).grid(row=r, column=0, sticky="w", pady=3)
+            tk.Entry(grid, textvariable=var, show=show, width=44, relief="flat").grid(row=r, column=1, padx=6, pady=3)
+        tk.Checkbutton(self, text="wysyłaj automatycznie po każdym Sync", variable=self.auto, bg=PANEL, selectcolor=BG).pack(anchor="w", padx=12, pady=4)
+        self.info = tk.Label(self, text="", bg=PANEL, fg="#a1adbb", wraplength=470, justify="left")
+        self.info.pack(anchor="w", padx=12, pady=2)
+        row = tk.Frame(self, bg=PANEL)
+        row.pack(fill="x", padx=12, pady=10)
+        self.send_btn = tk.Button(row, text="☁ Wyślij teraz", command=self.send, relief="flat")
+        self.send_btn.pack(side="left")
+        tk.Button(row, text="Zamknij", command=self.destroy, relief="flat").pack(side="right")
+        self.bind("<Escape>", lambda e: self.destroy())
+        try:
+            files, meta = gist.build_files(app.store)
+            self.info.config(text=f"Do wysłania: {meta['tickers']} spółek, {meta['bytes'] / 1e6:.1f} MB w {len(files)} plikach.")
+        except Exception as e:
+            self.info.config(text=f"Brak danych do wysłania: {e}")
+
+    def save(self):
+        cfg = self.app.store.settings.setdefault("gist", {})
+        cfg.update(token=self.token.get().strip(), id=self.gid.get().strip(), auto=bool(self.auto.get()))
+        self.app.store.save_settings()
+
+    def send(self):
+        self.save()
+        self.send_btn.config(state="disabled")
+        self.info.config(text="Wysyłam…")
+
+        def done(res, err):
+            if not self.winfo_exists():
+                return
+            self.send_btn.config(state="normal")
+            if res:
+                self.gid.set(res["id"])
+                self.info.config(text=f"✓ Wysłano. ID gista: {res['id']} — wpisz je na stronie webowej (przycisk ☁ Gist). Adres: {res['url']}")
+                self.clipboard_clear()
+                self.clipboard_append(res["id"])
+            else:
+                self.info.config(text=f"❌ {err}")
+        self.app.gist_send(done)
 
 
 class ColumnsDialog(tk.Toplevel):

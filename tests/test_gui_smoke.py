@@ -953,6 +953,31 @@ def test_full_weekly_history_is_loaded_on_open_cached_and_joined(app, monkeypatc
     assert ch.n_show == 156                                                                 # domyślne okno nadal 3 lata
 
 
+def test_gist_dialog_saves_settings_and_sends_in_background(app, monkeypatch):
+    from desktop import app as A, gist
+    sent = {}
+
+    def fake_upload(files, token, gist_id, log=print):
+        sent.update(files=files, token=token, gist_id=gist_id)
+        return {"id": "g123", "url": "https://gist.github.com/g123"}
+    monkeypatch.setattr(gist, "upload", fake_upload)
+    d = A.GistDialog(app)
+    d.update()
+    assert "spółek" in d.info.cget("text")                       # podsumowanie tego, co zostanie wysłane
+    d.token.set("tok")
+    d.auto.set(True)
+    d.send()
+    for _ in range(40):
+        app.root.update()
+        if not str(d.send_btn.cget("state")) == "disabled":
+            break
+        __import__("time").sleep(0.05)
+    cfg = app.store.settings["gist"]
+    assert cfg["token"] == "tok" and cfg["auto"] is True and cfg["id"] == "g123"      # ID zapamiętane po utworzeniu gista
+    assert sent["token"] == "tok" and gist.MANIFEST in sent["files"]
+    assert "g123" in d.info.cget("text")
+
+
 def test_rwb_dokup_arrow_marks_price_entering_the_gap(app):
     import datetime as dt
     n = 170

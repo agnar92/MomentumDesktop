@@ -1069,6 +1069,10 @@ def test_view_switch_between_list_and_watchlist_with_added_tickers(app, monkeypa
     assert "Watchlista" in app.status.cget("text") and "2 dodanych" in app.status.cget("text")
     app.open_list(app.store.settings["scanner"])
     assert app.store.settings["main_view"]["mode"] == "list" and set(app.tree.get_children()) == {"AAA", "BBB"}
+    assert "Lista (skaner)" in app.status.cget("text") and "Watchlista" not in app.status.cget("text")
+    app.store.add_watchlist("Pusta")
+    app.open_watchlist("Pusta")                                                             # pusta watchlista nie pokazuje skanera i mówi, co zrobić
+    assert not app.tree.get_children() and "pusta" in app.status.cget("text") and "Skaner" not in app.status.cget("text")
 
 
 def test_view_dialog_double_click_opens_list_or_watchlist(app, monkeypatch):

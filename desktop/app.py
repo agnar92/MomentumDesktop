@@ -195,6 +195,11 @@ class App:
         self.tree.bind("<Double-1>", lambda e: self.open_chart(self.current()))
         self.tree.bind("<Return>", lambda e: self.open_chart(self.current()))
         self.tree.bind("<<TreeviewSelect>>", lambda e: self._follow())
+        self.view_dialog = None   # otwarte małe okno list: cel przeciągania spółek z tabeli na watchlistę
+        self._drag = None
+        self.tree.bind("<ButtonPress-1>", self._drag_press, add="+")
+        self.tree.bind("<B1-Motion>", self._drag_move)
+        self.tree.bind("<ButtonRelease-1>", self._drag_release, add="+")
         self.status = autowrap(tk.Label(self.root, text="", bg=PANEL, padx=8))
         self.status.pack(fill="x", side="bottom")
         # pasek postępu Sync (na samym dole, widoczny tylko w trakcie)
@@ -230,6 +235,28 @@ class App:
         self.store.set_view(VIEW_WATCH, name)
         self.fill_views()
         self.refresh()
+
+    # --- przeciągnięcie spółki z tabeli na watchlistę w małym oknie
+    def _drag_press(self, e):
+        iid = self.tree.identify_row(e.y)
+        self._drag = {"t": iid, "x": e.x_root, "y": e.y_root, "on": False} if iid else None
+
+    def _drag_move(self, e):
+        d = self._drag
+        if not d or not (self.view_dialog and self.view_dialog.winfo_exists()):
+            return None   # bez otwartego okna list zwykłe zaznaczanie wierszy
+        if not d["on"]:
+            if abs(e.x_root - d["x"]) + abs(e.y_root - d["y"]) < 8:
+                return "break"
+            d["on"] = True
+        self.view_dialog.drag_label(f"＋ {d['t']}", e.x_root, e.y_root)
+        return "break"
+
+    def _drag_release(self, e):
+        d, self._drag = self._drag, None
+        if d and d["on"] and self.view_dialog and self.view_dialog.winfo_exists():
+            self.view_dialog.drag_label(None)
+            self.view_dialog.receive(d["t"], e.x_root, e.y_root)
 
     def ask_view(self):
         """Małe okno wyboru przy starcie: dwuklik na liście albo watchliście."""
@@ -1456,9 +1483,12 @@ class ViewDialog(tk.Toplevel):
         apply_dark(self)
         self.transient(app.root)
         self.geometry("520x640")
+        app.view_dialog = self
+        self._label = None
+        self._src = None
         self.lists = self._section("Listy (skanery Finviz)  —  dwuklik = otwórz")
         self._buttons(("＋ Dodaj listę / skaner", self.add_list), ("✎ Edytuj filtr / ustawienia…", self.edit_lists), ("🗑 Usuń listę", self.delete_list))
-        self.watch = self._section("Watchlisty  —  dwuklik = otwórz")
+        self.watch = self._section("Watchlisty  —  dwuklik = otwórz;  upuść tu spółkę z tabeli albo ticker z listy poniżej")
         self._buttons(("＋ Dodaj watchlistę", self.add_watchlist), ("✎ Zmień nazwę…", self.rename), ("🗑 Usuń watchlistę", self.delete_watchlist))
         self.head = tk.Label(self, text="", bg=PANEL, fg=FG, anchor="w")
         self.head.pack(fill="x", padx=14, pady=(10, 2))
@@ -1469,7 +1499,8 @@ class ViewDialog(tk.Toplevel):
         e.pack(side="left", fill="x", expand=True)
         e.bind("<Return>", lambda ev: self.add_tickers())
         tk.Button(add, text="＋ Dodaj tickery", command=self.add_tickers, relief="flat").pack(side="left", padx=(6, 0))
-        tk.Label(self, text="np. NVDA albo NVDA, AMD MSFT — kilka naraz", bg=PANEL, fg="#8b95a3", anchor="w").pack(fill="x", padx=14)
+        tk.Label(self, text="Wpisz ticker + Enter (np. NVDA albo NVDA, AMD MSFT) albo przeciągnij spółkę z głównej tabeli na tę listę lub na watchlistę; ticker z tej listy przeciągnięty na inną watchlistę = przenieś (Ctrl = kopiuj)",
+                 bg=PANEL, fg="#8b95a3", anchor="w", wraplength=480, justify="left").pack(fill="x", padx=14)
         self.tickers = tk.Listbox(self, height=5, exportselection=False, selectmode="extended", bg="#151a21", fg=FG, relief="flat", selectbackground="#2a3a55", activestyle="none")
         self.tickers.pack(fill="both", expand=True, padx=14, pady=(4, 0))
         self._buttons(("🗑 Usuń zaznaczone tickery", self.remove_tickers))
@@ -1483,9 +1514,17 @@ class ViewDialog(tk.Toplevel):
         self.watch.bind("<Double-1>", lambda e: self.open_watch())
         self.watch.bind("<<ListboxSelect>>", lambda e: self.fill_watch())
         self.sources.bind("<<ListboxSelect>>", lambda e: self.toggle_sources())
+        self.tickers.bind("<ButtonPress-1>", self._src_press, add="+")
+        self.tickers.bind("<ButtonRelease-1>", self._src_release, add="+")
         self.bind("<Escape>", lambda e: self.destroy())
         self.fill()
-        self.after(60, self._grab)
+        self.after(60, self.focus_set)   # okno nie blokuje głównego: spółki da się przeciągać z tabeli
+
+    def destroy(self):
+        if self.app.view_dialog is self:
+            self.app.view_dialog = None
+        self.drag_label(None)
+        super().destroy()
 
     def _section(self, title):
         tk.Label(self, text=title, bg=PANEL, fg="#8b95a3", anchor="w").pack(fill="x", padx=14, pady=(10, 2))
@@ -1498,13 +1537,6 @@ class ViewDialog(tk.Toplevel):
         row.pack(fill="x", padx=14, pady=(3, 0))
         for text, cmd in items:
             tk.Button(row, text=text, command=cmd, relief="flat").pack(side="left", padx=(0, 6))
-
-    def _grab(self):
-        try:
-            self.grab_set()
-            self.focus_set()
-        except tk.TclError:
-            pass   # okno jeszcze niewidoczne (np. test bez ekranu)
 
     def fill(self, select_watch=None):
         v = self.st.settings["main_view"]
@@ -1545,6 +1577,53 @@ class ViewDialog(tk.Toplevel):
     def picked(self, box):
         s = box.curselection()
         return box.get(s[0]) if s else None
+
+    # --- przeciąganie: z tabeli głównego okna (receive) i z listy tickerów na inną watchlistę
+    def drag_label(self, text, x=0, y=0):
+        if text is None:
+            if self._label is not None:
+                self._label.destroy()
+                self._label = None
+            return
+        if self._label is None:
+            self._label = tk.Toplevel(self)
+            self._label.overrideredirect(True)
+            tk.Label(self._label, text=text, bg="#2a3a55", fg=FG, padx=6, pady=2).pack()
+        self._label.geometry(f"+{x + 12}+{y + 8}")
+
+    def _watch_at(self, y_root):
+        """Nazwa watchlisty pod wskaźnikiem (pozycja w oknie listy watchlist) albo None."""
+        i = self.watch.nearest(y_root - self.watch.winfo_rooty())
+        return self.watch.get(i) if 0 <= i < self.watch.size() else None
+
+    def receive(self, ticker, x_root, y_root):
+        """Upuszczenie spółki z głównej tabeli: na watchlistę pod wskaźnikiem albo na listę tickerów aktualnej watchlisty."""
+        over = self.winfo_containing(x_root, y_root)
+        name = self._watch_at(y_root) if over is self.watch else (self.picked(self.watch) if over is self.tickers else None)
+        if name:
+            self._drop(ticker, name)
+
+    def _drop(self, ticker, name, source=None):
+        added = self.app.add_tickers_to(name, ticker)
+        if source:
+            self.st.remove_from_watchlist(source, [ticker])
+            self.app.refresh()
+        self.fill(select_watch=name)
+        self.head.config(text=f"«{name}»: " + (f"{'przeniesiono' if source else 'dodano'} {ticker}" if added else f"{ticker} już tu jest"))
+
+    def _src_press(self, e):
+        i = self.tickers.nearest(e.y)
+        self._src = self.tickers.get(i).split()[0] if 0 <= i < self.tickers.size() else None
+
+    def _src_release(self, e):
+        t, self._src = self._src, None
+        src = self.picked(self.watch)
+        if not t or not src:
+            return
+        over = self.winfo_containing(e.x_root, e.y_root)
+        name = self._watch_at(e.y_root) if over is self.watch else None
+        if name and name != src:
+            self._drop(t, name, source=None if e.state & 0x4 else src)   # Ctrl = kopiuj, bez Ctrl = przenieś
 
     # --- otwieranie w głównym oknie
     def open_list(self):

@@ -1159,6 +1159,52 @@ def test_view_dialog_manages_watchlist_content_and_lists(app, monkeypatch):
     dlg.destroy()
 
 
+def test_drag_ticker_from_table_and_between_watchlists(app, monkeypatch):
+    from types import SimpleNamespace as NS
+    from desktop import app as A
+    st = app.store
+    monkeypatch.setattr(app, "fetch_symbol_quiet", lambda sym: None)
+    first = st.watchlists()[0]["name"]
+    st.add_watchlist("Energia")
+    app.root.update()
+    dlg = A.ViewDialog(app)
+    dlg.update()
+    assert app.view_dialog is dlg                                                           # okno nie blokuje głównego (cel przeciągania)
+    lx, ly = dlg.watch.winfo_rootx() + 20, dlg.watch.winfo_rooty()
+    row_h = dlg.watch.bbox(0)[3] if dlg.watch.bbox(0) else 16
+    # przeciągnięcie wiersza z tabeli (zdarzenia myszy) na drugą watchlistę w oknie
+    iid = app.tree.get_children()[0]
+    y_row = int(app.tree.bbox(iid)[1] + 3)
+    app._drag_press(NS(y=y_row, x_root=500, y_root=400))
+    assert app._drag_move(NS(x_root=502, y_root=401)) == "break"                            # mały ruch nie zaczyna przeciągania
+    assert not app._drag["on"]
+    assert app._drag_move(NS(x_root=lx, y_root=ly + row_h + 6)) == "break" and app._drag["on"] and dlg._label is not None
+    app._drag_release(NS(x_root=lx, y_root=ly + row_h + 6))
+    assert st.watchlist("Energia")["tickers"] == [iid] and st.watchlist(first)["tickers"] == [] and dlg._label is None
+    assert dlg.picked(dlg.watch) == "Energia" and dlg.tickers.size() == 1
+    # upuszczenie na listę tickerów = do wybranej watchlisty
+    other = app.tree.get_children()[1]
+    dlg.tickers.update()
+    dlg.receive(other, dlg.tickers.winfo_rootx() + 10, dlg.tickers.winfo_rooty() + 10)
+    assert st.watchlist("Energia")["tickers"] == [iid, other]
+    # ticker z listy przeciągnięty na inną watchlistę: przenieś, z Ctrl kopiuj
+    dlg.tickers.update()
+    dlg._src_press(NS(y=3))
+    dlg._src_release(NS(x_root=lx, y_root=ly + 3, state=0))
+    assert st.watchlist(first)["tickers"] == [iid] and st.watchlist("Energia")["tickers"] == [other]
+    dlg.watch.selection_clear(0, "end")
+    dlg.watch.selection_set(0)
+    dlg.fill_watch()
+    dlg._src_press(NS(y=3))
+    dlg._src_release(NS(x_root=lx, y_root=ly + row_h + 6, state=0x4))
+    assert st.watchlist(first)["tickers"] == [iid] and iid in st.watchlist("Energia")["tickers"]   # Ctrl: skopiowano
+    # bez otwartego okna zwykłe zaznaczanie wierszy
+    dlg.destroy()
+    assert app.view_dialog is None
+    app._drag_press(NS(y=y_row, x_root=500, y_root=400))
+    assert app._drag_move(NS(x_root=600, y_root=500)) is None
+
+
 def test_run_asks_for_view_at_start_only_when_enabled(app, monkeypatch):
     from desktop import app as A
     monkeypatch.setattr(app.root, "mainloop", lambda: None)

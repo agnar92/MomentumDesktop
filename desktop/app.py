@@ -1569,8 +1569,12 @@ class WatchlistsDialog(tk.Toplevel):
         self.head = tk.Label(right, text="", bg=PANEL, fg=FG, anchor="w")
         self.head.pack(fill="x")
         self.scans = tk.BooleanVar(value=True)
-        tk.Checkbutton(right, text="Dołącz wyniki skanera (skany) do tej watchlisty", variable=self.scans, command=self.toggle_scans, bg=PANEL, selectcolor=BG,
+        tk.Checkbutton(right, text="Dołącz listę aktualnie wybranego skanera", variable=self.scans, command=self.toggle_scans, bg=PANEL, selectcolor=BG,
                        activebackground=PANEL).pack(anchor="w")
+        tk.Label(right, text="Dołącz listy skanerów (zaznacz dowolnie wiele):", bg=PANEL, fg="#8b95a3", anchor="w").pack(fill="x")
+        self.sources = tk.Listbox(right, exportselection=False, selectmode="multiple", height=4, bg="#151a21", fg=FG, relief="flat", selectbackground="#2a3a55")
+        self.sources.pack(fill="x", pady=(0, 4))
+        self.sources.bind("<<ListboxSelect>>", lambda e: self.toggle_sources())
         add = tk.Frame(right, bg=PANEL)
         add.pack(fill="x", pady=4)
         self.entry = tk.StringVar()
@@ -1613,7 +1617,18 @@ class WatchlistsDialog(tk.Toplevel):
             r = self.st.row(t)
             self.tickers.insert("end", t if r and r.get("price") is not None else f"{t}   (brak danych — ⟳ Sync)")
         self.scans.set(w.get("scans", True))
+        self.sources.delete(0, "end")
+        for i, sc in enumerate(x["name"] for x in self.st.settings["scanners"]):
+            self.sources.insert("end", sc)
+            if sc in w.get("sources", []):
+                self.sources.selection_set(i)
         self.head.config(text=f"«{n}» · {len(w['tickers'])} dodanych tickerów")
+
+    def toggle_sources(self):
+        n = self.name()
+        if n:
+            self.st.set_watchlist_sources(n, [self.sources.get(i) for i in self.sources.curselection()])
+            self.app.refresh()
 
     def toggle_scans(self):
         n = self.name()

@@ -71,7 +71,7 @@ def split_tickers(text):
 
 
 def normalize_watchlists(settings):
-    """settings["watchlists"] = [{"name", "tickers", "scans"}]: unikalne nazwy (bez względu na wielkość liter), unikalne tickery, min. jedna watchlista;
+    """settings["watchlists"] = [{"name", "tickers", "scans", "sources"}] (sources = nazwy skanerów, których listy wchodzą do watchlisty — dowolnie wiele): unikalne nazwy (bez względu na wielkość liter), unikalne tickery, min. jedna watchlista;
     settings["main_view"] = {"mode": list/watch, "watchlist": nazwa, "ask": czy pytać o widok przy starcie}."""
     out, seen = [], set()
     for x in settings.get("watchlists") or []:
@@ -86,9 +86,14 @@ def normalize_watchlists(settings):
             t = norm_ticker(t)
             if t and t not in tickers:
                 tickers.append(t)
-        out.append({"name": name, "tickers": tickers, "scans": bool(x.get("scans", True))})
+        names = {sc["name"] for sc in settings.get("scanners") or []}
+        sources = []
+        for n in x.get("sources") or []:
+            if n in names and n not in sources:
+                sources.append(n)
+        out.append({"name": name, "tickers": tickers, "scans": bool(x.get("scans", True)), "sources": sources})
     if not out:
-        out = [{"name": DEFAULT_WATCHLIST, "tickers": [], "scans": True}]
+        out = [{"name": DEFAULT_WATCHLIST, "tickers": [], "scans": True, "sources": []}]
     settings["watchlists"] = out
     v = settings.get("main_view") if isinstance(settings.get("main_view"), dict) else {}
     mode = v.get("mode") if v.get("mode") in (VIEW_LIST, VIEW_WATCH) else VIEW_LIST
@@ -205,7 +210,7 @@ class Store:
         name = str(name or "").strip()
         if not name or any(w["name"].lower() == name.lower() for w in self.settings["watchlists"]):
             return None
-        self.settings["watchlists"].append({"name": name, "tickers": [], "scans": bool(scans)})
+        self.settings["watchlists"].append({"name": name, "tickers": [], "scans": bool(scans), "sources": []})
         self.save_settings()
         return name
 
@@ -264,6 +269,14 @@ class Store:
             w["scans"] = bool(scans)
             self.save_settings()
 
+    def set_watchlist_sources(self, name, sources):
+        """Listy których skanerów wchodzą do watchlisty (oprócz aktualnie wybranego, gdy scans=True)."""
+        w = self.watchlist(name)
+        if w is not None:
+            names = {sc["name"] for sc in self.settings["scanners"]}
+            w["sources"] = [n for n in dict.fromkeys(sources) if n in names]
+            self.save_settings()
+
     def watch_tickers(self):
         """Wszystkie tickery ze wszystkich watchlist (Sync odświeża je także poza listą skanera)."""
         return {t for w in self.settings["watchlists"] for t in w["tickers"]}
@@ -286,6 +299,12 @@ class Store:
             return self.rows, set()
         base = list(self.rows) if w.get("scans", True) else []
         have = {r["ticker"] for r in base}
+        for name in w.get("sources", []):
+            rows = self.rows if name == self.settings["scanner"] else read(self.scan_path(name), {}).get("rows", [])
+            for r in rows:
+                if r["ticker"] not in have:
+                    have.add(r["ticker"])
+                    base.append(r)
         for t in w["tickers"]:
             if t not in have:
                 have.add(t)

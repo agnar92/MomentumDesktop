@@ -201,6 +201,19 @@ class Store:
         self.save_settings()
         return name
 
+    def delete_scanner(self, name):
+        """Usuwa listę (skaner) razem z jej zapisanymi spółkami; zawsze zostaje co najmniej jedna. Wybrana lista przechodzi na pierwszą, watchlisty tracą ją z `sources`."""
+        if len(self.settings["scanners"]) <= 1 or not any(x["name"] == name for x in self.settings["scanners"]):
+            return False
+        self.settings["scanners"] = [x for x in self.settings["scanners"] if x["name"] != name]
+        if self.settings["scanner"] == name:
+            self.settings["scanner"] = self.settings["scanners"][0]["name"]
+        normalize_watchlists(self.settings)
+        self.scan_path(name).unlink(missing_ok=True)
+        self.save_settings()
+        self.reload()
+        return True
+
     def select(self, name):
         """Przełącza wybrany skaner (lista spółek z jego ostatniego Sync)."""
         if any(x["name"] == name for x in self.settings["scanners"]):

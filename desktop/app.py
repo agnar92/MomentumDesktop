@@ -10,7 +10,7 @@ import math
 
 from . import calc, finviz, gist, lines, prices, sec, sync
 from .chart import ChartWindow
-from .store import DEFAULT_SCANNERS, VIEW_LIST, VIEW_WATCH, Store, normalize_scanners
+from .store import DEFAULT_SCANNERS, VIEW_LIST, VIEW_WATCH, Store, normalize_scanners, normalize_watchlists
 from .theme import BG, FG, PANEL, apply_dark, autowrap, setup_style
 
 COLUMNS = [  # (klucz, nagłówek, szerokość, format)
@@ -126,12 +126,9 @@ class App:
         bar.pack(fill="x")
         self.sync_btn = tk.Button(bar, text="⟳ Sync (F5)", command=self.start_sync, relief="flat")
         self.sync_btn.pack(side="left", padx=4, pady=4)
-        tk.Label(bar, text="Skaner:", bg=PANEL).pack(side="left", padx=(8, 2))
-        self.scanner = tk.StringVar(value=self.store.settings["scanner"])
-        self.scanner_box = ttk.Combobox(bar, textvariable=self.scanner, state="readonly", width=24)
-        self.scanner_box.pack(side="left", padx=2)
-        self.scanner_box.bind("<<ComboboxSelected>>", lambda e: self.select_scanner(self.scanner.get()))
-        tk.Button(bar, text="Skanery / ustawienia…", command=self.open_settings, relief="flat").pack(side="left", padx=4)
+        tk.Button(bar, text="📂 Listy i watchlisty…", command=lambda: ViewDialog(self), relief="flat").pack(side="left", padx=(8, 2))
+        self.view_var = tk.StringVar()
+        tk.Label(bar, textvariable=self.view_var, bg=PANEL, fg=FG).pack(side="left", padx=(2, 4))
         self.only_ok = tk.BooleanVar(value=False)
         tk.Checkbutton(bar, text="tylko spełniające warunki", variable=self.only_ok, command=self.refresh, bg=PANEL).pack(side="left", padx=8)
         tk.Button(bar, text="Warunki…", command=lambda: StrategyConditionsDialog(self), relief="flat").pack(side="left", padx=2)
@@ -148,13 +145,6 @@ class App:
         tk.Button(bar, text="Kolumny…", command=lambda: ColumnsDialog(self), relief="flat").pack(side="left", padx=4)
         tk.Button(bar, text="☁ Web (gist)…", command=lambda: GistDialog(self), relief="flat").pack(side="left", padx=4)
         tk.Label(bar, text="Ctrl+Space — dowolny symbol (np. SPY, NVDA)", bg=PANEL, fg="#8b95a3").pack(side="left", padx=12)
-        bar2 = tk.Frame(self.root, bg=PANEL)   # drugi rząd: widok listy / watchlisty (osobno, żeby nie wypychać przycisków z paska przy węższym oknie)
-        bar2.pack(fill="x")
-        tk.Button(bar2, text="📂 Listy i watchlisty…", command=lambda: ViewDialog(self), relief="flat").pack(side="left", padx=(8, 4), pady=(0, 4))
-        self.view_var = tk.StringVar()
-        tk.Label(bar2, textvariable=self.view_var, bg=PANEL, fg=FG).pack(side="left", padx=4, pady=(0, 4))
-        tk.Button(bar2, text="★ Do watchlisty…", command=self.add_selected_to_watchlist, relief="flat").pack(side="left", padx=4, pady=(0, 4))
-        tk.Label(bar2, text="klawisz w na liście lub prawy przycisk myszy = dodaj zaznaczoną spółkę do watchlisty", bg=PANEL, fg="#8b95a3").pack(side="left", padx=12, pady=(0, 4))
         frame = tk.Frame(self.root, bg=BG)
         frame.pack(fill="both", expand=True)
         self.tree = ttk.Treeview(frame, columns=[c[0] for c in COLUMNS], show="headings", selectmode="browse")
@@ -217,10 +207,7 @@ class App:
         self.root.bind("<F5>", lambda e: self.start_sync())
         self.root.bind("<Control-space>", lambda e: self.open_symbol())
         self.root.bind("<slash>", lambda e: self.open_symbol() if e.widget is self.tree else None)
-        self.tree.bind("w", lambda e: self.add_selected_to_watchlist())
-        self.tree.bind("<Button-3>", self._row_menu)
         self.root.after(150, self._poll)
-        self.fill_scanners()
         self.fill_views()
         self.refresh()
         self.check_alerts()
@@ -236,7 +223,6 @@ class App:
             name = self.store.settings["scanner"]
         self.store.select(name)
         self.store.set_view(VIEW_LIST)
-        self.scanner.set(self.store.settings["scanner"])
         self.fill_views()
         self.refresh()
 
@@ -259,13 +245,6 @@ class App:
         self.refresh()
         return added
 
-    def toggle_watch_ticker(self, name, ticker, on):
-        if on:
-            self.store.remove_from_watchlist(name, [ticker])
-            self.refresh()
-        else:
-            self.add_tickers_to(name, ticker)
-
     def fetch_symbol_quiet(self, sym):
         """Pobiera dane jednego tickera w tle bez otwierania wykresu (po dodaniu do watchlisty)."""
         if sym in self._symbol_openings or self.sync_btn["state"] == "disabled":
@@ -281,48 +260,6 @@ class App:
             except Exception as exc:
                 self.q.put(("symbol_open_error", (sym, str(exc))))
         threading.Thread(target=work, daemon=True).start()
-
-    def watch_menu(self, ticker, x, y):
-        """Menu „do której watchlisty”: ✓ = już na liście (klik usuwa), ＋ = nowa watchlista."""
-        m = tk.Menu(self.root, tearoff=0)
-        for w in self.store.watchlists():
-            on = ticker in w["tickers"]
-            m.add_command(label=f"{'✓ ' if on else '    '}{w['name']}{' — usuń' if on else ''}", command=lambda n=w["name"], on=on: self.toggle_watch_ticker(n, ticker, on))
-        m.add_separator()
-        m.add_command(label="＋ Nowa watchlista…", command=lambda: self.new_watchlist_with(ticker))
-        try:
-            m.tk_popup(x, y)
-        finally:
-            m.grab_release()
-
-    def new_watchlist_with(self, ticker):
-        name = simpledialog.askstring("Nowa watchlista", f"Nazwa nowej watchlisty (doda {ticker}):", parent=self.root)
-        if name and self.store.add_watchlist(name):
-            self.add_tickers_to(name.strip(), ticker)
-
-    def add_selected_to_watchlist(self):
-        t = self.current() or (self.chart.ticker if self.chart is not None and self.chart.winfo_exists() else None)
-        if not t:
-            messagebox.showinfo("Watchlista", "Zaznacz spółkę na liście (albo otwórz jej wykres).", parent=self.root)
-            return
-        self.watch_menu(t, self.root.winfo_pointerx(), self.root.winfo_pointery())
-
-    def _row_menu(self, event):
-        iid = self.tree.identify_row(event.y)
-        if iid:
-            self.tree.selection_set(iid)
-            self.watch_menu(iid, event.x_root, event.y_root)
-
-    # --- skanery
-    def fill_scanners(self):
-        self.scanner_box["values"] = [x["name"] for x in self.store.settings["scanners"]]
-        self.scanner.set(self.store.settings["scanner"])
-
-    def select_scanner(self, name):
-        if self.sync_btn["state"] == "disabled":   # w trakcie Sync zostaje skaner, który się synchronizuje
-            self.scanner.set(self.store.settings["scanner"])
-            return
-        self.open_list(name)
 
     # --- lista
     def rows(self):
@@ -794,9 +731,10 @@ class SettingsDialog(tk.Toplevel):
                 st.scan_path(old).rename(st.scan_path(x["name"]))
         st.settings.update(scanners=self.items, scanner=current, sec_ua=self.ua.get().strip() or sec.UA)
         normalize_scanners(st.settings)
+        normalize_watchlists(st.settings)   # zmieniona nazwa listy znika z dołączonych do watchlist
         st.save_settings()
         st.reload()
-        self.app.fill_scanners()
+        self.app.fill_views()
         self.app.refresh()
         self.destroy()
 
@@ -1506,8 +1444,8 @@ class SymbolDialog(tk.Toplevel):
 
 
 class ViewDialog(tk.Toplevel):
-    """Małe okno: sekcje Listy (skanery) i Watchlisty, dwa przyciski dodawania; dwuklik otwiera listę albo watchlistę w głównym oknie.
-    Prawy przycisk na watchliście: zmiana nazwy, usunięcie i dołączanie list skanerów (dowolnie wiele)."""
+    """Małe okno do zarządzania listami i watchlistami (przy starcie i z paska): wybór widoku dwuklikiem oraz dodawanie / usuwanie list (skanerów),
+    watchlist, tickerów w watchliście i list dołączonych do watchlisty. Główne okno zostaje tylko do kolumn, filtrowania i sortowania."""
 
     def __init__(self, app):
         super().__init__(app.root)
@@ -1517,30 +1455,49 @@ class ViewDialog(tk.Toplevel):
         self.configure(bg=PANEL)
         apply_dark(self)
         self.transient(app.root)
-        self.geometry("420x440")
-        self.lists = self._section("Listy (skanery Finviz)")
-        self.watch = self._section("Watchlisty")
-        buttons = tk.Frame(self, bg=PANEL)
-        buttons.pack(fill="x", padx=14, pady=(2, 4))
-        tk.Button(buttons, text="＋ Dodaj listę / skaner", command=self.add_list, relief="flat").pack(side="left")
-        tk.Button(buttons, text="＋ Dodaj watchlistę", command=self.add_watchlist, relief="flat").pack(side="left", padx=6)
+        self.geometry("520x640")
+        self.lists = self._section("Listy (skanery Finviz)  —  dwuklik = otwórz")
+        self._buttons(("＋ Dodaj listę / skaner", self.add_list), ("✎ Edytuj filtr / ustawienia…", self.edit_lists), ("🗑 Usuń listę", self.delete_list))
+        self.watch = self._section("Watchlisty  —  dwuklik = otwórz")
+        self._buttons(("＋ Dodaj watchlistę", self.add_watchlist), ("✎ Zmień nazwę…", self.rename), ("🗑 Usuń watchlistę", self.delete_watchlist))
+        self.head = tk.Label(self, text="", bg=PANEL, fg=FG, anchor="w")
+        self.head.pack(fill="x", padx=14, pady=(10, 2))
+        add = tk.Frame(self, bg=PANEL)
+        add.pack(fill="x", padx=14)
+        self.entry = tk.StringVar()
+        e = tk.Entry(add, textvariable=self.entry, relief="flat")
+        e.pack(side="left", fill="x", expand=True)
+        e.bind("<Return>", lambda ev: self.add_tickers())
+        tk.Button(add, text="＋ Dodaj tickery", command=self.add_tickers, relief="flat").pack(side="left", padx=(6, 0))
+        tk.Label(self, text="np. NVDA albo NVDA, AMD MSFT — kilka naraz", bg=PANEL, fg="#8b95a3", anchor="w").pack(fill="x", padx=14)
+        self.tickers = tk.Listbox(self, height=5, exportselection=False, selectmode="extended", bg="#151a21", fg=FG, relief="flat", selectbackground="#2a3a55", activestyle="none")
+        self.tickers.pack(fill="both", expand=True, padx=14, pady=(4, 0))
+        self._buttons(("🗑 Usuń zaznaczone tickery", self.remove_tickers))
+        tk.Label(self, text="Listy skanerów dołączone do watchlisty (zaznacz dowolnie wiele):", bg=PANEL, fg="#8b95a3", anchor="w").pack(fill="x", padx=14)
+        self.sources = tk.Listbox(self, height=4, exportselection=False, selectmode="multiple", bg="#151a21", fg=FG, relief="flat", selectbackground="#2a3a55", activestyle="none")
+        self.sources.pack(fill="x", padx=14, pady=(2, 4))
         self.ask = tk.BooleanVar(value=self.st.settings["main_view"].get("ask", True))
         tk.Checkbutton(self, text="Pytaj przy każdym starcie", variable=self.ask, command=self.save_ask, bg=PANEL, selectcolor=BG,
-                       activebackground=PANEL).pack(anchor="w", padx=14)
-        tk.Label(self, text="Dwuklik = otwórz. Prawy przycisk na watchliście = nazwa, usuń, dołącz listy skanerów.", bg=PANEL, fg="#8b95a3",
-                 wraplength=390, justify="left").pack(anchor="w", padx=14, pady=(0, 8))
+                       activebackground=PANEL).pack(anchor="w", padx=14, pady=(0, 8))
         self.lists.bind("<Double-1>", lambda e: self.open_list())
         self.watch.bind("<Double-1>", lambda e: self.open_watch())
-        self.watch.bind("<Button-3>", self.watch_menu)
+        self.watch.bind("<<ListboxSelect>>", lambda e: self.fill_watch())
+        self.sources.bind("<<ListboxSelect>>", lambda e: self.toggle_sources())
         self.bind("<Escape>", lambda e: self.destroy())
         self.fill()
         self.after(60, self._grab)
 
     def _section(self, title):
-        tk.Label(self, text=title, bg=PANEL, fg="#8b95a3").pack(anchor="w", padx=14, pady=(10, 2))
-        box = tk.Listbox(self, height=6, exportselection=False, bg="#151a21", fg=FG, relief="flat", selectbackground="#2a3a55", activestyle="none")
+        tk.Label(self, text=title, bg=PANEL, fg="#8b95a3", anchor="w").pack(fill="x", padx=14, pady=(10, 2))
+        box = tk.Listbox(self, height=5, exportselection=False, bg="#151a21", fg=FG, relief="flat", selectbackground="#2a3a55", activestyle="none")
         box.pack(fill="both", expand=True, padx=14)
         return box
+
+    def _buttons(self, *items):
+        row = tk.Frame(self, bg=PANEL)
+        row.pack(fill="x", padx=14, pady=(3, 0))
+        for text, cmd in items:
+            tk.Button(row, text=text, command=cmd, relief="flat").pack(side="left", padx=(0, 6))
 
     def _grab(self):
         try:
@@ -1549,18 +1506,37 @@ class ViewDialog(tk.Toplevel):
         except tk.TclError:
             pass   # okno jeszcze niewidoczne (np. test bez ekranu)
 
-    def fill(self):
+    def fill(self, select_watch=None):
         v = self.st.settings["main_view"]
+        keep_list, keep_watch = self.picked(self.lists), self.picked(self.watch)   # odświeżenie nie gubi zaznaczenia
         self.lists.delete(0, "end")
         for x in self.st.settings["scanners"]:
             self.lists.insert("end", x["name"])
         self.watch.delete(0, "end")
         for w in self.st.watchlists():
             self.watch.insert("end", w["name"])
-        for box, current in ((self.lists, self.st.settings["scanner"] if v["mode"] == VIEW_LIST else None), (self.watch, v["watchlist"] if v["mode"] == VIEW_WATCH else None)):
+        for box, current in ((self.lists, keep_list or self.st.settings["scanner"]), (self.watch, select_watch or keep_watch or v["watchlist"])):
             names = box.get(0, "end")
             if current in names:
                 box.selection_set(names.index(current))
+        self.fill_watch()
+
+    def fill_watch(self):
+        n = self.picked(self.watch)
+        w = self.st.watchlist(n) if n else None
+        self.tickers.delete(0, "end")
+        self.sources.delete(0, "end")
+        if w is None:
+            self.head.config(text="")
+            return
+        for t in w["tickers"]:
+            r = self.st.row(t)
+            self.tickers.insert("end", t if r and r.get("price") is not None else f"{t}   (brak danych — ⟳ Sync)")
+        for i, x in enumerate(self.st.settings["scanners"]):
+            self.sources.insert("end", x["name"])
+            if x["name"] in w["sources"]:
+                self.sources.selection_set(i)
+        self.head.config(text=f"Watchlista «{n}»: {len(w['tickers'])} tickerów, {len(w['sources'])} dołączonych list")
 
     def save_ask(self):
         v = self.st.settings["main_view"]
@@ -1570,6 +1546,7 @@ class ViewDialog(tk.Toplevel):
         s = box.curselection()
         return box.get(s[0]) if s else None
 
+    # --- otwieranie w głównym oknie
     def open_list(self):
         n = self.picked(self.lists)
         if n:
@@ -1582,6 +1559,7 @@ class ViewDialog(tk.Toplevel):
             self.app.open_watchlist(n)
             self.destroy()
 
+    # --- listy (skanery)
     def add_list(self):
         name = simpledialog.askstring("Dodaj listę / skaner", "Nazwa listy:", parent=self)
         if name is None:
@@ -1593,10 +1571,27 @@ class ViewDialog(tk.Toplevel):
         if not self.st.add_scanner(name, filters):
             messagebox.showerror("Dodaj listę", "Podaj niepustą nazwę, która jeszcze nie istnieje.", parent=self)
             return
-        self.app.fill_scanners()
         self.fill()
         messagebox.showinfo("Dodaj listę", "Dodano. Lista wypełni się po ⟳ Sync (Finviz po cichu ignoruje nieznane kody — sprawdź liczbę spółek).", parent=self)
 
+    def edit_lists(self):
+        self.destroy()
+        self.app.open_settings()
+
+    def delete_list(self):
+        n = self.picked(self.lists)
+        if not n:
+            return
+        if len(self.st.settings["scanners"]) <= 1:
+            messagebox.showinfo("Usuń listę", "Musi zostać co najmniej jedna lista.", parent=self)
+            return
+        if messagebox.askyesno("Usuń listę", f"Usunąć listę «{n}» wraz z jej zapisanymi spółkami?", parent=self):
+            self.st.delete_scanner(n)
+            self.app.fill_views()
+            self.app.refresh()
+            self.fill()
+
+    # --- watchlisty
     def add_watchlist(self):
         name = simpledialog.askstring("Dodaj watchlistę", "Nazwa watchlisty:", parent=self)
         if name is None:
@@ -1604,52 +1599,59 @@ class ViewDialog(tk.Toplevel):
         if not self.st.add_watchlist(name):
             messagebox.showerror("Dodaj watchlistę", "Podaj niepustą nazwę, która jeszcze nie istnieje.", parent=self)
             return
-        self.fill()
-
-    def watch_menu(self, event):
-        i = self.watch.nearest(event.y)
-        if i < 0 or i >= self.watch.size():
-            return
+        self.fill(select_watch=name.strip())
         self.watch.selection_clear(0, "end")
-        self.watch.selection_set(i)
-        name = self.watch.get(i)
-        w = self.st.watchlist(name)
-        m = tk.Menu(self, tearoff=0)
-        for x in self.st.settings["scanners"]:
-            on = x["name"] in w.get("sources", [])
-            m.add_command(label=f"{'✓ ' if on else '    '}lista: {x['name']}", command=lambda sc=x["name"], on=on: self.toggle_source(name, sc, on))
-        m.add_separator()
-        m.add_command(label="Zmień nazwę…", command=lambda: self.rename(name))
-        m.add_command(label="Usuń watchlistę", command=lambda: self.delete(name))
-        try:
-            m.tk_popup(event.x_root, event.y_root)
-        finally:
-            m.grab_release()
+        self.watch.selection_set(self.watch.get(0, "end").index(name.strip()))
+        self.fill_watch()
 
-    def toggle_source(self, name, scanner, on):
-        w = self.st.watchlist(name)
-        self.st.set_watchlist_sources(name, [x for x in w["sources"] if x != scanner] if on else w["sources"] + [scanner])
-        self.app.refresh()
-
-    def rename(self, name):
-        new = simpledialog.askstring("Zmień nazwę", "Nowa nazwa:", initialvalue=name, parent=self)
-        if new is None:
+    def rename(self):
+        n = self.picked(self.watch)
+        new = simpledialog.askstring("Zmień nazwę", "Nowa nazwa:", initialvalue=n, parent=self) if n else None
+        if new is None or not n:
             return
-        if not self.st.rename_watchlist(name, new):
+        if not self.st.rename_watchlist(n, new):
             messagebox.showerror("Zmień nazwę", "Podaj niepustą nazwę, która jeszcze nie istnieje.", parent=self)
             return
         self.app.fill_views()
-        self.fill()
+        self.fill(select_watch=new.strip())
 
-    def delete(self, name):
+    def delete_watchlist(self):
+        n = self.picked(self.watch)
+        if not n:
+            return
         if len(self.st.watchlists()) <= 1:
             messagebox.showinfo("Usuń watchlistę", "Musi zostać co najmniej jedna watchlista.", parent=self)
             return
-        if messagebox.askyesno("Usuń watchlistę", f"Usunąć «{name}» wraz z jej tickerami?", parent=self):
-            self.st.delete_watchlist(name)
+        if messagebox.askyesno("Usuń watchlistę", f"Usunąć «{n}» wraz z jej tickerami?", parent=self):
+            self.st.delete_watchlist(n)
             self.app.fill_views()
             self.app.refresh()
             self.fill()
+
+    # --- zawartość wybranej watchlisty
+    def add_tickers(self):
+        n = self.picked(self.watch)
+        if not n or not self.entry.get().strip():
+            return
+        added = self.app.add_tickers_to(n, self.entry.get())
+        self.entry.set("")
+        self.fill_watch()
+        self.head.config(text=f"Watchlista «{n}»: dodano {', '.join(added) if added else 'nic nowego (już są na liście)'}")
+
+    def remove_tickers(self):
+        n = self.picked(self.watch)
+        sel = [self.tickers.get(i).split()[0] for i in self.tickers.curselection()]
+        if n and sel:
+            self.st.remove_from_watchlist(n, sel)
+            self.app.refresh()
+            self.fill_watch()
+
+    def toggle_sources(self):
+        n = self.picked(self.watch)
+        if n:
+            self.st.set_watchlist_sources(n, [self.sources.get(i) for i in self.sources.curselection()])
+            self.app.refresh()
+            self.fill_watch()
 
 
 def main():

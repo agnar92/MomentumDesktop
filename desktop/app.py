@@ -402,8 +402,15 @@ class App:
         top = ", ".join(f"{x['etf']} {x['pct']:+.1f} %" for x in self.store.sectors if x.get("selected"))
         sectors = f"   Sektory top (RS nad SMA 52 tyg.): {top}" if top else ""
         mv = self.store.settings["main_view"]
-        view = f"★ Watchlista «{mv['watchlist']}» ({len(self._added)} dodanych)   " if self._added or (mv["mode"] == VIEW_WATCH) else ""
-        self.status.config(text=f"  {view}Skaner: {self.store.settings['scanner']}{sectors}   Dane: {self.store.at or 'brak — kliknij ⟳ Sync'}   Na liście: {len(self.tree.get_children())} z {len(view_rows)}   spełnia warunki: {n_ok}   sygnał GLB: {n_sig}"
+        if mv["mode"] == VIEW_WATCH:
+            w = self.store.watchlist(mv["watchlist"]) or {}
+            src = ", ".join(w.get("sources", []))
+            what = f"★ Watchlista «{mv['watchlist']}»: {len(self._added)} dodanych tickerów" + (f" + listy: {src}" if src else "")
+            if not view_rows:
+                what += " — pusta: dodaj tickery (★ Do watchlisty…, prawy przycisk na wierszu) albo dołącz listę (📂 → prawy przycisk na watchliście)"
+        else:
+            what = f"📋 Lista (skaner): {self.store.settings['scanner']}"
+        self.status.config(text=f"  {what}{sectors}   Dane: {self.store.at or 'brak — kliknij ⟳ Sync'}   Na liście: {len(self.tree.get_children())} z {len(view_rows)}   spełnia warunki: {n_ok}   sygnał GLB: {n_sig}"
                                 f"   (warunki konieczne: {condition_text};"
                                 f" sygnał: zamknięcie tyg. 0–{calc.ENTRY_MAX_PCT:g} % nad Green Line; wyjście: MACD tyg. + stop {calc.STOP_PCT:g} %)")
 

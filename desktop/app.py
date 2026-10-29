@@ -19,7 +19,7 @@ COLUMNS = [  # (klucz, nagłówek, szerokość, format)
     ("macd_stop", "Stop MACD", 85, "p"), ("dopm", "Δ marża oper. pp", 120, "%"), ("rev_rr", "Przychody r/r %", 115, "%"),
     ("eps_rating", "EPS Rating", 90, "i"), ("dgm", "Δ marża brutto pp", 125, "%"), ("pattern", "Wzorzec Zangera", 130, "s"), ("pattern_pct", "Do kupna wzorca %", 115, "%"), ("pattern_exit", "Ostrzeżenie wzorca", 125, "s"), ("quarter", "Kwartał", 105, "s"), ("turnover", "Obrót mln $", 95, "m"),
     ("ps", "P/S", 60, "x"), ("peg", "PEG", 70, "x2"), ("pegy", "PEGY", 75, "x2"),
-    ("rs", "RS 52 tyg. pp", 105, "%"), ("surp", "Niesp. EPS %", 95, "%"), ("beat2", "2× nad konsensus", 115, "b"), ("eps_rev", "Rewizja EPS 90 dni %", 140, "%"), ("rvol_w", "RVol tyg.", 80, "x"), ("cc52w", "C/C[52 tyg.]", 95, "r"), ("ok", "Warunki", 75, "b"), ("slow", "Hamuje", 95, "w"),
+    ("rs", "RS 52 tyg. pp", 105, "%"), ("surp", "Niesp. EPS %", 95, "%"), ("beat2", "2× nad konsensus", 115, "b"), ("eps_rev", "Rewizja EPS 90 dni %", 140, "%"), ("rvol_w", "RVol tyg.", 80, "x"), ("cc52w", "C/C[52 tyg.]", 95, "r"), ("mom121", "Momentum 12-1 %", 115, "%"), ("ok", "Warunki", 75, "b"), ("slow", "Hamuje", 95, "w"),
 ]
 SIGNAL = ("WYBICIE", "SYGNAŁ")
 ENTRY_MAX = calc.ENTRY_MAX_PCT   # kupno: zamknięcie tygodnia 0–10 % nad Green Line (BLUE DOT i wyżej — tylko informacyjnie)
@@ -178,6 +178,9 @@ class App:
                     else:
                         display_columns.append(key)
                     changed = True
+            if "mom121" not in display_columns:   # nowa kolumna: Momentum 12-1 % obok C/C[52 tyg.]
+                display_columns.insert(display_columns.index("cc52w") + 1 if "cc52w" in display_columns else len(display_columns), "mom121")
+                changed = True
             display_columns = [k for k in display_columns if k != "rwb_days"]   # poprzednia wersja kolumny (dni)
             if "rwb_weeks" not in display_columns:   # nowa kolumna: RWB tyg. (od startu bieżącego RWB) obok SMA 10>30
                 display_columns.insert(display_columns.index("trend") + 1 if "trend" in display_columns else len(display_columns), "rwb_weeks")

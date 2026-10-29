@@ -388,7 +388,7 @@ def test_sync_run_with_fake_sources(tmp_path):
     assert [f for f, _ in steps] == [0.0, 0.15, 0.4, 0.6, 1.0] and steps[-1][1] == "Gotowe"
     a = next(r for r in rows if r["ticker"] == "A")
     assert a["ok"] and a["glb_state"] == "SYGNAŁ"
-    assert a["rvol_w"] == pytest.approx(1.0) and "rvol_d" not in a and a["cc52w"] == pytest.approx(calc.price_ratio(w["c"]))   # RVol tygodniowy; C/C[52 tyg.] z tygodniowych zamknięć
+    assert a["rvol_w"] == pytest.approx(1.0) and "rvol_d" not in a and a["cc52w"] == pytest.approx(calc.price_ratio(w["c"])) and a["mom121"] == calc.momentum_12_1(w["c"])   # RVol tygodniowy; C/C[52 tyg.] i Momentum 12-1 z tygodniowych zamknięć
     assert next(r for r in rows if r["ticker"] == "B")["ok"]       # mały obrót nie blokuje (płynność = filtr Finviz)
     assert Store(tmp_path).rows and Store(tmp_path).weekly("A")["c"][-1] == 104.0
 
@@ -510,6 +510,15 @@ def test_ruler_text_percent_and_bars():
     from desktop.chart import ruler_text
     assert ruler_text(100, 150, 10, 22).startswith("+50.0 % · 12 tyg.")
     assert " mies." in ruler_text(10, 11, 0, 4, "M")
+
+
+def test_momentum_12_1_skips_last_month():
+    closes = [100.0] + [90.0] * 47 + [150.0] + [10.0] * 3 + [60.0]       # 52 + 1 = 53 zamknięcia
+    assert len(closes) == 53 and closes[-5] == 150.0 and closes[-53] == 100.0
+    assert calc.momentum_12_1(closes) == pytest.approx(50.0)             # (150 / 100 − 1) · 100; ostatni miesiąc (10, 10, 10, 60) pominięty
+    assert calc.momentum_12_1(closes[1:]) is None                        # 52 zamknięcia = za krótka historia
+    assert calc.momentum_12_1([100.0] * 60) == pytest.approx(0.0)
+    assert calc.momentum_12_1([0.0] + [5.0] * 52) is None                # zero w mianowniku
 
 
 def test_price_ratio_52_weeks():

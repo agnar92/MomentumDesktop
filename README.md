@@ -55,6 +55,7 @@ Heurystyka z backtestu (spółki z dzisiejszej listy, bez spółek wycofanych z 
   36,6 % rocznie (S&P 500 13,6 %), ale mało sygnałów naraz i spadek portfela do −55 %. **Hamuje ⚠**: tempo przychodów spadło o ≥ 10 pp (⚠⚠ z marżą brutto
   w dół). Liczby w 📖 Poradniku.
 - **RS 52 tyg.** (kolumna, pp nad SPY) i **C/C[52 tyg.]** = zamknięcie tygodnia / zamknięcie sprzed 52 tygodni; wykresu RS Line już nie ma.
+- **Momentum 12-1 %** (kolumna) = zamknięcie sprzed 4 tygodni / zamknięcie sprzed 52 tygodni − 1 (ostatni miesiąc pominięty); odpowiednik miesięcznego `c[t-1] / c[t-12] − 1` z badania CEM10 (ranking: sortuj malejąco, filtr C-8 = zwrot 3 mies. > 0 i 12 mies. > 30 %). Liczone z tygodniowych zamknięć, więc pojawia się po następnym Sync.
 - **Wejście:** zamknięcie tygodnia **0–10 % nad Green Line** po przebiciu od dołu (WYBICIE = tydzień przebicia, SYGNAŁ = kolejny tydzień w strefie; po rajdzie > 10 % nad linią kolejne wejście dopiero na nowej Green Line). Dalej niż 10 % (także BLUE DOT)
   i Blue Line — tylko informacyjnie (w badaniu 2011–2025 dawały mniej).
 - **Niespodzianki EPS** (warunek „2× nad konsensus”: 2 ostatnie raporty powyżej konsensusu EPS; kolumny Niesp. EPS % i Rewizja EPS 90 dni %, z yfinance,
@@ -78,7 +79,7 @@ Heurystyka z backtestu (spółki z dzisiejszej listy, bez spółek wycofanych z 
 ## Dane (darmowe źródła, jak najmniej zapytań)
 
 - **⟳ Sync (F5)**: Finviz (lista) → yfinance **tygodniowe 3 lata** (wykres, średnie, MACD, obrót) → dla wszystkich spółek ze skanera:
-  yfinance **miesięczne High z całej historii** (Green Line) i **SEC** (fundamenty; odświeżane co 7 dni). Bez danych dziennych (Blue Dot, RVol i C/C[52 tyg.] liczone z tygodniowych).
+  yfinance **miesięczne High z całej historii** (Green Line) i **SEC** (fundamenty; odświeżane co 7 dni). Bez danych dziennych (Blue Dot, RVol, C/C[52 tyg.] i Momentum 12-1 liczone z tygodniowych).
 - **Tylko nowe dane**: spółka już pobrana dostaje z yfinance tylko ostatnie tygodnie (doklejane do zapisanych), a historia miesięczna tylko nowe zamknięte
   miesiące. Całość pobieramy dla nowej spółki, po przerwie dłuższej niż ~5 miesięcy albo gdy ceny wstecz się zmieniły (split). Ceny są **nieskorygowane o dywidendy** (tylko o splity), jak na TradingView — inaczej dawne szczyty spółek z dużymi wypłatami (np. CLMT) wychodziły za nisko.
 - **Pasek postępu** na dole okna w trakcie Sync: etap (1/4 Finviz, 2/4 tygodniowe, 3/4 miesięczne, 4/4 SEC), procent, czas od startu i szacowany czas do końca.

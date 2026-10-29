@@ -918,7 +918,7 @@ def test_filter_dialog_has_from_to_for_eps_rating_and_other_number_columns(app):
     from desktop import app as A
     d = A.FilterDialog(app)
     d.update()
-    for k in ("eps_rating", "rwb_weeks", "rvol_w", "ps", "cc52w"):
+    for k in ("eps_rating", "rwb_weeks", "rvol_w", "ps", "cc52w", "mom121"):
         assert (k, "min") in d.vars and (k, "max") in d.vars       # pola „od – do” także dla EPS Rating i innych liczb
     d.vars[("eps_rating", "min")].set("80")
     d.vars[("eps_rating", "max")].set("99")

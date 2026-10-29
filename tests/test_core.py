@@ -795,6 +795,24 @@ def test_watchlist_view_rows_combine_scan_rows_and_added_tickers(tmp_path):
     assert st.view_rows()[0][1]["price"] == 5.0                                                 # po pobraniu danych wiersz ma wartości
 
 
+def test_watchlist_merges_lists_of_many_scanners_without_duplicates(tmp_path):
+    from desktop import store as S
+    st = Store(tmp_path)
+    names = [x["name"] for x in st.settings["scanners"]][:3]
+    for name, tickers in zip(names, (["A", "B"], ["B", "C"], ["D"])):
+        st.select(name)
+        st.save_scan([{"ticker": t, "price": 10} for t in tickers], {t: W for t in tickers}, "2026-10-20")
+    wl = S.DEFAULT_WATCHLIST
+    st.set_view("watch", wl)
+    st.set_watchlist_scans(wl, False)
+    st.set_watchlist_sources(wl, names)                                                         # trzy listy skanerów w jednej watchliście
+    st.add_to_watchlist(wl, "ZZ, A")                                                            # plus ręcznie dodany ticker (A jest już ze skanu)
+    assert [r["ticker"] for r in st.view_rows()[0]] == ["A", "B", "C", "D", "ZZ"]               # bez powtórzeń
+    st.set_watchlist_sources(wl, [names[2], "nie ma takiego"])
+    assert st.watchlist(wl)["sources"] == [names[2]] and [r["ticker"] for r in st.view_rows()[0]] == ["D", "ZZ", "A"]
+    assert Store(tmp_path).watchlist(wl)["sources"] == [names[2]]                               # zapisane w settings.json
+
+
 def test_sync_refreshes_watchlist_tickers_outside_the_scanner(tmp_path):
     store = Store(tmp_path)
     store.select("Bezpieczny (backtest)")

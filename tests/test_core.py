@@ -803,6 +803,22 @@ def test_add_scanner_rejects_duplicates_and_uses_default_filter(tmp_path):
     assert Store(tmp_path).settings["scanners"][-1]["name"] == "Moja lista"
 
 
+def test_delete_scanner_keeps_one_and_cleans_watchlists(tmp_path):
+    from desktop import store as S
+    st = Store(tmp_path)
+    names = [x["name"] for x in st.settings["scanners"]]
+    st.select(names[1])
+    st.save_scan([{"ticker": "A", "price": 10}], {"A": W}, "2026-10-20")
+    st.set_watchlist_sources(S.DEFAULT_WATCHLIST, names[:2])
+    assert st.delete_scanner(names[1]) and names[1] not in [x["name"] for x in st.settings["scanners"]]
+    assert st.settings["scanner"] == st.settings["scanners"][0]["name"] and st.watchlist(S.DEFAULT_WATCHLIST)["sources"] == [names[0]]
+    assert not st.scan_path(names[1]).exists()
+    assert not st.delete_scanner("nie ma takiej")
+    for n in [x["name"] for x in st.settings["scanners"]][1:]:
+        st.delete_scanner(n)
+    assert len(st.settings["scanners"]) == 1 and not st.delete_scanner(st.settings["scanners"][0]["name"])
+
+
 def test_watchlist_merges_lists_of_many_scanners_without_duplicates(tmp_path):
     from desktop import store as S
     st = Store(tmp_path)

@@ -3,14 +3,14 @@ import queue
 import threading
 import time
 import tkinter as tk
-from tkinter import messagebox, ttk
+from tkinter import messagebox, simpledialog, ttk
 
 import datetime as dt
 import math
 
 from . import calc, finviz, gist, lines, prices, sec, sync
 from .chart import ChartWindow
-from .store import DEFAULT_SCANNERS, Store, normalize_scanners
+from .store import DEFAULT_SCANNERS, VIEW_LIST, VIEW_WATCH, Store, normalize_scanners
 from .theme import BG, FG, PANEL, apply_dark, autowrap, setup_style
 
 COLUMNS = [  # (klucz, nagłówek, szerokość, format)
@@ -21,6 +21,7 @@ COLUMNS = [  # (klucz, nagłówek, szerokość, format)
     ("ps", "P/S", 60, "x"), ("peg", "PEG", 70, "x2"), ("pegy", "PEGY", 75, "x2"),
     ("rs", "RS 52 tyg. pp", 105, "%"), ("surp", "Niesp. EPS %", 95, "%"), ("beat2", "2× nad konsensus", 115, "b"), ("eps_rev", "Rewizja EPS 90 dni %", 140, "%"), ("rvol_w", "RVol tyg.", 80, "x"), ("cc52w", "C/C[52 tyg.]", 95, "r"), ("mom121", "Momentum 12-1 %", 115, "%"), ("ok", "Warunki", 75, "b"), ("slow", "Hamuje", 95, "w"),
 ]
+LIST_VIEW_LABEL = "📋 Lista (skaner)"   # widok główny; watchlisty w polu Widok mają etykietę „★ <nazwa>”
 SIGNAL = ("WYBICIE", "SYGNAŁ")
 ENTRY_MAX = calc.ENTRY_MAX_PCT   # kupno: zamknięcie tygodnia 0–10 % nad Green Line (BLUE DOT i wyżej — tylko informacyjnie)
 
@@ -121,6 +122,7 @@ class App:
         self._symbol_syncs = set()
         self._symbol_openings = set()
         self._last_follow_ticker = None
+        self._added = set()   # tickery dodane ręcznie do watchlisty w bieżącym widoku (★ w tabeli)
         bar = tk.Frame(self.root, bg=PANEL)
         bar.pack(fill="x")
         self.sync_btn = tk.Button(bar, text="⟳ Sync (F5)", command=self.start_sync, relief="flat")
@@ -147,6 +149,16 @@ class App:
         tk.Button(bar, text="Kolumny…", command=lambda: ColumnsDialog(self), relief="flat").pack(side="left", padx=4)
         tk.Button(bar, text="☁ Web (gist)…", command=lambda: GistDialog(self), relief="flat").pack(side="left", padx=4)
         tk.Label(bar, text="Ctrl+Space — dowolny symbol (np. SPY, NVDA)", bg=PANEL, fg="#8b95a3").pack(side="left", padx=12)
+        bar2 = tk.Frame(self.root, bg=PANEL)   # drugi rząd: widok listy / watchlisty (osobno, żeby nie wypychać przycisków z paska przy węższym oknie)
+        bar2.pack(fill="x")
+        tk.Label(bar2, text="Widok:", bg=PANEL).pack(side="left", padx=(8, 2), pady=(0, 4))
+        self.view_var = tk.StringVar()
+        self.view_box = ttk.Combobox(bar2, textvariable=self.view_var, state="readonly", width=26)
+        self.view_box.pack(side="left", padx=2, pady=(0, 4))
+        self.view_box.bind("<<ComboboxSelected>>", lambda e: self.select_view(self.view_var.get()))
+        tk.Button(bar2, text="★ Do watchlisty…", command=self.add_selected_to_watchlist, relief="flat").pack(side="left", padx=4, pady=(0, 4))
+        tk.Button(bar2, text="Watchlisty…", command=lambda: WatchlistsDialog(self), relief="flat").pack(side="left", padx=2, pady=(0, 4))
+        tk.Label(bar2, text="klawisz w na liście lub prawy przycisk myszy = dodaj zaznaczoną spółkę do watchlisty", bg=PANEL, fg="#8b95a3").pack(side="left", padx=12, pady=(0, 4))
         frame = tk.Frame(self.root, bg=BG)
         frame.pack(fill="both", expand=True)
         self.tree = ttk.Treeview(frame, columns=[c[0] for c in COLUMNS], show="headings", selectmode="browse")
@@ -209,10 +221,95 @@ class App:
         self.root.bind("<F5>", lambda e: self.start_sync())
         self.root.bind("<Control-space>", lambda e: self.open_symbol())
         self.root.bind("<slash>", lambda e: self.open_symbol() if e.widget is self.tree else None)
+        self.tree.bind("w", lambda e: self.add_selected_to_watchlist())
+        self.tree.bind("<Button-3>", self._row_menu)
         self.root.after(150, self._poll)
         self.fill_scanners()
+        self.fill_views()
         self.refresh()
         self.check_alerts()
+
+    # --- widok: lista skanera albo watchlista (skany + dodane tickery)
+    def fill_views(self):
+        v = self.store.settings["main_view"]
+        self.view_box["values"] = [LIST_VIEW_LABEL] + [f"★ {w['name']}" for w in self.store.watchlists()]
+        self.view_var.set(LIST_VIEW_LABEL if v["mode"] == VIEW_LIST else f"★ {v['watchlist']}")
+
+    def select_view(self, label):
+        if label == LIST_VIEW_LABEL:
+            self.store.set_view(VIEW_LIST)
+        else:
+            self.store.set_view(VIEW_WATCH, label[2:])
+        self.fill_views()
+        self.refresh()
+
+    def ask_view(self):
+        """Małe okno wyboru widoku przy starcie (lista skanera albo jedna z watchlist)."""
+        ViewDialog(self)
+
+    def add_tickers_to(self, name, text):
+        """Dodaje tickery (tekst z wieloma) do watchlisty; brakujące dane pobiera w tle (poza pełnym Sync, który i tak odświeża watchlisty)."""
+        added = self.store.add_to_watchlist(name, text)
+        for t in added:
+            if not (self.store.row(t) and self.store.weekly(t)):
+                self.fetch_symbol_quiet(t)
+        self.fill_views()
+        self.refresh()
+        return added
+
+    def toggle_watch_ticker(self, name, ticker, on):
+        if on:
+            self.store.remove_from_watchlist(name, [ticker])
+            self.refresh()
+        else:
+            self.add_tickers_to(name, ticker)
+
+    def fetch_symbol_quiet(self, sym):
+        """Pobiera dane jednego tickera w tle bez otwierania wykresu (po dodaniu do watchlisty)."""
+        if sym in self._symbol_openings or self.sync_btn["state"] == "disabled":
+            return
+        self._symbol_openings.add(sym)
+
+        def work():
+            try:
+                row, weekly = sync.symbol(sym, self.store, log=lambda _msg: None)
+                if not row or not weekly or not weekly.get("c"):
+                    raise ValueError(f"Brak danych tygodniowych dla {sym}.")
+                self.q.put(("symbol_opened", (sym, row, weekly)))
+            except Exception as exc:
+                self.q.put(("symbol_open_error", (sym, str(exc))))
+        threading.Thread(target=work, daemon=True).start()
+
+    def watch_menu(self, ticker, x, y):
+        """Menu „do której watchlisty”: ✓ = już na liście (klik usuwa), ＋ = nowa watchlista."""
+        m = tk.Menu(self.root, tearoff=0)
+        for w in self.store.watchlists():
+            on = ticker in w["tickers"]
+            m.add_command(label=f"{'✓ ' if on else '    '}{w['name']}{' — usuń' if on else ''}", command=lambda n=w["name"], on=on: self.toggle_watch_ticker(n, ticker, on))
+        m.add_separator()
+        m.add_command(label="＋ Nowa watchlista…", command=lambda: self.new_watchlist_with(ticker))
+        try:
+            m.tk_popup(x, y)
+        finally:
+            m.grab_release()
+
+    def new_watchlist_with(self, ticker):
+        name = simpledialog.askstring("Nowa watchlista", f"Nazwa nowej watchlisty (doda {ticker}):", parent=self.root)
+        if name and self.store.add_watchlist(name):
+            self.add_tickers_to(name.strip(), ticker)
+
+    def add_selected_to_watchlist(self):
+        t = self.current() or (self.chart.ticker if self.chart is not None and self.chart.winfo_exists() else None)
+        if not t:
+            messagebox.showinfo("Watchlista", "Zaznacz spółkę na liście (albo otwórz jej wykres).", parent=self.root)
+            return
+        self.watch_menu(t, self.root.winfo_pointerx(), self.root.winfo_pointery())
+
+    def _row_menu(self, event):
+        iid = self.tree.identify_row(event.y)
+        if iid:
+            self.tree.selection_set(iid)
+            self.watch_menu(iid, event.x_root, event.y_root)
 
     # --- skanery
     def fill_scanners(self):
@@ -230,7 +327,8 @@ class App:
     def rows(self):
         text = self.search.get().strip().upper()
         flt = self.store.settings.get("list_filters") or {}
-        rows = [r for r in self.store.rows if (not self.only_ok.get() or r.get("ok")) and pass_filters(r, flt)
+        base, self._added = self.store.view_rows()
+        rows = [r for r in base if (not self.only_ok.get() or r.get("ok")) and pass_filters(r, flt)
                 and (not text or text in r["ticker"] or text in (r.get("company") or "").upper())]
         if self.sort:
             key, rev = self.sort
@@ -272,6 +370,8 @@ class App:
             if held and self.pos_warn(r):
                 tag = "poswarn"
             vals = [cell(r.get(k), f) for k, _, _, f in COLUMNS]
+            if r["ticker"] in self._added:
+                vals[0] = "★ " + vals[0]
             if held:
                 vals[0] = "📌 " + vals[0]
             self.tree.insert("", "end", iid=r["ticker"], values=vals, tags=(tag,))
@@ -282,8 +382,9 @@ class App:
         self._last_follow_ticker = self.current()
         nf = active_filters(self.store.settings.get("list_filters"))
         self.flt_btn.config(text=f"Filtry ({nf})…" if nf else "Filtry…")
-        n_ok = sum(1 for r in self.store.rows if r.get("ok"))
-        n_sig = sum(1 for r in self.store.rows if r.get("ok") and is_signal(r))
+        view_rows, _added = self.store.view_rows()
+        n_ok = sum(1 for r in view_rows if r.get("ok"))
+        n_sig = sum(1 for r in view_rows if r.get("ok") and is_signal(r))
         cfg = calc.normalize_conditions(self.store.settings.get("strategy_conditions"))
         required = []
         if cfg["rev_growth"]["enabled"]:
@@ -299,7 +400,9 @@ class App:
         condition_text = ", ".join(required) if required else "brak obowiązkowych kryteriów"
         top = ", ".join(f"{x['etf']} {x['pct']:+.1f} %" for x in self.store.sectors if x.get("selected"))
         sectors = f"   Sektory top (RS nad SMA 52 tyg.): {top}" if top else ""
-        self.status.config(text=f"  Skaner: {self.store.settings['scanner']}{sectors}   Dane: {self.store.at or 'brak — kliknij ⟳ Sync'}   Na liście: {len(self.tree.get_children())} z {len(self.store.rows)}   spełnia warunki: {n_ok}   sygnał GLB: {n_sig}"
+        mv = self.store.settings["main_view"]
+        view = f"★ Watchlista «{mv['watchlist']}» ({len(self._added)} dodanych)   " if self._added or (mv["mode"] == VIEW_WATCH) else ""
+        self.status.config(text=f"  {view}Skaner: {self.store.settings['scanner']}{sectors}   Dane: {self.store.at or 'brak — kliknij ⟳ Sync'}   Na liście: {len(self.tree.get_children())} z {len(view_rows)}   spełnia warunki: {n_ok}   sygnał GLB: {n_sig}"
                                 f"   (warunki konieczne: {condition_text};"
                                 f" sygnał: zamknięcie tyg. 0–{calc.ENTRY_MAX_PCT:g} % nad Green Line; wyjście: MACD tyg. + stop {calc.STOP_PCT:g} %)")
 
@@ -585,6 +688,8 @@ class App:
         self.alert_btn.config(text=f"🔔 Alerty ({n})" if n else "🔔 Alerty", bg="#1f3b5c" if n else self.flt_btn.cget("bg"))
 
     def run(self):
+        if self.store.settings["main_view"].get("ask", True):
+            self.root.after(250, self.ask_view)   # małe okno wyboru widoku przy starcie
         self.root.mainloop()
 
 
@@ -1390,6 +1495,196 @@ class SymbolDialog(tk.Toplevel):
         self.app.store.save_settings()
         self.destroy()
         self.app.open_chart(sym)
+
+
+class ViewDialog(tk.Toplevel):
+    """Małe okno wyboru widoku głównego (przy starcie i z paska): lista wybranego skanera albo watchlista = wyniki skanera + dodane tickery."""
+
+    def __init__(self, app):
+        super().__init__(app.root)
+        self.app = app
+        self.title("Widok")
+        self.configure(bg=PANEL)
+        apply_dark(self)
+        self.transient(app.root)
+        v = app.store.settings["main_view"]
+        self.mode, self.wl, self.ask = tk.StringVar(value=v["mode"]), tk.StringVar(value=v["watchlist"]), tk.BooleanVar(value=v.get("ask", True))
+        tk.Label(self, text="Co pokazać w głównym oknie?", bg=PANEL, fg=FG).pack(anchor="w", padx=14, pady=(12, 6))
+        tk.Radiobutton(self, text=f"📋 Lista — wyniki skanera «{app.store.settings['scanner']}»", variable=self.mode, value=VIEW_LIST, bg=PANEL, selectcolor=BG,
+                       activebackground=PANEL).pack(anchor="w", padx=14)
+        row = tk.Frame(self, bg=PANEL)
+        row.pack(anchor="w", padx=14, pady=(2, 0))
+        tk.Radiobutton(row, text="★ Watchlista:", variable=self.mode, value=VIEW_WATCH, bg=PANEL, selectcolor=BG, activebackground=PANEL).pack(side="left")
+        self.box = ttk.Combobox(row, textvariable=self.wl, values=[w["name"] for w in app.store.watchlists()], state="readonly", width=24)
+        self.box.pack(side="left", padx=4)
+        self.box.bind("<<ComboboxSelected>>", lambda e: self.mode.set(VIEW_WATCH))
+        tk.Label(self, text="Watchlista = wyniki skanera + tickery, które sam dodasz (Watchlisty…).", bg=PANEL, fg="#8b95a3", wraplength=360, justify="left").pack(anchor="w", padx=14, pady=(6, 2))
+        tk.Checkbutton(self, text="Pytaj o widok przy każdym starcie", variable=self.ask, bg=PANEL, selectcolor=BG, activebackground=PANEL).pack(anchor="w", padx=14)
+        buttons = tk.Frame(self, bg=PANEL)
+        buttons.pack(fill="x", padx=14, pady=12)
+        tk.Button(buttons, text="OK", command=self.ok, relief="flat", width=8).pack(side="right", padx=(6, 0))
+        tk.Button(buttons, text="Anuluj", command=self.destroy, relief="flat").pack(side="right")
+        tk.Button(buttons, text="Watchlisty…", command=self.manage, relief="flat").pack(side="left")
+        self.bind("<Return>", lambda e: self.ok())
+        self.bind("<Escape>", lambda e: self.destroy())
+        self.after(60, self._grab)
+
+    def _grab(self):
+        try:
+            self.grab_set()
+            self.focus_set()
+        except tk.TclError:
+            pass   # okno jeszcze niewidoczne (np. test bez ekranu)
+
+    def manage(self):
+        WatchlistsDialog(self.app)
+
+    def ok(self):
+        self.app.store.set_view(self.mode.get(), self.wl.get(), ask=self.ask.get())
+        self.app.fill_views()
+        self.app.refresh()
+        self.destroy()
+
+
+class WatchlistsDialog(tk.Toplevel):
+    """Watchlisty: tworzenie / zmiana nazwy / usuwanie, dodawanie i usuwanie tickerów w konkretnej watchlisście, przełączenie widoku głównego."""
+
+    def __init__(self, app):
+        super().__init__(app.root)
+        self.app, self.st = app, app.store
+        self.title("Watchlisty")
+        self.configure(bg=PANEL)
+        apply_dark(self)
+        self.geometry("720x420")
+        left = tk.Frame(self, bg=PANEL)
+        left.pack(side="left", fill="y", padx=(12, 6), pady=12)
+        tk.Label(left, text="Watchlisty", bg=PANEL, fg="#8b95a3").pack(anchor="w")
+        self.lists = tk.Listbox(left, exportselection=False, width=22, height=14, bg="#151a21", fg=FG, relief="flat", selectbackground="#2a3a55")
+        self.lists.pack(fill="y", expand=True)
+        self.lists.bind("<<ListboxSelect>>", lambda e: self.fill_tickers())
+        for text, cmd in (("Nowa…", self.new), ("Zmień nazwę…", self.rename), ("Usuń", self.delete)):
+            tk.Button(left, text=text, command=cmd, relief="flat").pack(fill="x", pady=1)
+        right = tk.Frame(self, bg=PANEL)
+        right.pack(side="left", fill="both", expand=True, padx=(6, 12), pady=12)
+        self.head = tk.Label(right, text="", bg=PANEL, fg=FG, anchor="w")
+        self.head.pack(fill="x")
+        self.scans = tk.BooleanVar(value=True)
+        tk.Checkbutton(right, text="Dołącz wyniki skanera (skany) do tej watchlisty", variable=self.scans, command=self.toggle_scans, bg=PANEL, selectcolor=BG,
+                       activebackground=PANEL).pack(anchor="w")
+        add = tk.Frame(right, bg=PANEL)
+        add.pack(fill="x", pady=4)
+        self.entry = tk.StringVar()
+        e = tk.Entry(add, textvariable=self.entry, relief="flat")
+        e.pack(side="left", fill="x", expand=True)
+        e.bind("<Return>", lambda ev: self.add())
+        tk.Button(add, text="Dodaj ticker(y)", command=self.add, relief="flat").pack(side="left", padx=(6, 0))
+        tk.Label(right, text="np. NVDA albo NVDA, AMD MSFT — kilka naraz", bg=PANEL, fg="#8b95a3", anchor="w").pack(fill="x")
+        self.tickers = tk.Listbox(right, exportselection=False, selectmode="extended", bg="#151a21", fg=FG, relief="flat", selectbackground="#2a3a55")
+        self.tickers.pack(fill="both", expand=True, pady=4)
+        self.tickers.bind("<Double-1>", lambda e: self.open_selected())
+        row = tk.Frame(right, bg=PANEL)
+        row.pack(fill="x")
+        tk.Button(row, text="Usuń zaznaczone", command=self.remove, relief="flat").pack(side="left")
+        tk.Button(row, text="Pokaż w głównym oknie", command=self.show, relief="flat").pack(side="left", padx=6)
+        tk.Button(row, text="Zamknij", command=self.destroy, relief="flat").pack(side="right")
+        self.bind("<Escape>", lambda e: self.destroy())
+        self.fill_lists(self.st.settings["main_view"]["watchlist"])
+
+    def name(self):
+        s = self.lists.curselection()
+        return self.lists.get(s[0]) if s else None
+
+    def fill_lists(self, select=None):
+        names = [w["name"] for w in self.st.watchlists()]
+        self.lists.delete(0, "end")
+        for n in names:
+            self.lists.insert("end", n)
+        self.lists.selection_clear(0, "end")
+        self.lists.selection_set(names.index(select) if select in names else 0)
+        self.fill_tickers()
+
+    def fill_tickers(self):
+        n = self.name()
+        w = self.st.watchlist(n) if n else None
+        self.tickers.delete(0, "end")
+        if w is None:
+            return
+        for t in w["tickers"]:
+            r = self.st.row(t)
+            self.tickers.insert("end", t if r and r.get("price") is not None else f"{t}   (brak danych — ⟳ Sync)")
+        self.scans.set(w.get("scans", True))
+        self.head.config(text=f"«{n}» · {len(w['tickers'])} dodanych tickerów")
+
+    def toggle_scans(self):
+        n = self.name()
+        if n:
+            self.st.set_watchlist_scans(n, self.scans.get())
+            self.app.refresh()
+
+    def add(self):
+        n = self.name()
+        if not n or not self.entry.get().strip():
+            return
+        added = self.app.add_tickers_to(n, self.entry.get())
+        self.entry.set("")
+        self.fill_tickers()
+        self.head.config(text=f"«{n}» · dodano: {', '.join(added) if added else 'nic nowego (już są na liście)'}")
+
+    def remove(self):
+        n = self.name()
+        if not n:
+            return
+        sel = [self.tickers.get(i).split()[0] for i in self.tickers.curselection()]
+        if sel:
+            self.st.remove_from_watchlist(n, sel)
+            self.app.refresh()
+            self.fill_tickers()
+
+    def open_selected(self):
+        s = self.tickers.curselection()
+        if s:
+            self.app.open_symbol(self.tickers.get(s[0]).split()[0])
+
+    def new(self):
+        name = simpledialog.askstring("Nowa watchlista", "Nazwa:", parent=self)
+        if name is None:
+            return
+        if not self.st.add_watchlist(name):
+            messagebox.showerror("Nowa watchlista", "Podaj niepustą nazwę, która jeszcze nie istnieje.", parent=self)
+            return
+        self.app.fill_views()
+        self.fill_lists(name.strip())
+
+    def rename(self):
+        n = self.name()
+        new = simpledialog.askstring("Zmień nazwę", "Nowa nazwa:", initialvalue=n, parent=self) if n else None
+        if new is None or not n:
+            return
+        if not self.st.rename_watchlist(n, new):
+            messagebox.showerror("Zmień nazwę", "Podaj niepustą nazwę, która jeszcze nie istnieje.", parent=self)
+            return
+        self.app.fill_views()
+        self.fill_lists(new.strip())
+
+    def delete(self):
+        n = self.name()
+        if not n:
+            return
+        if len(self.st.watchlists()) <= 1:
+            messagebox.showinfo("Usuń watchlistę", "Musi zostać co najmniej jedna watchlista.", parent=self)
+            return
+        if messagebox.askyesno("Usuń watchlistę", f"Usunąć «{n}» wraz z jej tickerami?", parent=self):
+            self.st.delete_watchlist(n)
+            self.app.fill_views()
+            self.app.refresh()
+            self.fill_lists()
+
+    def show(self):
+        n = self.name()
+        if n:
+            self.st.set_view(VIEW_WATCH, n)
+            self.app.fill_views()
+            self.app.refresh()
 
 
 def main():

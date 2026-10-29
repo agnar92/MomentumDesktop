@@ -755,3 +755,60 @@ def test_rwb_dokup_is_price_entering_the_gap_while_rwb_lasts():
     assert calc.rwb_dokup([x - 5 for x in c[:50]], c[:50]) == []        # za krótka historia (rozgrzewka 60 świec)
     d = [300 - i for i in range(120)]
     assert calc.rwb_dokup([x - 30 for x in d], d) == []                # bez RWB nie ma dokupu, choćby cena spadała
+
+
+def test_watchlists_store_logic_and_persistence(tmp_path):
+    from desktop import store as S
+    st = Store(tmp_path)
+    assert [w["name"] for w in st.watchlists()] == [S.DEFAULT_WATCHLIST] and st.settings["main_view"] == {"mode": "list", "watchlist": S.DEFAULT_WATCHLIST, "ask": True}
+    assert S.split_tickers(" nvda, AMD;msft\nnvda ") == ["NVDA", "AMD", "MSFT"]
+    assert st.add_to_watchlist(S.DEFAULT_WATCHLIST, " nvda, AMD;msft nvda") == ["NVDA", "AMD", "MSFT"]
+    assert st.add_to_watchlist(S.DEFAULT_WATCHLIST, ["amd", "TSLA"]) == ["TSLA"]                 # AMD już jest -> nowe tylko TSLA
+    assert st.add_to_watchlist("brak takiej", "X") == []
+    assert st.add_watchlist("Energia") == "Energia" and st.add_watchlist("energia") is None and st.add_watchlist("  ") is None   # unikalne nazwy bez względu na wielkość liter
+    st.add_to_watchlist("Energia", "XOM")
+    assert st.watch_tickers() == {"NVDA", "AMD", "MSFT", "TSLA", "XOM"}
+    assert st.remove_from_watchlist(S.DEFAULT_WATCHLIST, "amd, zzz") == ["AMD"]
+    again = Store(tmp_path)                                                                      # zapis w settings.json
+    assert again.watchlist("Energia")["tickers"] == ["XOM"] and again.watchlist(S.DEFAULT_WATCHLIST)["tickers"] == ["NVDA", "MSFT", "TSLA"]
+    assert again.rename_watchlist("Energia", "Ropa") and not again.rename_watchlist("Ropa", S.DEFAULT_WATCHLIST) and again.watchlist("Ropa")
+    again.set_view("watch", "Ropa")
+    assert again.settings["main_view"]["mode"] == "watch" and again.rename_watchlist("Ropa", "Ropa i gaz") and again.settings["main_view"]["watchlist"] == "Ropa i gaz"
+    assert again.delete_watchlist("Ropa i gaz") and again.settings["main_view"] == {"mode": "list", "watchlist": S.DEFAULT_WATCHLIST, "ask": True}   # widok z usuniętej wraca do listy
+    assert not again.delete_watchlist(S.DEFAULT_WATCHLIST)                                       # ostatniej nie da się usunąć
+    again.set_view("watch", "nie ma takiej")
+    assert again.settings["main_view"]["mode"] == "list"
+
+
+def test_watchlist_view_rows_combine_scan_rows_and_added_tickers(tmp_path):
+    from desktop import store as S
+    st = Store(tmp_path)
+    st.save_scan([{"ticker": "A", "price": 10}, {"ticker": "B", "price": 20}], {"A": W, "B": W}, "2026-10-20")
+    st.add_to_watchlist(S.DEFAULT_WATCHLIST, "B, ZZ")                                           # B jest też w skanie, ZZ nie ma danych
+    assert st.view_rows() == (st.rows, set())                                                   # widok „Lista”: sam skaner
+    st.set_view("watch", S.DEFAULT_WATCHLIST)
+    rows, added = st.view_rows()
+    assert [r["ticker"] for r in rows] == ["A", "B", "ZZ"] and added == {"B", "ZZ"} and rows[2].get("price") is None   # bez powtórzeń; ZZ = pusty wiersz do czasu Sync
+    st.set_watchlist_scans(S.DEFAULT_WATCHLIST, False)
+    assert [r["ticker"] for r in st.view_rows()[0]] == ["B", "ZZ"]                              # bez skanów: tylko dodane
+    st.extra["ZZ"] = ({"ticker": "ZZ", "price": 5.0}, W)
+    assert st.view_rows()[0][1]["price"] == 5.0                                                 # po pobraniu danych wiersz ma wartości
+
+
+def test_sync_refreshes_watchlist_tickers_outside_the_scanner(tmp_path):
+    store = Store(tmp_path)
+    store.select("Bezpieczny (backtest)")
+    store.add_to_watchlist(store.watchlists()[0]["name"], "ZZ")
+    seen = []
+
+    def weekly(ts, log, cache, progress):
+        seen.append(set(ts))
+        return {t: W for t in ts if t != "SPY"} | {"SPY": SPY}
+
+    def monthly(ts, cache, log, progress=None):
+        for t in ts:
+            cache[t] = {"h": [["2025-01", 50], ["2025-02", 100]], "upto": "2025-05", "raw": 1}
+    sync.run(store, log=lambda s: None, fetch_list=lambda f, max_tickers, log, progress: ([{"ticker": "A"}], 1), weekly=weekly, monthly=monthly,
+             fund=lambda ts, cache, ua, log, progress=None: None, est=lambda ts, cache, log: None)
+    assert "ZZ" in seen[0] and store.row("ZZ") is not None                                       # tickery z watchlist są pobierane razem ze skanerem
+    assert [r["ticker"] for r in store.rows] == ["A"]                                           # ale nie trafiają do listy skanera

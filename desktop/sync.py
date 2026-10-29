@@ -112,9 +112,9 @@ def run(store, log=print, fetch_list=finviz.fetch, weekly=prices.weekly, monthly
     if not base:
         raise RuntimeError("Finviz nie zwrócił spółek (blokada albo zły filtr) — lista bez zmian.")
     tickers = [r["ticker"] for r in base]
-    tracked = sorted((set(store.alerts.get("pos", {})) | set(store.alerts.get("watch", {}))) - set(tickers))
+    tracked = sorted((set(store.alerts.get("pos", {})) | set(store.alerts.get("watch", {})) | store.watch_tickers()) - set(tickers))
     all_tickers = tickers + tracked
-    log(f"Finviz: {len(tickers)} spółek{f' z {total}' if total and total != len(tickers) else ''}; pozycje/obserwowane poza skanerem: {len(tracked)}")
+    log(f"Finviz: {len(tickers)} spółek{f' z {total}' if total and total != len(tickers) else ''}; pozycje/obserwowane/watchlisty poza skanerem: {len(tracked)}")
     # Pozycje i obserwowane odświeżamy niezależnie od tego, czy należą do aktualnego skanera.
     series = weekly(all_tickers + [x for x in (BENCH,) if x not in all_tickers], log=log, cache=store.series, progress=stage_progress(progress, 1))
     # Miesięczne High (Green Line), fundamenty i prognozy także dla pozycji/obserwowanych spoza skanera.

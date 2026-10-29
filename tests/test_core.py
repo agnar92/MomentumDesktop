@@ -780,7 +780,7 @@ def test_watchlists_store_logic_and_persistence(tmp_path):
     assert again.settings["main_view"]["mode"] == "list"
 
 
-def test_watchlist_view_rows_combine_scan_rows_and_added_tickers(tmp_path):
+def test_watchlist_view_rows_are_added_tickers_and_dedupe(tmp_path):
     from desktop import store as S
     st = Store(tmp_path)
     st.save_scan([{"ticker": "A", "price": 10}, {"ticker": "B", "price": 20}], {"A": W, "B": W}, "2026-10-20")
@@ -788,11 +788,19 @@ def test_watchlist_view_rows_combine_scan_rows_and_added_tickers(tmp_path):
     assert st.view_rows() == (st.rows, set())                                                   # widok „Lista”: sam skaner
     st.set_view("watch", S.DEFAULT_WATCHLIST)
     rows, added = st.view_rows()
-    assert [r["ticker"] for r in rows] == ["A", "B", "ZZ"] and added == {"B", "ZZ"} and rows[2].get("price") is None   # bez powtórzeń; ZZ = pusty wiersz do czasu Sync
-    st.set_watchlist_scans(S.DEFAULT_WATCHLIST, False)
-    assert [r["ticker"] for r in st.view_rows()[0]] == ["B", "ZZ"]                              # bez skanów: tylko dodane
+    assert [r["ticker"] for r in rows] == ["B", "ZZ"] and added == {"B", "ZZ"} and rows[1].get("price") is None   # tylko dodane; ZZ = pusty wiersz do czasu Sync
     st.extra["ZZ"] = ({"ticker": "ZZ", "price": 5.0}, W)
     assert st.view_rows()[0][1]["price"] == 5.0                                                 # po pobraniu danych wiersz ma wartości
+
+
+def test_add_scanner_rejects_duplicates_and_uses_default_filter(tmp_path):
+    from desktop import finviz
+    st = Store(tmp_path)
+    n = len(st.settings["scanners"])
+    assert st.add_scanner("Moja lista", "") == "Moja lista" and len(st.settings["scanners"]) == n + 1
+    assert st.settings["scanners"][-1]["filters"] == finviz.DEFAULT_FILTERS
+    assert st.add_scanner("moja LISTA") is None and st.add_scanner("  ") is None
+    assert Store(tmp_path).settings["scanners"][-1]["name"] == "Moja lista"
 
 
 def test_watchlist_merges_lists_of_many_scanners_without_duplicates(tmp_path):
@@ -804,7 +812,6 @@ def test_watchlist_merges_lists_of_many_scanners_without_duplicates(tmp_path):
         st.save_scan([{"ticker": t, "price": 10} for t in tickers], {t: W for t in tickers}, "2026-10-20")
     wl = S.DEFAULT_WATCHLIST
     st.set_view("watch", wl)
-    st.set_watchlist_scans(wl, False)
     st.set_watchlist_sources(wl, names)                                                         # trzy listy skanerów w jednej watchliście
     st.add_to_watchlist(wl, "ZZ, A")                                                            # plus ręcznie dodany ticker (A jest już ze skanu)
     assert [r["ticker"] for r in st.view_rows()[0]] == ["A", "B", "C", "D", "ZZ"]               # bez powtórzeń

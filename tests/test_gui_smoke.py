@@ -14,6 +14,16 @@ def _weekly(n=156):
             "c": c, "v": [5e6 + (i % 5) * 1e5 for i in range(n)]}
 
 
+def _spy_monthly(rising=True):
+    """Miesięczny SPY od 2018-01 do bieżącego miesiąca (rosnący albo spadający) — źródło tła wykresów T / M / Z."""
+    import datetime as dt
+    today = dt.date.today()
+    n = (today.year - 2018) * 12 + today.month
+    d = [f"{2018 + i // 12}-{1 + i % 12:02d}-01" for i in range(n)]
+    c = [100 + (i if rising else -i * 0.3) for i in range(n)]
+    return {"d": d, "o": c, "h": [x + 1 for x in c], "l": [x - 1 for x in c], "c": c, "v": [1e9] * n, "period": "M", "open_last": True}
+
+
 @pytest.fixture
 def app(tmp_path):
     w = _weekly()
@@ -26,6 +36,7 @@ def app(tmp_path):
         a = A.App(tmp_path)
     except tk.TclError:
         pytest.skip("brak ekranu")
+    a.store.save_cache("monthly_ohlc", {"SPY": _spy_monthly()})   # świeży miesięczny SPY w cache: tło wykresu bez pobierania z sieci
     a.store.settings["full_weekly"] = False   # testy bez pobierania pełnej historii z sieci
     a.store.settings["view"] = {"W": {"fut": 0}, "M": {"fut": 0}}   # bez pustych świec w przyszłości (osobne testy)
     yield a
@@ -1161,3 +1172,27 @@ def test_watch_menu_adds_and_removes_ticker_from_chosen_watchlist(app, monkeypat
     assert "✓" in m.entrycget(1, "label") and "usuń" in m.entrycget(1, "label")
     m.invoke(1)                                                                             # klik na ✓ usuwa z tej watchlisty
     assert app.store.watchlist("Energia")["tickers"] == []
+
+
+def test_background_always_uses_monthly_spy_sma10_also_on_weekly_and_z(app):
+    w = app.store.weekly("AAA")
+    # tygodniowy SPY spada (SMA 10 tyg. dałaby brak tła), miesięczny rośnie -> tło ma być na T i Z, bo liczy się SPY miesięczny
+    app.store.series["SPY"] = {**w, "c": [400 - i for i in range(len(w["c"]))]}
+    bands = lambda: [i for i in ch.cv.find_all() if ch.cv.type(i) == "rectangle" and ch.cv.itemcget(i, "fill") == A_chart.REGIME_BG]   # noqa: E731
+    app.open_chart("AAA")
+    ch = app.chart
+    ch.update()
+    assert bands()                                                    # T: tło z miesięcznego SPY nad SMA 10
+    ch.toggle_zanger()
+    ch.update()
+    assert bands()                                                    # Z: to samo
+    ch.toggle_zanger()
+    # miesięczny SPY spada -> brak tła na T, choćby tygodniowy rósł
+    app.store.series["SPY"] = {**w, "c": [100 + i for i in range(len(w["c"]))]}
+    ch._spy_m = _spy_monthly(rising=False)
+    ch.redraw()
+    assert not bands()
+    assert A_chart.monthly_regime(["2025-03-03", "2025-03-31"], _spy_monthly(), "W") == [True, True]    # tydzień dostaje stan miesiąca swojego piątku
+    assert A_chart.monthly_regime(["2025-03-03"], None, "W") == [None]
+    d = _spy_monthly()["d"]
+    assert A_chart.monthly_regime(d, _spy_monthly(), "M") == A_chart.spy_regime(d, _spy_monthly(), "M")   # na M bez zmian

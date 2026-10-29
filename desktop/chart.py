@@ -360,6 +360,21 @@ def spy_regime(dates, spx, period="W", n=10):
     return out
 
 
+def monthly_regime(dates, spy_m, period="W", n=10):
+    """Tło wykresu: SPY na MIESIĘCZNYM nad SMA 10 mies. — zawsze miesięczny interwał, także na T i Z (tydzień dostaje stan miesiąca swojego piątku, czyli dokładnie to,
+    co pokazuje wykres M); None = brak danych SPY miesięcznych."""
+    if period == "M":
+        return spy_regime(dates, spy_m, "M", n)
+    if not spy_m or not spy_m.get("d") or not spy_m.get("c"):
+        return [None] * len(dates)
+    by = dict(zip((d[:7] for d in spy_m["d"]), spy_regime(spy_m["d"], spy_m, "M", n)))
+    out = []
+    for d in dates:
+        day = dt.date.fromisoformat(d[:10]) + dt.timedelta(days=4) if d else None
+        out.append(by.get(day.strftime("%Y-%m")) if day else None)
+    return out
+
+
 def glb_peak(data, row, period):
     """Poziom Green Line i indeks świecy rekordu, z którego powstała (None, gdy go nie ma w serii). M: z zamkniętych miesięcy wykresu; T: poziom wiersza, świeca z takim High."""
     hs = data["h"]
@@ -371,7 +386,7 @@ def glb_peak(data, row, period):
     return level, next((i for i in range(len(hs) - 1, -1, -1) if hs[i] and abs(hs[i] / level - 1) < 0.003), None)
 
 
-def draw_simple(cv, data, row, w, h, n_show, end, tlines, sel, spx, period, stop=None, stop_label="", rwb=False, real=None, pv=(1.0, 0.0)):
+def draw_simple(cv, data, row, w, h, n_show, end, tlines, sel, spx, period, stop=None, stop_label="", rwb=False, real=None, pv=(1.0, 0.0), spy_m=None):
     """Prosty wykres T / M: szare słupki OHLC, niebieska SMA 10, kropkowana Green Line od świecy rekordu, tło zielone, gdy SPY > SMA 10 interwału,
     wolumen i MACD; linie trendu rysują się na cenie. rwb (tylko T): 12 EMA Guppy (szybkie czerwone, wolne niebieskie), pasek RWB u dołu ceny i ● Blue Dot
     pod świecą (Stochastic 10,1 ↑ 20 przy RWB, zamknięcie nad Green Line). -> geometria jak z `draw`."""
@@ -410,8 +425,8 @@ def draw_simple(cv, data, row, w, h, n_show, end, tlines, sel, spx, period, stop
     def yc(p):   # jak yf, ale przycięte do panelu ceny (Tk nie przycina)
         return max(y0, min(y1, yf(p)))
 
-    # tło: zielone, gdy SPY nad SMA 10 tego samego interwału (pod ceną i wolumenem)
-    regime = spy_regime(dates, spx, period)
+    # tło: zielone, gdy SPY na MIESIĘCZNYM jest nad SMA 10 mies. (na T też; pod ceną i wolumenem)
+    regime = monthly_regime(dates, spy_m if spy_m is not None else (spx if period == "M" else None), period)
     a = None
     for i, on in enumerate([bool(x) for x in regime] + [False]):
         if on and a is None:
@@ -538,12 +553,12 @@ def draw_simple(cv, data, row, w, h, n_show, end, tlines, sel, spx, period, stop
         cv.create_rectangle(xf(i) - step * 0.3, ym(hist[i]), xf(i) + step * 0.3, mid, fill=HIST_C[(hist[i] >= 0, rising)], outline="")
     for s_, col in ((mac, MACD_LINE), (sig, SIGNAL_LINE)):
         cv.create_line(*[p for i, v in enumerate(s_) for p in (xf(i), ym(v))], fill=col, width=1.4)
-    legend = f"SMA 10 {u}" + ("" if any(x is not None for x in regime) else " · brak danych SPY (zrób Sync)") + f" · zielone tło = SPY nad SMA 10 {u}" + (" · szary pas = 0–10 % nad GLB" if ly is not None else "") + (" · pasek RWB, ● Blue Dot, ▲ dokup = cena w przerwie RWB" if rwb else "")
+    legend = f"SMA 10 {u}" + ("" if any(x is not None for x in regime) else " · brak danych SPY (zrób Sync)") + " · zielone tło = SPY mies. nad SMA 10 mies." + (" · szary pas = 0–10 % nad GLB" if ly is not None else "") + (" · pasek RWB, ● Blue Dot, ▲ dokup = cena w przerwie RWB" if rwb else "")
     boxed(cv, x0 + 4, y0 + 10, legend, SMA_C)
     return {"g": g, "step": step, "n": n, "i0": i0, "lmin": lmin, "lmax": lmax, "segs": segs, "stop_y": stop_y, "real": real}
 
 
-def draw(cv, data, row=None, w=None, h=None, n_show=None, end=None, tlines=(), sel=None, spx=None, period="W", rwb=False, zanger=False, stop=None, stop_label="", real=None, pv=(1.0, 0.0)):
+def draw(cv, data, row=None, w=None, h=None, n_show=None, end=None, tlines=(), sel=None, spx=None, period="W", rwb=False, zanger=False, stop=None, stop_label="", real=None, pv=(1.0, 0.0), spy_m=None):
     """Rysuje wykres okna (n_show świec kończące się na `end`, domyślnie cała historia) na canvas `cv`; data = {d, o, h, l, c, v}; tlines = linie trendu
     (z flagą ro = tylko do odczytu), sel = id zaznaczonej. T / M: `draw_simple`; zanger=True (tylko T): `draw_zanger`.
     -> geometria (do dymka i linii; `i0` = indeks pierwszej świecy okna w pełnej serii, segs = linie w px, stop_y = y ręcznego stopu)."""
@@ -553,11 +568,11 @@ def draw(cv, data, row=None, w=None, h=None, n_show=None, end=None, tlines=(), s
     if len(data["c"]) < 2:
         return None
     if zanger and period == "W":
-        return draw_zanger(cv, data, row, w, h, n_show, end, tlines, sel, stop, stop_label, spx, real, pv)
-    return draw_simple(cv, data, row, w, h, n_show, end, tlines, sel, spx, period, stop, stop_label, rwb, real, pv)
+        return draw_zanger(cv, data, row, w, h, n_show, end, tlines, sel, stop, stop_label, spx, real, pv, spy_m)
+    return draw_simple(cv, data, row, w, h, n_show, end, tlines, sel, spx, period, stop, stop_label, rwb, real, pv, spy_m)
 
 
-def draw_zanger(cv, data, row, w, h, n_show, end, tlines, sel, stop, stop_label, spx=None, real=None, pv=(1.0, 0.0)):
+def draw_zanger(cv, data, row, w, h, n_show, end, tlines, sel, stop, stop_label, spx=None, real=None, pv=(1.0, 0.0), spy_m=None):
     """Widok Zangera (tylko T): cena (skala log., słupki jednokolorowe), Green Line, wolumen, kontur wzorców kupna / ostrzeżeń i parabola; bez wskaźników."""
     total = len(data["c"])
     real = total if real is None else real
@@ -587,9 +602,9 @@ def draw_zanger(cv, data, row, w, h, n_show, end, tlines, sel, stop, stop_label,
     def yc(p):
         return max(y0, min(y1, yf(p)))
 
-    # tło: zielone, gdy SPY nad SMA 10 tygodniowa (jak na T) — pod ceną i wolumenem
+    # tło: zielone, gdy SPY na MIESIĘCZNYM jest nad SMA 10 mies. (jak na T i M) — pod ceną i wolumenem
     a = None
-    for i, on in enumerate([bool(x) for x in spy_regime(dates, spx, "W")] + [False]):
+    for i, on in enumerate([bool(x) for x in monthly_regime(dates, spy_m, "W")] + [False]):
         if on and a is None:
             a = i
         elif not on and a is not None:
@@ -1518,14 +1533,15 @@ class ChartWindow(tk.Toplevel):
             self.cv.create_text(20, 20, text=message, anchor="w", fill=FG)
             return
         self.mark_period()
-        spx = self.spy_monthly() if self.period == "M" else self.weekly_series("SPY")
+        spy_m = self.spy_monthly()   # tło zawsze z SPY miesięcznego (SMA 10 mies.), także na T i Z
+        spx = spy_m if self.period == "M" else self.weekly_series("SPY")   # RS Line: SPY tego samego interwału
         vd = self.vdata()
         self.geom = draw(self.cv, vd, self.row_for_chart(), n_show=self.n_show, end=self.end, tlines=self.shown_lines(), sel=self.sel,
                          spx=spx, period=self.period, rwb=self.rwb, zanger=self.zanger and self.period == "W",
-                         stop=self.manual_stop(), stop_label=self.stop_label(), real=vd["real"], pv=self.view()["pv"])
+                         stop=self.manual_stop(), stop_label=self.stop_label(), real=vd["real"], pv=self.view()["pv"], spy_m=spy_m)
 
     def spy_monthly(self):
-        """SPY miesięczny do tła wykresu M (SPY nad SMA 10 mies.): z cache `monthly_ohlc`; brak albo starszy niż 2 miesiące -> pobranie w tle
+        """SPY miesięczny do tła wykresów T, M i Z (SPY nad SMA 10 mies.): z cache `monthly_ohlc`; brak albo starszy niż 2 miesiące -> pobranie w tle
         (nie częściej niż co 5 min) i ponowne rysowanie."""
         if getattr(self, "_spy_m", None) is None:
             self._spy_m = self.app.store.cache("monthly_ohlc").get("SPY")
@@ -1552,7 +1568,7 @@ class ChartWindow(tk.Toplevel):
                     cache = self.app.store.cache("monthly_ohlc")
                     cache["SPY"] = self._spy_m
                     self.app.store.save_cache("monthly_ohlc", cache)
-                    if self.winfo_exists() and self.period == "M":
+                    if self.winfo_exists():
                         self.redraw()
             self.after(100, poll)
         return m

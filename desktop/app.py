@@ -196,6 +196,7 @@ class App:
         self.tree.bind("<Return>", lambda e: self.open_chart(self.current()))
         self.tree.bind("<<TreeviewSelect>>", lambda e: self._follow())
         self.view_dialog = None   # otwarte małe okno list: cel przeciągania spółek z tabeli na watchlistę
+        self.editor = None        # otwarte okno zawartości watchlisty (ma pierwszeństwo jako cel przeciągania)
         self._drag = None
         self.tree.bind("<ButtonPress-1>", self._drag_press, add="+")
         self.tree.bind("<B1-Motion>", self._drag_move)
@@ -241,22 +242,29 @@ class App:
         iid = self.tree.identify_row(e.y)
         self._drag = {"t": iid, "x": e.x_root, "y": e.y_root, "on": False} if iid else None
 
+    def _drag_target(self):
+        for w in (self.editor, self.view_dialog):
+            if w is not None and w.winfo_exists():
+                return w
+        return None
+
     def _drag_move(self, e):
-        d = self._drag
-        if not d or not (self.view_dialog and self.view_dialog.winfo_exists()):
+        d, target = self._drag, self._drag_target()
+        if not d or target is None:
             return None   # bez otwartego okna list zwykłe zaznaczanie wierszy
         if not d["on"]:
             if abs(e.x_root - d["x"]) + abs(e.y_root - d["y"]) < 8:
                 return "break"
             d["on"] = True
-        self.view_dialog.drag_label(f"＋ {d['t']}", e.x_root, e.y_root)
+        target.drag_label(f"＋ {d['t']}", e.x_root, e.y_root)
         return "break"
 
     def _drag_release(self, e):
         d, self._drag = self._drag, None
-        if d and d["on"] and self.view_dialog and self.view_dialog.winfo_exists():
-            self.view_dialog.drag_label(None)
-            self.view_dialog.receive(d["t"], e.x_root, e.y_root)
+        target = self._drag_target()
+        if d and d["on"] and target is not None:
+            target.drag_label(None)
+            target.receive(d["t"], e.x_root, e.y_root)
 
     def ask_view(self):
         """Małe okno wyboru przy starcie: dwuklik na liście albo watchliście."""
@@ -1489,31 +1497,20 @@ class ViewDialog(tk.Toplevel):
         self.lists = self._section("Listy (skanery Finviz)  —  dwuklik = otwórz")
         self._buttons(("＋ Dodaj listę / skaner", self.add_list), ("✎ Edytuj filtr / ustawienia…", self.edit_lists), ("🗑 Usuń listę", self.delete_list))
         self.watch = self._section("Watchlisty  —  dwuklik = otwórz;  upuść tu spółkę z tabeli albo ticker z listy poniżej")
-        self._buttons(("＋ Dodaj watchlistę", self.add_watchlist), ("✎ Zmień nazwę…", self.rename), ("🗑 Usuń watchlistę", self.delete_watchlist))
+        self._buttons(("＋ Dodaj watchlistę", self.add_watchlist), ("✎ Zawartość…", self.edit_watch), ("Zmień nazwę…", self.rename), ("🗑 Usuń watchlistę", self.delete_watchlist))
         self.head = tk.Label(self, text="", bg=PANEL, fg=FG, anchor="w")
         self.head.pack(fill="x", padx=14, pady=(10, 2))
-        add = tk.Frame(self, bg=PANEL)
-        add.pack(fill="x", padx=14)
-        self.entry = tk.StringVar()
-        e = tk.Entry(add, textvariable=self.entry, relief="flat")
-        e.pack(side="left", fill="x", expand=True)
-        e.bind("<Return>", lambda ev: self.add_tickers())
-        tk.Button(add, text="＋ Dodaj tickery", command=self.add_tickers, relief="flat").pack(side="left", padx=(6, 0))
-        tk.Label(self, text="Wpisz ticker + Enter (np. NVDA albo NVDA, AMD MSFT) albo przeciągnij spółkę z głównej tabeli na tę listę lub na watchlistę; ticker z tej listy przeciągnięty na inną watchlistę = przenieś (Ctrl = kopiuj)",
+        tk.Label(self, text="Przeciągnij spółkę z głównej tabeli na watchlistę (albo na tę listę); ticker z tej listy na inną watchlistę = przenieś (Ctrl = kopiuj)",
                  bg=PANEL, fg="#8b95a3", anchor="w", wraplength=480, justify="left").pack(fill="x", padx=14)
         self.tickers = tk.Listbox(self, height=5, exportselection=False, selectmode="extended", bg="#151a21", fg=FG, relief="flat", selectbackground="#2a3a55", activestyle="none")
         self.tickers.pack(fill="both", expand=True, padx=14, pady=(4, 0))
         self._buttons(("🗑 Usuń zaznaczone tickery", self.remove_tickers))
-        tk.Label(self, text="Listy skanerów dołączone do watchlisty (zaznacz dowolnie wiele):", bg=PANEL, fg="#8b95a3", anchor="w").pack(fill="x", padx=14)
-        self.sources = tk.Listbox(self, height=4, exportselection=False, selectmode="multiple", bg="#151a21", fg=FG, relief="flat", selectbackground="#2a3a55", activestyle="none")
-        self.sources.pack(fill="x", padx=14, pady=(2, 4))
         self.ask = tk.BooleanVar(value=self.st.settings["main_view"].get("ask", True))
         tk.Checkbutton(self, text="Pytaj przy każdym starcie", variable=self.ask, command=self.save_ask, bg=PANEL, selectcolor=BG,
                        activebackground=PANEL).pack(anchor="w", padx=14, pady=(0, 8))
         self.lists.bind("<Double-1>", lambda e: self.open_list())
         self.watch.bind("<Double-1>", lambda e: self.open_watch())
         self.watch.bind("<<ListboxSelect>>", lambda e: self.fill_watch())
-        self.sources.bind("<<ListboxSelect>>", lambda e: self.toggle_sources())
         self.tickers.bind("<ButtonPress-1>", self._src_press, add="+")
         self.tickers.bind("<ButtonRelease-1>", self._src_release, add="+")
         self.bind("<Escape>", lambda e: self.destroy())
@@ -1557,17 +1554,12 @@ class ViewDialog(tk.Toplevel):
         n = self.picked(self.watch)
         w = self.st.watchlist(n) if n else None
         self.tickers.delete(0, "end")
-        self.sources.delete(0, "end")
         if w is None:
             self.head.config(text="")
             return
         for t in w["tickers"]:
             r = self.st.row(t)
             self.tickers.insert("end", t if r and r.get("price") is not None else f"{t}   (brak danych — ⟳ Sync)")
-        for i, x in enumerate(self.st.settings["scanners"]):
-            self.sources.insert("end", x["name"])
-            if x["name"] in w["sources"]:
-                self.sources.selection_set(i)
         self.head.config(text=f"Watchlista «{n}»: {len(w['tickers'])} tickerów, {len(w['sources'])} dołączonych list")
 
     def save_ask(self):
@@ -1708,15 +1700,6 @@ class ViewDialog(tk.Toplevel):
             self.fill()
 
     # --- zawartość wybranej watchlisty
-    def add_tickers(self):
-        n = self.picked(self.watch)
-        if not n or not self.entry.get().strip():
-            return
-        added = self.app.add_tickers_to(n, self.entry.get())
-        self.entry.set("")
-        self.fill_watch()
-        self.head.config(text=f"Watchlista «{n}»: dodano {', '.join(added) if added else 'nic nowego (już są na liście)'}")
-
     def remove_tickers(self):
         n = self.picked(self.watch)
         sel = [self.tickers.get(i).split()[0] for i in self.tickers.curselection()]
@@ -1725,12 +1708,157 @@ class ViewDialog(tk.Toplevel):
             self.app.refresh()
             self.fill_watch()
 
-    def toggle_sources(self):
+    def edit_watch(self):
         n = self.picked(self.watch)
         if n:
-            self.st.set_watchlist_sources(n, [self.sources.get(i) for i in self.sources.curselection()])
-            self.app.refresh()
-            self.fill_watch()
+            WatchlistEditor(self.app, self, n)
+
+
+class WatchlistEditor(tk.Toplevel):
+    """Zawartość jednej watchlisty jak w menedżerze plików: po lewej dostępne listy (skanery), po prawej to, co już jest w watchliście (listy i tickery).
+    ▶ / ◀, dwuklik albo przeciągnięcie przenosi listę; ＋ Ticker dodaje tickery; spółkę można też upuścić z głównej tabeli na prawy panel."""
+    LIST = "📋 "
+
+    def __init__(self, app, parent, name):
+        super().__init__(app.root)
+        self.app, self.parent, self.name, self.st = app, parent, name, app.store
+        self.title(f"Watchlista «{name}»")
+        self.configure(bg=PANEL)
+        apply_dark(self)
+        self.transient(app.root)
+        self.geometry("640x420")
+        app.editor = self
+        self._label = None
+        self._src = None
+        cols = tk.Frame(self, bg=PANEL)
+        cols.pack(fill="both", expand=True, padx=12, pady=(12, 4))
+        left = tk.Frame(cols, bg=PANEL)
+        left.pack(side="left", fill="both", expand=True)
+        tk.Label(left, text="Dostępne listy (skanery)", bg=PANEL, fg="#8b95a3", anchor="w").pack(fill="x")
+        self.left = self._box(left)
+        mid = tk.Frame(cols, bg=PANEL)
+        mid.pack(side="left", padx=8)
+        tk.Button(mid, text="▶", width=3, command=self.add_selected, relief="flat").pack(pady=(60, 6))
+        tk.Button(mid, text="◀", width=3, command=self.remove_selected, relief="flat").pack()
+        right = tk.Frame(cols, bg=PANEL)
+        right.pack(side="left", fill="both", expand=True)
+        self.head = tk.Label(right, text="", bg=PANEL, fg=FG, anchor="w")
+        self.head.pack(fill="x")
+        self.right = self._box(right)
+        row = tk.Frame(self, bg=PANEL)
+        row.pack(fill="x", padx=12, pady=(0, 10))
+        tk.Button(row, text="＋ Ticker…", command=self.add_ticker, relief="flat").pack(side="left")
+        tk.Button(row, text="🗑 Usuń zaznaczone", command=self.remove_selected, relief="flat").pack(side="left", padx=6)
+        tk.Button(row, text="Zamknij", command=self.destroy, relief="flat").pack(side="right")
+        tk.Label(row, text="przeciągnij spółkę z głównej tabeli na prawy panel", bg=PANEL, fg="#8b95a3").pack(side="right", padx=10)
+        self.left.bind("<Double-1>", lambda e: self.add_selected())
+        self.right.bind("<Double-1>", lambda e: self.remove_selected())
+        for box in (self.left, self.right):
+            box.bind("<ButtonPress-1>", lambda e, b=box: self._press(e, b), add="+")
+            box.bind("<ButtonRelease-1>", lambda e, b=box: self._release(e, b), add="+")
+        self.bind("<Delete>", lambda e: self.remove_selected())
+        self.bind("<Escape>", lambda e: self.destroy())
+        self.fill()
+        self.after(60, self.focus_set)
+
+    def _box(self, parent):
+        box = tk.Listbox(parent, exportselection=False, selectmode="extended", bg="#151a21", fg=FG, relief="flat", selectbackground="#2a3a55", activestyle="none")
+        box.pack(fill="both", expand=True, pady=(2, 0))
+        return box
+
+    def destroy(self):
+        if self.app.editor is self:
+            self.app.editor = None
+        self.drag_label(None)
+        super().destroy()
+        if self.parent.winfo_exists():
+            self.parent.fill(select_watch=self.name)
+
+    def wl(self):
+        return self.st.watchlist(self.name)
+
+    def fill(self):
+        w = self.wl()
+        if w is None:
+            self.destroy()
+            return
+        self.left.delete(0, "end")
+        for x in self.st.settings["scanners"]:
+            if x["name"] not in w["sources"]:
+                self.left.insert("end", x["name"])
+        self.right.delete(0, "end")
+        for sc in w["sources"]:
+            self.right.insert("end", self.LIST + sc)
+        for t in w["tickers"]:
+            self.right.insert("end", t)
+        self.head.config(text=f"W watchliście: {len(w['sources'])} list, {len(w['tickers'])} tickerów")
+
+    def _changed(self):
+        self.app.fill_views()
+        self.app.refresh()
+        self.fill()
+
+    # --- przenoszenie list i dodawanie tickerów
+    def add_selected(self):
+        names = [self.left.get(i) for i in self.left.curselection()]
+        if names:
+            self.st.set_watchlist_sources(self.name, self.wl()["sources"] + names)
+            self._changed()
+
+    def remove_selected(self):
+        items = [self.right.get(i) for i in self.right.curselection()]
+        lists = [x[len(self.LIST):] for x in items if x.startswith(self.LIST)]
+        tickers = [x for x in items if not x.startswith(self.LIST)]
+        if lists:
+            self.st.set_watchlist_sources(self.name, [x for x in self.wl()["sources"] if x not in lists])
+        if tickers:
+            self.st.remove_from_watchlist(self.name, tickers)
+        if items:
+            self._changed()
+
+    def add_ticker(self):
+        text = simpledialog.askstring("＋ Ticker", "Ticker (kilka naraz: NVDA, AMD MSFT):", parent=self)
+        if text and text.strip():
+            self.app.add_tickers_to(self.name, text)
+            self.fill()
+
+    # --- przeciąganie: listy między panelami, spółki z tabeli na prawy panel
+    def _press(self, e, box):
+        i = box.nearest(e.y)
+        self._src = (box, box.get(i)) if 0 <= i < box.size() else None
+
+    def _release(self, e, box):
+        src, self._src = self._src, None
+        over = self.winfo_containing(e.x_root, e.y_root)
+        if not src or over is None or over is box:
+            return
+        if box is self.left and over is self.right:
+            self.left.selection_clear(0, "end")
+            self.left.selection_set(self.left.get(0, "end").index(src[1]))
+            self.add_selected()
+        elif box is self.right and over is self.left and src[1].startswith(self.LIST):
+            self.right.selection_clear(0, "end")
+            self.right.selection_set(self.right.get(0, "end").index(src[1]))
+            self.remove_selected()
+
+    def drag_label(self, text, x=0, y=0):
+        if text is None:
+            if self._label is not None:
+                self._label.destroy()
+                self._label = None
+            return
+        if self._label is None:
+            self._label = tk.Toplevel(self)
+            self._label.overrideredirect(True)
+            tk.Label(self._label, text=text, bg="#2a3a55", fg=FG, padx=6, pady=2).pack()
+        self._label.geometry(f"+{x + 12}+{y + 8}")
+
+    def receive(self, ticker, x_root, y_root):
+        """Upuszczenie spółki z głównej tabeli na prawy panel."""
+        if self.winfo_containing(x_root, y_root) is self.right:
+            added = self.app.add_tickers_to(self.name, ticker)
+            self.fill()
+            self.head.config(text=f"{'dodano' if added else 'już jest'}: {ticker}")
 
 
 def main():

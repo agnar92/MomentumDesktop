@@ -1129,16 +1129,32 @@ def test_view_dialog_manages_watchlist_content_and_lists(app, monkeypatch):
     dlg = A.ViewDialog(app)
     dlg.update()
     assert dlg.picked(dlg.watch) == first
-    dlg.entry.set("nvda, amd")
-    dlg.add_tickers()                                                                       # tickery dodaje się w małym oknie
-    assert st.watchlist(first)["tickers"] == ["NVDA", "AMD"] and dlg.tickers.size() == 2
+    st.add_to_watchlist(first, "NVDA, AMD")
+    dlg.fill_watch()
+    assert dlg.tickers.size() == 2
     dlg.tickers.selection_set(0)
     dlg.remove_tickers()
     assert st.watchlist(first)["tickers"] == ["AMD"] and dlg.tickers.size() == 1
-    dlg.sources.selection_set(0)
-    dlg.sources.selection_set(1)                                                            # dowolnie wiele list w jednej watchliście
-    dlg.toggle_sources()
-    assert st.watchlist(first)["sources"] == names[:2]
+    ed = A.WatchlistEditor(app, dlg, first)                                                 # zawartość watchlisty: dwa panele jak w menedżerze plików
+    ed.update()
+    assert app.editor is ed and ed.left.get(0, "end") == tuple(names) and ed.right.get(0, "end") == ("AMD",)
+    ed.left.selection_set(0, 1)                                                             # ▶ przenosi dowolnie wiele list na prawo
+    ed.add_selected()
+    assert st.watchlist(first)["sources"] == names[:2] and ed.left.get(0, "end") == tuple(names[2:])
+    assert ed.right.get(0, "end") == (ed.LIST + names[0], ed.LIST + names[1], "AMD")
+    ed.right.selection_set(0)                                                               # ◀ cofa listę
+    ed.remove_selected()
+    assert st.watchlist(first)["sources"] == [names[1]] and names[0] in ed.left.get(0, "end")
+    monkeypatch.setattr(simpledialog, "askstring", lambda *a, **k: "xom, cvx")              # ＋ Ticker…
+    monkeypatch.setattr(app, "fetch_symbol_quiet", lambda sym: None)
+    ed.add_ticker()
+    assert st.watchlist(first)["tickers"] == ["AMD", "XOM", "CVX"] and ed.right.get(0, "end")[-1] == "CVX"
+    ed.right.selection_clear(0, "end")
+    ed.right.selection_set(ed.right.get(0, "end").index("XOM"))
+    ed.remove_selected()                                                                    # to samo pole usuwa tickery
+    assert st.watchlist(first)["tickers"] == ["AMD", "CVX"]
+    ed.destroy()
+    assert app.editor is None and dlg.picked(dlg.watch) == first
     monkeypatch.setattr(simpledialog, "askstring", lambda *a, **k: "Ropa")
     dlg.rename()
     assert st.watchlist("Ropa") is not None and st.watchlist(first) is None and dlg.picked(dlg.watch) == "Ropa"
@@ -1203,6 +1219,35 @@ def test_drag_ticker_from_table_and_between_watchlists(app, monkeypatch):
     assert app.view_dialog is None
     app._drag_press(NS(y=y_row, x_root=500, y_root=400))
     assert app._drag_move(NS(x_root=600, y_root=500)) is None
+
+
+def test_watchlist_editor_drag_lists_and_drop_ticker_from_table(app, monkeypatch):
+    from types import SimpleNamespace as NS
+    from desktop import app as A
+    st = app.store
+    monkeypatch.setattr(app, "fetch_symbol_quiet", lambda sym: None)
+    name = st.watchlists()[0]["name"]
+    names = [x["name"] for x in st.settings["scanners"]]
+    dlg = A.ViewDialog(app)
+    dlg.update()
+    ed = A.WatchlistEditor(app, dlg, name)
+    ed.update()
+    lx, ly = ed.left.winfo_rootx() + 20, ed.left.winfo_rooty() + 3
+    rx, ry = ed.right.winfo_rootx() + 20, ed.right.winfo_rooty() + 3
+    ed._press(NS(y=3), ed.left)                                                             # przeciągnięcie listy z lewego panelu na prawy
+    ed._release(NS(x_root=rx, y_root=ry), ed.left)
+    assert st.watchlist(name)["sources"] == [names[0]] and ed.right.get(0) == ed.LIST + names[0]
+    ed._press(NS(y=3), ed.right)                                                            # i z powrotem
+    ed._release(NS(x_root=lx, y_root=ly), ed.right)
+    assert st.watchlist(name)["sources"] == [] and ed.right.size() == 0
+    iid = app.tree.get_children()[0]                                                        # spółka z tabeli upuszczona na prawy panel
+    y_row = int(app.tree.bbox(iid)[1] + 3)
+    app._drag_press(NS(y=y_row, x_root=500, y_root=400))
+    assert app._drag_move(NS(x_root=rx, y_root=ry)) == "break" and ed._label is not None and dlg._label is None   # edytor ma pierwszeństwo jako cel
+    app._drag_release(NS(x_root=rx, y_root=ry))
+    assert st.watchlist(name)["tickers"] == [iid] and ed.right.get(0, "end") == (iid,) and ed._label is None
+    ed.destroy()
+    dlg.destroy()
 
 
 def test_run_asks_for_view_at_start_only_when_enabled(app, monkeypatch):

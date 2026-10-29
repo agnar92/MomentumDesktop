@@ -71,7 +71,7 @@ def split_tickers(text):
 
 
 def normalize_watchlists(settings):
-    """settings["watchlists"] = [{"name", "tickers", "scans", "sources"}] (sources = nazwy skanerów, których listy wchodzą do watchlisty — dowolnie wiele): unikalne nazwy (bez względu na wielkość liter), unikalne tickery, min. jedna watchlista;
+    """settings["watchlists"] = [{"name", "tickers", "sources"}] (tickers = dodane ręcznie, sources = nazwy skanerów, których listy wchodzą do watchlisty — dowolnie wiele): unikalne nazwy (bez względu na wielkość liter), unikalne tickery, min. jedna watchlista;
     settings["main_view"] = {"mode": list/watch, "watchlist": nazwa, "ask": czy pytać o widok przy starcie}."""
     out, seen = [], set()
     for x in settings.get("watchlists") or []:
@@ -91,9 +91,9 @@ def normalize_watchlists(settings):
         for n in x.get("sources") or []:
             if n in names and n not in sources:
                 sources.append(n)
-        out.append({"name": name, "tickers": tickers, "scans": bool(x.get("scans", True)), "sources": sources})
+        out.append({"name": name, "tickers": tickers, "sources": sources})
     if not out:
-        out = [{"name": DEFAULT_WATCHLIST, "tickers": [], "scans": True, "sources": []}]
+        out = [{"name": DEFAULT_WATCHLIST, "tickers": [], "sources": []}]
     settings["watchlists"] = out
     v = settings.get("main_view") if isinstance(settings.get("main_view"), dict) else {}
     mode = v.get("mode") if v.get("mode") in (VIEW_LIST, VIEW_WATCH) else VIEW_LIST
@@ -191,6 +191,16 @@ class Store:
                 w = self.weekly(row.get("ticker", ""))
                 row["rwb_weeks"] = calc.rwb_weeks([x or 0 for x in w["c"]]) if w and w.get("c") else None
 
+    def add_scanner(self, name, filters=None):
+        """Nowy skaner (lista) z filtrem Finviz. -> nazwa albo None, gdy pusta lub już taka istnieje (bez względu na wielkość liter)."""
+        name = str(name or "").strip()
+        if not name or any(x["name"].lower() == name.lower() for x in self.settings["scanners"]):
+            return None
+        self.settings["scanners"].append({"name": name, "filters": str(filters or "").strip() or finviz.DEFAULT_FILTERS, "max_tickers": finviz.MAX_TICKERS})
+        normalize_scanners(self.settings)
+        self.save_settings()
+        return name
+
     def select(self, name):
         """Przełącza wybrany skaner (lista spółek z jego ostatniego Sync)."""
         if any(x["name"] == name for x in self.settings["scanners"]):
@@ -205,12 +215,12 @@ class Store:
     def watchlist(self, name):
         return next((w for w in self.settings["watchlists"] if w["name"] == name), None)
 
-    def add_watchlist(self, name, scans=True):
+    def add_watchlist(self, name):
         """Nowa pusta watchlista. -> nazwa albo None, gdy pusta lub już taka istnieje (bez względu na wielkość liter)."""
         name = str(name or "").strip()
         if not name or any(w["name"].lower() == name.lower() for w in self.settings["watchlists"]):
             return None
-        self.settings["watchlists"].append({"name": name, "tickers": [], "scans": bool(scans), "sources": []})
+        self.settings["watchlists"].append({"name": name, "tickers": [], "sources": []})
         self.save_settings()
         return name
 
@@ -263,14 +273,8 @@ class Store:
             self.save_settings()
         return removed
 
-    def set_watchlist_scans(self, name, scans):
-        w = self.watchlist(name)
-        if w is not None:
-            w["scans"] = bool(scans)
-            self.save_settings()
-
     def set_watchlist_sources(self, name, sources):
-        """Listy których skanerów wchodzą do watchlisty (oprócz aktualnie wybranego, gdy scans=True)."""
+        """Listy których skanerów wchodzą do watchlisty ."""
         w = self.watchlist(name)
         if w is not None:
             names = {sc["name"] for sc in self.settings["scanners"]}
@@ -291,14 +295,13 @@ class Store:
         self.save_settings()
 
     def view_rows(self):
-        """Wiersze widoku głównego i zbiór ticker-ów dodanych ręcznie: lista skanera, a w widoku watchlisty — (opcjonalnie wyniki skanera +) dodane tickery;
+        """Wiersze widoku głównego i zbiór ticker-ów dodanych ręcznie: lista skanera, a w widoku watchlisty — listy dołączonych skanerów + dodane tickery (bez powtórzeń);
         ticker bez pobranych danych dostaje pusty wiersz, który wypełni się po Sync."""
         v = self.settings["main_view"]
         w = self.watchlist(v["watchlist"]) if v["mode"] == VIEW_WATCH else None
         if w is None:
             return self.rows, set()
-        base = list(self.rows) if w.get("scans", True) else []
-        have = {r["ticker"] for r in base}
+        base, have = [], set()
         for name in w.get("sources", []):
             rows = self.rows if name == self.settings["scanner"] else read(self.scan_path(name), {}).get("rows", [])
             for r in rows:

@@ -1055,45 +1055,83 @@ def _wait(app, cond, n=150):
 
 
 def test_view_switch_between_list_and_watchlist_with_added_tickers(app, monkeypatch):
-    from desktop import app as A
     from desktop import sync
     name = app.store.watchlists()[0]["name"]
-    assert app.view_var.get() == A.LIST_VIEW_LABEL and set(app.tree.get_children()) == {"AAA", "BBB"}
+    assert app.view_var.get().startswith("📋") and set(app.tree.get_children()) == {"AAA", "BBB"}
     zrow = {**app.store.row("AAA"), "ticker": "ZZZ", "company": "ZZZ Inc"}
     monkeypatch.setattr(sync, "symbol", lambda sym, store, log=print: (dict(zrow), dict(app.store.weekly("AAA"))))
     assert app.add_tickers_to(name, "zzz, aaa") == ["ZZZ", "AAA"]                           # AAA jest już w skanerze, ZZZ trzeba pobrać
     assert _wait(app, lambda: app.store.row("ZZZ") is not None and "ZZZ" not in app._symbol_openings)
     assert set(app.tree.get_children()) == {"AAA", "BBB"}                                   # widok „Lista” bez zmian
-    app.select_view(f"★ {name}")
-    assert app.store.settings["main_view"]["mode"] == "watch" and set(app.tree.get_children()) == {"AAA", "BBB", "ZZZ"}
-    assert app.tree.item("ZZZ", "values")[0] == "★ ZZZ" and app.tree.item("AAA", "values")[0] == "★ AAA" and not app.tree.item("BBB", "values")[0].startswith("★")
+    app.open_watchlist(name)
+    assert app.store.settings["main_view"]["mode"] == "watch" and set(app.tree.get_children()) == {"AAA", "ZZZ"}   # watchlista = tylko dodane
+    assert app.tree.item("ZZZ", "values")[0] == "★ ZZZ" and app.view_var.get() == f"★ {name}"
     assert "Watchlista" in app.status.cget("text") and "2 dodanych" in app.status.cget("text")
-    app.store.set_watchlist_scans(name, False)
-    app.refresh()
-    assert set(app.tree.get_children()) == {"AAA", "ZZZ"}                                   # bez skanów: tylko dodane
-    app.select_view(A.LIST_VIEW_LABEL)
+    app.open_list(app.store.settings["scanner"])
     assert app.store.settings["main_view"]["mode"] == "list" and set(app.tree.get_children()) == {"AAA", "BBB"}
 
 
-def test_start_view_dialog_chooses_list_or_watchlist(app):
+def test_view_dialog_double_click_opens_list_or_watchlist(app, monkeypatch):
     from desktop import app as A
-    name = app.store.watchlists()[0]["name"]
-    app.store.add_watchlist("Energia")
-    app.store.add_to_watchlist("Energia", "XOM")
+    from tkinter import messagebox, simpledialog
+    monkeypatch.setattr(messagebox, "showinfo", lambda *a, **k: None)
+    st = app.store
     dlg = A.ViewDialog(app)
     dlg.update()
-    assert dlg.mode.get() == "list" and "Energia" in dlg.box["values"] and dlg.ask.get() is True
-    dlg.mode.set("watch")
-    dlg.wl.set("Energia")
+    assert dlg.lists.size() == len(st.settings["scanners"]) and dlg.watch.size() == 1 and dlg.ask.get() is True
+    answers = iter(["Energia"])                                                             # dodaj watchlistę
+    monkeypatch.setattr(simpledialog, "askstring", lambda *a, **k: next(answers))
+    dlg.add_watchlist()
+    assert st.watchlist("Energia") is not None and dlg.watch.size() == 2
+    answers = iter(["Moja lista", "sh_price_o20"])                                          # dodaj listę/skaner: nazwa + filtr
+    dlg.add_list()
+    assert st.settings["scanners"][-1] == {"name": "Moja lista", "filters": "sh_price_o20", "max_tickers": st.settings["scanners"][-1]["max_tickers"]}
+    assert dlg.lists.size() == len(st.settings["scanners"]) and "Moja lista" in app.scanner_box["values"]
+    st.add_to_watchlist("Energia", "XOM")
+    dlg.watch.selection_clear(0, "end")
+    dlg.watch.selection_set(1)
+    dlg.open_watch()                                                                        # dwuklik na watchliście
+    assert st.settings["main_view"]["mode"] == "watch" and st.settings["main_view"]["watchlist"] == "Energia" and app.view_var.get() == "★ Energia"
+    assert "XOM" in app.tree.get_children() and not dlg.winfo_exists()
+    dlg = A.ViewDialog(app)
+    dlg.update()
+    first = st.settings["scanners"][0]["name"]
+    dlg.lists.selection_set(0)
+    dlg.open_list()                                                                         # dwuklik na liście
+    assert st.settings["main_view"]["mode"] == "list" and st.settings["scanner"] == first and app.scanner.get() == first
+    dlg = A.ViewDialog(app)
+    dlg.update()
     dlg.ask.set(False)
-    dlg.ok()
-    mv = app.store.settings["main_view"]
-    assert mv == {"mode": "watch", "watchlist": "Energia", "ask": False} and app.view_var.get() == "★ Energia"
-    assert "XOM" in app.tree.get_children()
-    dlg = A.ViewDialog(app)                                                                 # Anuluj nic nie zmienia
-    dlg.mode.set("list")
+    dlg.save_ask()
+    assert st.settings["main_view"]["ask"] is False
     dlg.destroy()
-    assert app.store.settings["main_view"]["mode"] == "watch" and name in [w["name"] for w in app.store.watchlists()]
+
+
+def test_view_dialog_watchlist_menu_actions(app, monkeypatch):
+    from desktop import app as A
+    from tkinter import messagebox, simpledialog
+    st = app.store
+    first = st.watchlists()[0]["name"]
+    names = [x["name"] for x in st.settings["scanners"]]
+    dlg = A.ViewDialog(app)
+    dlg.update()
+    dlg.toggle_source(first, names[0], False)
+    dlg.toggle_source(first, names[1], False)                                               # dowolnie wiele list w jednej watchliście
+    assert st.watchlist(first)["sources"] == names[:2]
+    dlg.toggle_source(first, names[0], True)
+    assert st.watchlist(first)["sources"] == [names[1]]
+    monkeypatch.setattr(simpledialog, "askstring", lambda *a, **k: "Ropa")
+    dlg.rename(first)
+    assert st.watchlist("Ropa") is not None and st.watchlist(first) is None
+    infos = []
+    monkeypatch.setattr(messagebox, "showinfo", lambda *a, **k: infos.append(a))
+    dlg.delete("Ropa")                                                                      # została jedna: nie można usunąć
+    assert st.watchlist("Ropa") is not None and infos and "co najmniej jedna" in infos[0][1]
+    st.add_watchlist("Energia")
+    monkeypatch.setattr(messagebox, "askyesno", lambda *a, **k: True)
+    dlg.delete("Energia")
+    assert st.watchlist("Energia") is None
+    dlg.destroy()
 
 
 def test_run_asks_for_view_at_start_only_when_enabled(app, monkeypatch):
@@ -1111,46 +1149,6 @@ def test_run_asks_for_view_at_start_only_when_enabled(app, monkeypatch):
     time.sleep(0.4)
     app.root.update()
     assert not any(isinstance(w, A.ViewDialog) for w in app.root.winfo_children())
-
-
-def test_watchlists_dialog_manages_lists_and_tickers(app, monkeypatch):
-    from desktop import app as A
-    from tkinter import messagebox, simpledialog
-    st = app.store
-    first = st.watchlists()[0]["name"]
-    dlg = A.WatchlistsDialog(app)
-    dlg.update()
-    assert dlg.name() == first
-    monkeypatch.setattr(app, "fetch_symbol_quiet", lambda sym: None)                        # bez sieci
-    dlg.entry.set("nvda, amd")
-    dlg.add()
-    assert st.watchlist(first)["tickers"] == ["NVDA", "AMD"] and dlg.tickers.size() == 2
-    monkeypatch.setattr(simpledialog, "askstring", lambda *a, **k: "Energia")
-    dlg.new()
-    assert dlg.name() == "Energia" and "★ Energia" in app.view_box["values"]
-    dlg.entry.set("xom")
-    dlg.add()
-    assert st.watchlist("Energia")["tickers"] == ["XOM"] and st.watchlist(first)["tickers"] == ["NVDA", "AMD"]   # ticker trafia do wybranej watchlisty
-    dlg.tickers.selection_set(0)
-    dlg.remove()
-    assert st.watchlist("Energia")["tickers"] == []
-    monkeypatch.setattr(simpledialog, "askstring", lambda *a, **k: "Ropa")
-    dlg.rename()
-    assert dlg.name() == "Ropa" and st.watchlist("Ropa") is not None and st.watchlist("Energia") is None
-    dlg.scans.set(False)
-    dlg.toggle_scans()
-    assert st.watchlist("Ropa")["scans"] is False
-    dlg.show()
-    assert st.settings["main_view"] == {"mode": "watch", "watchlist": "Ropa", "ask": True} and app.view_var.get() == "★ Ropa"
-    monkeypatch.setattr(messagebox, "askyesno", lambda *a, **k: True)
-    dlg.delete()
-    assert st.watchlist("Ropa") is None and st.settings["main_view"]["mode"] == "list"
-    infos = []
-    monkeypatch.setattr(messagebox, "showinfo", lambda *a, **k: infos.append(a))
-    dlg.lists.selection_clear(0, "end")
-    dlg.lists.selection_set(0)
-    dlg.delete()                                                                            # została jedna: nie można usunąć
-    assert len(st.watchlists()) == 1 and infos and "co najmniej jedna" in infos[0][1]
 
 
 def test_watch_menu_adds_and_removes_ticker_from_chosen_watchlist(app, monkeypatch):

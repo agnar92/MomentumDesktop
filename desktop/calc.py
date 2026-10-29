@@ -342,6 +342,17 @@ def price_ratio(closes, weeks=52):
     return closes[-1] / base if base else None
 
 
+def momentum_12_1(closes, weeks=52, skip=4):
+    """Momentum 12-1 (%): zamknięcie sprzed `skip` tygodni (≈ miesiąc temu) / zamknięcie sprzed `weeks` tygodni (≈ 12 miesięcy temu) − 1.
+    Ostatni miesiąc jest pominięty (efekt krótkoterminowego odwrócenia). Odpowiednik miesięcznego c[t-1] / c[t-12] − 1 z badania CEM10 (korelacja rang ≈ 0,98);
+    brak wyniku, gdy historia jest krótsza niż `weeks` tygodni."""
+    c = closes or []
+    if len(c) < weeks + 1:
+        return None
+    a, b = c[-1 - skip], c[-1 - weeks]
+    return (a / b - 1) * 100 if _ok(a) and _ok(b) and b > 0 else None
+
+
 def pegy_ratio(peg, forward_pe, dividend_yield_pct):
     """PEGY = Forward P/E / (EPS growth % + dividend yield %).
 
@@ -858,6 +869,7 @@ def build_row(base, weekly, months, fund, spy=None, est=None, conditions=None):
     row["trend"] = s10 > s30 if s10 is not None and s30 is not None else None   # trend tygodniowy: SMA 10 > SMA 30 (filtr listy)
     row["rvol_w"] = rel_volume(v, RVOL_W)
     row["cc52w"] = price_ratio(c)
+    row["mom121"] = momentum_12_1(c)   # momentum 12-1 (%): ranking CEM10 (C-8 jako filtr, sortuj malejąco po tej kolumnie)
     row["rwb_weeks"] = rwb_weeks([x or 0 for x in c])   # tygodnie od startu bieżącego RWB (sortowanie: świeże starty na górze)
     bdot = fresh_blue_dot(weekly, level) if row["glb_state"] == "NAD" else None   # > 10 % nad linią, nie tydzień przebicia: wejście po Blue Dot na tygodniowym
     if bdot:

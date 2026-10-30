@@ -389,7 +389,9 @@ class App:
                 what += " — pusta: dodaj tickery (★ Do watchlisty…, prawy przycisk na wierszu) albo dołącz listę (📂 → prawy przycisk na watchliście)"
         else:
             what = f"📋 Lista (skaner): {self.store.settings['scanner']}"
-        self.status.config(text=f"  {what}{sectors}   Dane: {self.store.at or 'brak — kliknij ⟳ Sync'}   Na liście: {len(self.tree.get_children())} z {len(view_rows)}   spełnia warunki: {n_ok}   sygnał GLB: {n_sig}"
+        mk = calc.market_regime(self.store.series.get("SPY"))   # filtr rynku CEM10: SPY pod miesięczną SMA 12 = bez nowych wejść
+        market = "" if not mk else f"   Rynek: SPY {mk['pct']:+.1f} % vs SMA 12 mies. — " + ("nowe wejścia CEM10 dozwolone" if mk["ok"] else "BEZ NOWYCH WEJŚĆ (CEM10)")
+        self.status.config(text=f"  {what}{sectors}   Dane: {self.store.at or 'brak — kliknij ⟳ Sync'}   Na liście: {len(self.tree.get_children())} z {len(view_rows)}   spełnia warunki: {n_ok}   sygnał GLB: {n_sig}{market}"
                                 f"   (warunki konieczne: {condition_text};"
                                 f" sygnał: zamknięcie tyg. 0–{calc.ENTRY_MAX_PCT:g} % nad Green Line; wyjście: MACD tyg. + stop {calc.STOP_PCT:g} %)")
 

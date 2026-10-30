@@ -163,6 +163,19 @@ class Store:
     def scanner(self):
         return next(x for x in self.settings["scanners"] if x["name"] == self.settings["scanner"])
 
+    def scanner_named(self, name):
+        return next(x for x in self.settings["scanners"] if x["name"] == name)
+
+    def sync_lists(self):
+        """Nazwy list (skanerów) odświeżanych przez Sync: aktywna lista + wszystkie listy dołączone do watchlisty otwartej w widoku głównym
+        (ręcznie dodane tickery watchlist odświeża `sync.run` zawsze)."""
+        names = [self.settings["scanner"]]
+        v = self.settings["main_view"]
+        w = self.watchlist(v["watchlist"]) if v["mode"] == VIEW_WATCH else None
+        known = {x["name"] for x in self.settings["scanners"]}
+        names += [n for n in (w or {}).get("sources", []) if n in known and n not in names]
+        return names
+
     def scan_path(self, name=None):
         return self.dir / "scans" / f"{slug(name or self.settings['scanner'])}.json"
 
@@ -327,9 +340,9 @@ class Store:
                 base.append(self.row(t) or {"ticker": t, "company": "(brak danych — ⟳ Sync)"})
         return base, set(w["tickers"])
 
-    def save_scan(self, rows, series, at, sectors=None):
-        """Lista wybranego skanera (+ ranking sektorów) i świece (dopisane do wspólnego weekly.json; zostają tylko spółki z list skanerów i symbole)."""
-        write(self.scan_path(), {"at": at, "rows": rows, **({"sectors": sectors} if sectors else {})})
+    def save_scan(self, rows, series, at, sectors=None, name=None):
+        """Lista skanera `name` (domyślnie wybranego; + ranking sektorów) i świece (dopisane do wspólnego weekly.json; zostają tylko spółki z list skanerów i symbole)."""
+        write(self.scan_path(name), {"at": at, "rows": rows, **({"sectors": sectors} if sectors else {})})
         keep = set(series)
         for sc in self.settings["scanners"]:
             keep.update(r["ticker"] for r in read(self.scan_path(sc["name"]), {}).get("rows", []))

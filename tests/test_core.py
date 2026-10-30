@@ -5,7 +5,7 @@ import math
 import pytest
 
 from desktop import calc, estimates, finviz, prices, sec, sync
-from desktop.store import Store
+from desktop.store import VIEW_WATCH, Store
 
 _D = [(dt.date(2025, 1, 6) + dt.timedelta(weeks=i)).isoformat() for i in range(60)]
 W = {"d": _D, "o": [1] * 60, "h": [1] * 60, "l": [1] * 60, "c": [50.0] * 19 + [100.0] * 40 + [104.0], "v": [1e7] * 60}   # +108 % w 52 tyg.
@@ -867,3 +867,26 @@ def test_market_regime_spy_under_monthly_sma():
     assert r["ok"] and r["pct"] > 0 and r["spy"] == up["c"][-1]                                                      # rosnący SPY: nad SMA 12 mies.
     assert calc.market_regime({"d": d, "c": up["c"][:-2] + [90.0, 90.0]})["ok"] is False                             # ostatni miesiąc mocno pod średnią -> bez nowych wejść
     assert calc.market_regime({"d": d[:10], "c": up["c"][:10]}) is None and calc.market_regime(None) is None         # za krótka historia
+
+
+def test_sync_refreshes_every_list_attached_to_the_open_watchlist(tmp_path):
+    store = Store(tmp_path)
+    first = store.settings["scanner"]
+    second = store.add_scanner("Druga lista", "f_x")
+    third = store.add_scanner("Trzecia lista", "f_y")
+    wl = store.add_watchlist("Moja") or "Moja"
+    store.set_watchlist_sources(wl, [second, "nie ma takiej"])
+    assert store.sync_lists() == [first]                                                  # widok listy: tylko aktywna lista
+    store.set_view(VIEW_WATCH, wl)
+    assert store.sync_lists() == [first, second]                                          # widok watchlisty: aktywna + dołączone (bez nieistniejących)
+    store.set_watchlist_sources(wl, [first, second, third])
+    assert store.sync_lists() == [first, second, third]
+    monthly = lambda ts, cache, log, progress=None: [cache.update({t: {"h": [["2025-01", 50]], "upto": "2025-05", "raw": 1}}) for t in ts]   # noqa: E731
+    fund = lambda ts, cache, ua, log, progress=None: None   # noqa: E731
+    for name, ticker in ((second, "B"), (third, "C")):                                    # pierwsza (sektorowa) lista wymaga ETF-ów, więc odświeżamy zwykłe
+        sync.run(store, log=lambda s: None, scanner=store.scanner_named(name), fetch_list=lambda f, max_tickers, log, progress, t=ticker: ([{"ticker": t}], 1),
+                 weekly=lambda ts, log, cache, progress: {"B": W, "C": W, "SPY": SPY}, monthly=monthly, fund=fund, est=lambda ts, cache, log: None)
+    again = Store(tmp_path)
+    assert again.rows == []                                                               # aktywna lista bez zmian przez Sync innych list
+    read = lambda n: [r["ticker"] for r in __import__("json").loads(again.scan_path(n).read_text())["rows"]]   # noqa: E731
+    assert read(second) == ["B"] and read(third) == ["C"]                                 # każda lista zapisana w swoim pliku

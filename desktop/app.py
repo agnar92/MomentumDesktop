@@ -443,12 +443,24 @@ class App:
         self.plabel.config(text="Start…")
         self.pframe.pack(fill="x", side="bottom", before=self.status)
 
+        names = self.store.sync_lists()   # aktywna lista + listy dołączone do otwartej watchlisty
+        n = len(names)
+
         def work():
-            try:
-                sync.run(self.store, log=log, progress=lambda f, st: self.q.put(("progress", (f, st))))
-                self.q.put(("synced", None))
-            except Exception as e:   # błąd sieci / Finviz: lista zostaje stara, komunikat w pasku
-                self.q.put(("error", str(e)))
+            failed = []
+            for i, name in enumerate(names):
+                if n > 1:
+                    log(f"── Lista «{name}» ({i + 1}/{n})")
+                try:
+                    sync.run(self.store, log=log, scanner=self.store.scanner_named(name),
+                             progress=lambda f, st, i=i, name=name: self.q.put(("progress", ((i + f) / n, st if n == 1 else f"[{name} {i + 1}/{n}] {st}"))))
+                except Exception as e:   # błąd sieci / Finviz: ta lista zostaje stara, reszta się odświeża
+                    failed.append(str(e) if n == 1 else f"{name}: {e}")
+                    log(f"❌ Lista «{name}»: {e}")
+            if len(failed) == n:
+                self.q.put(("error", "; ".join(failed)))
+            else:
+                self.q.put(("synced", failed))
         threading.Thread(target=work, daemon=True).start()
 
     def start_symbol_sync(self, ticker):
@@ -600,6 +612,8 @@ class App:
                     self.pframe.pack_forget()
                     self.sync_btn.config(state="normal")
                     self.refresh()
+                    if val:
+                        self.status.config(text="  ⚠ Nie odświeżono: " + "; ".join(val))   # reszta list (watchlisty) odświeżona
                     self.check_alerts()
                     if (self.store.settings.get("gist") or {}).get("auto") and (self.store.settings.get("gist") or {}).get("token"):
                         self.gist_send()   # opcja „wysyłaj po każdym Sync”

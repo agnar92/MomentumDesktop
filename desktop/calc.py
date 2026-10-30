@@ -363,18 +363,6 @@ def momentum_6(closes, weeks=26):
     return (a / b - 1) * 100 if _ok(a) and _ok(b) and b > 0 else None
 
 
-def tempo_margin(closes, q_weeks=13, y_weeks=52):
-    """TEMPO (%): średnie miesięczne tempo wzrostu z kwartału (13 tyg., zwrot^(1/3)) w stosunku do średniego tempa z roku (52 tyg., zwrot^(1/12)) − 1.
-    >= 0 = tempo nie słabnie: (1 + r3)^(1/3) >= (1 + r12)^(1/12) (ten sam znak co BURST). Brak wyniku przy krótszej historii."""
-    c = closes or []
-    if len(c) < y_weeks + 1:
-        return None
-    a, b, d = c[-1], c[-1 - q_weeks], c[-1 - y_weeks]
-    if not (_ok(a) and _ok(b) and _ok(d)) or a <= 0 or b <= 0 or d <= 0:
-        return None
-    return ((a / b) ** (1 / 3) / (a / d) ** (1 / 12) - 1) * 100
-
-
 MARKET_SMA_MONTHS = 12   # filtr rynku CEM10: SPY pod miesięczną SMA 12 = bez nowych wejść
 
 
@@ -912,7 +900,6 @@ def build_row(base, weekly, months, fund, spy=None, est=None, conditions=None):
     row["cc52w"] = price_ratio(c)
     row["mom121"] = momentum_12_1(c)   # momentum 12-1 (%): ranking CEM10 (C-8 jako filtr, sortuj malejąco po tej kolumnie)
     row["mom6"] = momentum_6(c)        # momentum 6 mies. (%): drugi ranking (filtr od–do, sortowanie po kolumnie)
-    row["tempo"] = tempo_margin(c)     # TEMPO %: >= 0 = tempo z 3 mies. nie słabnie względem 12 mies. (filtr od–do)
     row["rwb_weeks"] = rwb_weeks([x or 0 for x in c])   # tygodnie od startu bieżącego RWB (sortowanie: świeże starty na górze)
     bdot = fresh_blue_dot(weekly, level) if row["glb_state"] == "NAD" else None   # > 10 % nad linią, nie tydzień przebicia: wejście po Blue Dot na tygodniowym
     if bdot:

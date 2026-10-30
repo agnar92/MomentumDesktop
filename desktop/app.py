@@ -19,7 +19,7 @@ COLUMNS = [  # (klucz, nagłówek, szerokość, format)
     ("macd_stop", "Stop MACD", 85, "p"), ("dopm", "Δ marża oper. pp", 120, "%"), ("rev_rr", "Przychody r/r %", 115, "%"),
     ("eps_rating", "EPS Rating", 90, "i"), ("dgm", "Δ marża brutto pp", 125, "%"), ("pattern", "Wzorzec Zangera", 130, "s"), ("pattern_pct", "Do kupna wzorca %", 115, "%"), ("pattern_exit", "Ostrzeżenie wzorca", 125, "s"), ("quarter", "Kwartał", 105, "s"), ("turnover", "Obrót mln $", 95, "m"),
     ("ps", "P/S", 60, "x"), ("peg", "PEG", 70, "x2"), ("pegy", "PEGY", 75, "x2"),
-    ("rs", "RS 52 tyg. pp", 105, "%"), ("surp", "Niesp. EPS %", 95, "%"), ("beat2", "2× nad konsensus", 115, "b"), ("eps_rev", "Rewizja EPS 90 dni %", 140, "%"), ("rvol_w", "RVol tyg.", 80, "x"), ("cc52w", "C/C[52 tyg.]", 95, "r"), ("mom121", "Momentum 12-1 %", 115, "%"), ("mom6", "Momentum 6 mies. %", 125, "%"), ("tempo", "TEMPO %", 85, "%"), ("ok", "Warunki", 75, "b"), ("slow", "Hamuje", 95, "w"),
+    ("rs", "RS 52 tyg. pp", 105, "%"), ("surp", "Niesp. EPS %", 95, "%"), ("beat2", "2× nad konsensus", 115, "b"), ("eps_rev", "Rewizja EPS 90 dni %", 140, "%"), ("rvol_w", "RVol tyg.", 80, "x"), ("cc52w", "C/C[52 tyg.]", 95, "r"), ("mom121", "Momentum 12-1 %", 115, "%"), ("mom6", "Momentum 6 mies. %", 125, "%"), ("ok", "Warunki", 75, "b"), ("slow", "Hamuje", 95, "w"),
 ]
 SIGNAL = ("WYBICIE", "SYGNAŁ")
 ENTRY_MAX = calc.ENTRY_MAX_PCT   # kupno: zamknięcie tygodnia 0–10 % nad Green Line (BLUE DOT i wyżej — tylko informacyjnie)
@@ -42,8 +42,6 @@ FILTER_PRESETS = [
     ("Nad GLB + MACD dodatni", {"glb_state": {"in": ["WYBICIE", "SYGNAŁ", "BLUE DOT", "NAD"]}, "macd": {"in": ["nad"]}}),
     ("Sygnał kupna (wybicie / 0–10 % / Blue Dot) + MACD dodatni", {"glb_state": {"in": ["WYBICIE", "SYGNAŁ", "BLUE DOT"]}, "macd": {"in": ["nad"]}}),
     ("Blisko linii (−10…+10 %)", {"glb_pct": {"min": -10, "max": 10}}),
-    ("TEMPO ≥ 0 (tempo 3 mies. nie słabnie względem 12 mies.)", {"tempo": {"min": 0}}),
-    ("Momentum 6 mies. ≥ 30 % + TEMPO ≥ 0", {"mom6": {"min": 30}, "tempo": {"min": 0}}),
 ]
 
 
@@ -181,11 +179,12 @@ class App:
             if "mom121" not in display_columns:   # nowa kolumna: Momentum 12-1 % obok C/C[52 tyg.]
                 display_columns.insert(display_columns.index("cc52w") + 1 if "cc52w" in display_columns else len(display_columns), "mom121")
                 changed = True
-            for key in ("mom6", "tempo"):   # nowe kolumny: Momentum 6 mies. % i TEMPO % za Momentum 12-1 %
-                if key not in display_columns:
-                    prev = "mom6" if key == "tempo" and "mom6" in display_columns else "mom121"
-                    display_columns.insert(display_columns.index(prev) + 1 if prev in display_columns else len(display_columns), key)
-                    changed = True
+            if "mom6" not in display_columns:   # nowa kolumna: Momentum 6 mies. % za Momentum 12-1 %
+                display_columns.insert(display_columns.index("mom121") + 1 if "mom121" in display_columns else len(display_columns), "mom6")
+                changed = True
+            if "tempo" in display_columns:   # usunięta kolumna TEMPO
+                display_columns = [k for k in display_columns if k != "tempo"]
+                changed = True
             display_columns = [k for k in display_columns if k != "rwb_days"]   # poprzednia wersja kolumny (dni)
             if "rwb_weeks" not in display_columns:   # nowa kolumna: RWB tyg. (od startu bieżącego RWB) obok SMA 10>30
                 display_columns.insert(display_columns.index("trend") + 1 if "trend" in display_columns else len(display_columns), "rwb_weeks")

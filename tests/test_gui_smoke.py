@@ -933,7 +933,7 @@ def test_filter_dialog_has_from_to_for_eps_rating_and_other_number_columns(app):
     from desktop import app as A
     d = A.FilterDialog(app)
     d.update()
-    for k in ("eps_rating", "rwb_weeks", "rvol_w", "ps", "cc52w", "mom121", "mom6", "tempo"):
+    for k in ("eps_rating", "rwb_weeks", "rvol_w", "ps", "cc52w", "mom121", "mom6"):
         assert (k, "min") in d.vars and (k, "max") in d.vars       # pola „od – do” także dla EPS Rating i innych liczb
     d.vars[("eps_rating", "min")].set("80")
     d.vars[("eps_rating", "max")].set("99")
@@ -1291,12 +1291,9 @@ def test_background_always_uses_monthly_spy_sma10_also_on_weekly_and_z(app):
     assert A_chart.monthly_regime(d, _spy_monthly(), "M") == A_chart.spy_regime(d, _spy_monthly(), "M")   # na M bez zmian
 
 
-def test_tempo_and_momentum_6_columns_and_presets(app):
+def test_momentum_6_column_and_preset(app):
     from desktop import app as A
     keys = [c[0] for c in A.COLUMNS]
-    assert keys.index("mom6") == keys.index("mom121") + 1 and keys.index("tempo") == keys.index("mom6") + 1       # kolumny obok Momentum 12-1
-    presets = dict(A.FILTER_PRESETS)
-    f = presets["TEMPO ≥ 0 (tempo 3 mies. nie słabnie względem 12 mies.)"]
-    assert A.pass_filters({"tempo": 0.0}, f) and A.pass_filters({"tempo": 3.2}, f) and not A.pass_filters({"tempo": -0.1}, f) and not A.pass_filters({"tempo": None}, f)
-    g = presets["Momentum 6 mies. ≥ 30 % + TEMPO ≥ 0"]
-    assert A.pass_filters({"mom6": 45.0, "tempo": 1.0}, g) and not A.pass_filters({"mom6": 20.0, "tempo": 1.0}, g)
+    assert keys.index("mom6") == keys.index("mom121") + 1 and "tempo" not in keys       # kolumna obok Momentum 12-1
+    g = dict(A.FILTER_PRESETS)["Momentum 6 mies. ≥ 30 %"]
+    assert A.pass_filters({"mom6": 45.0}, g) and not A.pass_filters({"mom6": 20.0}, g)

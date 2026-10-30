@@ -862,3 +862,12 @@ def test_momentum_6_and_tempo_margin():
     accel = [100.0 * 1.005 ** i for i in range(47)] + [100.0 * 1.005 ** 46 * 1.03 ** k for k in range(1, 14)]
     fade = [100.0 * 1.03 ** i for i in range(47)] + [100.0 * 1.03 ** 46 * 1.001 ** k for k in range(1, 14)]
     assert calc.tempo_margin(accel) > 0 > calc.tempo_margin(fade) and calc.tempo_margin(c[:40]) is None   # przyspiesza >= 0, wygasa < 0
+
+
+def test_market_regime_spy_under_monthly_sma():
+    d = [f"{2025 + (m - 1) // 12}-{(m - 1) % 12 + 1:02d}-{day:02d}" for m in range(1, 17) for day in (8, 22)]
+    up = {"d": d, "c": [100.0 + i for i in range(len(d))]}
+    r = calc.market_regime(up)
+    assert r["ok"] and r["pct"] > 0 and r["spy"] == up["c"][-1]                                                      # rosnący SPY: nad SMA 12 mies.
+    assert calc.market_regime({"d": d, "c": up["c"][:-2] + [90.0, 90.0]})["ok"] is False                             # ostatni miesiąc mocno pod średnią -> bez nowych wejść
+    assert calc.market_regime({"d": d[:10], "c": up["c"][:10]}) is None and calc.market_regime(None) is None         # za krótka historia

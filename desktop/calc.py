@@ -375,6 +375,25 @@ def tempo_margin(closes, q_weeks=13, y_weeks=52):
     return ((a / b) ** (1 / 3) / (a / d) ** (1 / 12) - 1) * 100
 
 
+MARKET_SMA_MONTHS = 12   # filtr rynku CEM10: SPY pod miesięczną SMA 12 = bez nowych wejść
+
+
+def market_regime(weekly, n=MARKET_SMA_MONTHS):
+    """Filtr rynku CEM10 (badanie S&P 500 point-in-time 1997–2026): gdy SPY zamyka miesiąc pod swoją SMA z `n` miesięcy, nie otwieramy nowych pozycji
+    (otwarte zostają, wychodzą na SMA 10). CAGR 15,1 → 15,9 %, max DD −52 → −32 %; działa dla SMA 9–14. `weekly` = {d, c}; miesiąc = ostatnie zamknięcie tygodnia,
+    bieżący miesiąc = ostatnie zamknięcie. -> {ok, spy, sma, pct} albo None przy krótszej historii."""
+    d, c = (weekly or {}).get("d") or [], (weekly or {}).get("c") or []
+    months = {}
+    for day, x in zip(d, c):
+        if _ok(x):
+            months[str(day)[:7]] = x
+    closes = list(months.values())
+    if len(closes) < n:
+        return None
+    sma = sum(closes[-n:]) / n
+    return {"ok": closes[-1] >= sma, "spy": closes[-1], "sma": sma, "pct": (closes[-1] / sma - 1) * 100}
+
+
 def pegy_ratio(peg, forward_pe, dividend_yield_pct):
     """PEGY = Forward P/E / (EPS growth % + dividend yield %).
 

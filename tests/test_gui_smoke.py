@@ -1207,5 +1207,4 @@ def test_tempo_and_momentum_6_columns_and_presets(app):
     presets = dict(A.FILTER_PRESETS)
     f = presets["TEMPO ≥ 0 (tempo 3 mies. nie słabnie względem 12 mies.)"]
     assert A.pass_filters({"tempo": 0.0}, f) and A.pass_filters({"tempo": 3.2}, f) and not A.pass_filters({"tempo": -0.1}, f) and not A.pass_filters({"tempo": None}, f)
-    g = presets["Momentum 6 mies. ≥ 30 % + TEMPO ≥ 0"]
-    assert A.pass_filters({"mom6": 45.0, "tempo": 1.0}, g) and not A.pass_filters({"mom6": 20.0, "tempo": 1.0}, g)
+    assert not any(n.startswith("Momentum 6 mies.") for n in presets)   # 6 mies. tylko jako kolumna do sortowania, bez presetu

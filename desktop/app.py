@@ -43,7 +43,6 @@ FILTER_PRESETS = [
     ("Sygnał kupna (wybicie / 0–10 % / Blue Dot) + MACD dodatni", {"glb_state": {"in": ["WYBICIE", "SYGNAŁ", "BLUE DOT"]}, "macd": {"in": ["nad"]}}),
     ("Blisko linii (−10…+10 %)", {"glb_pct": {"min": -10, "max": 10}}),
     ("TEMPO ≥ 0 (tempo 3 mies. nie słabnie względem 12 mies.)", {"tempo": {"min": 0}}),
-    ("Momentum 6 mies. ≥ 30 % + TEMPO ≥ 0", {"mom6": {"min": 30}, "tempo": {"min": 0}}),
 ]
 
 

@@ -1291,9 +1291,7 @@ def test_background_always_uses_monthly_spy_sma10_also_on_weekly_and_z(app):
     assert A_chart.monthly_regime(d, _spy_monthly(), "M") == A_chart.spy_regime(d, _spy_monthly(), "M")   # na M bez zmian
 
 
-def test_momentum_6_column_and_preset(app):
+def test_momentum_6_column(app):
     from desktop import app as A
     keys = [c[0] for c in A.COLUMNS]
     assert keys.index("mom6") == keys.index("mom121") + 1 and "tempo" not in keys       # kolumna obok Momentum 12-1
-    g = dict(A.FILTER_PRESETS)["Momentum 6 mies. ≥ 30 %"]
-    assert A.pass_filters({"mom6": 45.0}, g) and not A.pass_filters({"mom6": 20.0}, g)

@@ -42,7 +42,6 @@ FILTER_PRESETS = [
     ("Nad GLB + MACD dodatni", {"glb_state": {"in": ["WYBICIE", "SYGNAŁ", "BLUE DOT", "NAD"]}, "macd": {"in": ["nad"]}}),
     ("Sygnał kupna (wybicie / 0–10 % / Blue Dot) + MACD dodatni", {"glb_state": {"in": ["WYBICIE", "SYGNAŁ", "BLUE DOT"]}, "macd": {"in": ["nad"]}}),
     ("Blisko linii (−10…+10 %)", {"glb_pct": {"min": -10, "max": 10}}),
-    ("Momentum 6 mies. ≥ 30 %", {"mom6": {"min": 30}}),
 ]
 
 

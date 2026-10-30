@@ -388,7 +388,7 @@ def test_sync_run_with_fake_sources(tmp_path):
     assert [f for f, _ in steps] == [0.0, 0.15, 0.4, 0.6, 1.0] and steps[-1][1] == "Gotowe"
     a = next(r for r in rows if r["ticker"] == "A")
     assert a["ok"] and a["glb_state"] == "SYGNAŁ"
-    assert a["rvol_w"] == pytest.approx(1.0) and "rvol_d" not in a and a["cc52w"] == pytest.approx(calc.price_ratio(w["c"])) and a["mom121"] == calc.momentum_12_1(w["c"])   # RVol tygodniowy; C/C[52 tyg.] i Momentum 12-1 z tygodniowych zamknięć
+    assert a["rvol_w"] == pytest.approx(1.0) and "rvol_d" not in a and a["cc52w"] == pytest.approx(calc.price_ratio(w["c"])) and a["mom121"] == calc.momentum_12_1(w["c"]) and a["mom6"] == calc.momentum_6(w["c"]) and a["tempo"] == calc.tempo_margin(w["c"])   # RVol tygodniowy; C/C[52 tyg.], Momentum 12-1 i 6 mies., TEMPO z tygodniowych zamknięć
     assert next(r for r in rows if r["ticker"] == "B")["ok"]       # mały obrót nie blokuje (płynność = filtr Finviz)
     assert Store(tmp_path).rows and Store(tmp_path).weekly("A")["c"][-1] == 104.0
 
@@ -837,3 +837,12 @@ def test_sync_refreshes_watchlist_tickers_outside_the_scanner(tmp_path):
              fund=lambda ts, cache, ua, log, progress=None: None, est=lambda ts, cache, log: None)
     assert "ZZ" in seen[0] and store.row("ZZ") is not None                                       # tickery z watchlist są pobierane razem ze skanerem
     assert [r["ticker"] for r in store.rows] == ["A"]                                           # ale nie trafiają do listy skanera
+
+
+def test_momentum_6_and_tempo_margin():
+    c = [100.0 * 1.01 ** i for i in range(60)]
+    assert calc.momentum_6(c) == pytest.approx((c[-1] / c[-27] - 1) * 100) and calc.momentum_6(c[:20]) is None
+    assert calc.tempo_margin(c) is not None and abs(calc.tempo_margin(c)) < 1e-6                       # stały wzrost: tempo 3 i 12 mies. równe
+    accel = [100.0 * 1.005 ** i for i in range(47)] + [100.0 * 1.005 ** 46 * 1.03 ** k for k in range(1, 14)]
+    fade = [100.0 * 1.03 ** i for i in range(47)] + [100.0 * 1.03 ** 46 * 1.001 ** k for k in range(1, 14)]
+    assert calc.tempo_margin(accel) > 0 > calc.tempo_margin(fade) and calc.tempo_margin(c[:40]) is None   # przyspiesza >= 0, wygasa < 0

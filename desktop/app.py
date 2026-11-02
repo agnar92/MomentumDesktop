@@ -1406,7 +1406,7 @@ class CEM10Dialog(tk.Toplevel):
         for tr in (self.usa, self.gpw):
             tr.delete(*tr.get_children())
         if not D:
-            self.info.config(text="Brak listy. Kliknij „⟳ Pobierz listę” (skład z Wikipedii, ceny miesięczne z Yahoo Finance dla ok. 580 spółek, 1–2 minuty).")
+            self.info.config(text="Brak listy. Kliknij „⟳ Pobierz listę” (skład z Wikipedii, sito Finviz, ceny miesięczne z Yahoo Finance dla ok. 180 spółek, ok. minuty).")
             self.on_hold()
             return
         U, G = D["usa"], D["gpw"]
@@ -1416,7 +1416,9 @@ class CEM10Dialog(tk.Toplevel):
                               f"GPW: filtr rynku {'BRAK ZAKUPÓW' if G['bear'] else 'zakupy dozwolone'} (indeks koszyka {num(G['lv'])} / SMA 12 {num(G['lv12'])}), "
                               f"skład z rewizji {G.get('rewizja') or '—'}.")
         uc = cem10.usa_candidates(U["rows"], U["lead"])
-        self.usa_lbl.config(text=f"USA · {U['n']} pozycji · kandydaci z {lead}: {len(uc)}")
+        pf = U.get("prefilter")
+        sito = f" · sito Finviz 6M > +20 %: S&P 500 {pf['sp']}, Nasdaq-100 {pf['nq']}" if pf else ""
+        self.usa_lbl.config(text=f"USA · {U['n']} pozycji · kandydaci z {lead}: {len(uc)}{sito}")
         self.tabs.tab(0, text=f"USA · {lead} · {min(len(uc), U['n'])} do kupienia" if not U["bear"] else "USA · brak zakupów")
         for i, r in enumerate(uc):
             idx = ", ".join(x for x, f in (("S&P 500", r.get("sp")), ("NDX", r.get("nq"))) if f)
@@ -1450,7 +1452,10 @@ class CEM10Dialog(tk.Toplevel):
             if self.held.exists(iid):
                 continue
             dec = cem10.decide(r)
-            if r is None:
+            if r is None and m == "USA" and t in (D["usa"].get("all") or []):
+                self.held.insert("", "end", iid=iid, values=(t, "jest w S&P 500 / Nasdaq-100, ale nie było jej w pobranych danych (dopisana po pobraniu) — kliknij ⟳ Pobierz listę",
+                                                              "", "", "", "", "", dec), tags=("sell",))
+            elif r is None:
                 self.held.insert("", "end", iid=iid, values=(t, "nie ma w S&P 500, Nasdaq-100, WIG20 ani mWIG40 — w USA oznacza to sprzedaż", "", "", "", "", "", dec), tags=("sell",))
             else:
                 idx = ", ".join(x for x, f in (("S&P 500", r.get("sp")), ("NDX", r.get("nq")), ("WIG20", r.get("w20")), ("mWIG40", r.get("w40"))) if f)
@@ -1463,11 +1468,11 @@ class CEM10Dialog(tk.Toplevel):
         self.busy = True
         self.fetch_btn.config(state="disabled")
         self.pbar["value"] = 0
-        gpw, old = self.gpw_members(), self.data
+        gpw, old, held = self.gpw_members(), self.data, cem10.parse_tickers(self.hold.get())
 
         def work():
             try:
-                d = cem10.fetch(gpw, old, log=lambda m: self.q.put(("log", m)), progress=lambda f: self.q.put(("progress", f)))
+                d = cem10.fetch(gpw, old, log=lambda m: self.q.put(("log", m)), progress=lambda f: self.q.put(("progress", f)), held=held)
                 self.q.put(("done", d))
             except Exception as exc:
                 self.q.put(("error", str(exc)))

@@ -44,3 +44,16 @@ def test_held_tickers_and_decision():
 def test_default_gpw_members():
     g = cem10.GPW_DEFAULT
     assert len(g["WIG20"]) == 20 and len(g["mWIG40"]) == 40 and g["rewizja"]
+
+
+def test_finviz_sieve_parsing_and_fetch_set():
+    class R:
+        text = '<a data-ticker="MRNA">MRNA</a><a data-ticker="BRK.B">x</a><a data-ticker="MRNA">MRNA</a>'
+
+        def raise_for_status(self):
+            pass
+    assert cem10.finviz_tickers("idx_sp500,ta_perf_26w20o", get=lambda *a, **k: R()) == ["BRK-B", "MRNA"]
+    mem = {"sp": {"AAA": "A", "BBB": "B", "CCC": "C", "DDD": "D"}, "nq": {"EEE": "E"}}
+    old = {"usa": {"rows": [{"t": "CCC", "r6": 0.5}, {"t": "DDD", "r6": 0.1}, {"t": "OLD", "r6": 0.9}]}}
+    # sito AAA + spoza indeksów XXX, trzymane BBB, kandydat z poprzedniej listy CCC (DDD za słaby, OLD już nie w indeksie)
+    assert cem10.usa_to_fetch(mem, ["AAA", "XXX"], held=["BBB"], old=old) == ["AAA", "BBB", "CCC"]

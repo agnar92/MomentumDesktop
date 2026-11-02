@@ -255,19 +255,63 @@ def build(mem, gpw, px, upto, today):
     return dict(generated_at=today.isoformat(), month=upto, usa=usa, gpw=gpw_out)
 
 
-def fetch(gpw, old=None, today=None, log=print, progress=None):
-    """Pełne odświeżenie: skład (Wikipedia + GPW), ceny yfinance, lista za ostatni zamknięty miesiąc. Za mało cen -> ValueError."""
+# sito Finviz: zwrot z pół roku > +20 % (Finviz liczy od dzisiejszej ceny, reguła od zamknięcia miesiąca — przy progu +30 % 2026-11-02
+# odpadało 8 z 70 kandydatów tuż przy granicy, np. PLTR +32 %; przy +20 % tylko TWLO, którego Finviz jeszcze nie miał w S&P 500)
+SIEVE = ("idx_sp500,ta_perf_26w20o", "idx_ndx,ta_perf_26w20o")
+
+
+def finviz_tickers(filters, get=None):
+    """Widok „Tickers” screenera Finviz (v=411): wszystkie wyniki na jednej stronie -> lista tickerów (BRK.B -> BRK-B)."""
+    import re
+    import requests
+    from .finviz import HEADERS, URL
+    get = get or requests.get
+    r = get(URL, params={"v": "411", "f": filters}, headers=HEADERS, timeout=30)
+    r.raise_for_status()
+    return sorted({t.replace(".", "-") for t in re.findall(r'data-ticker="([A-Z0-9.\-]+)"', r.text)})
+
+
+def usa_to_fetch(mem, sieve, held=(), old=None):
+    """Spółki USA do pobrania: sito Finviz + trzymane + kandydaci z poprzedniej listy (tylko obecni członkowie indeksów)."""
+    allu = set(mem["sp"]) | set(mem["nq"])
+    prev = {r["t"] for r in (old or {}).get("usa", {}).get("rows", []) if r.get("r6") is not None and r["r6"] > 0.2}
+    return sorted(allu & (set(sieve) | {t.replace(".", "-") for t in held} | prev))
+
+
+def fetch(gpw, old=None, today=None, log=print, progress=None, held=(), sieve=True):
+    """Odświeżenie: skład (Wikipedia + GPW), sito Finviz (2 skany), ceny yfinance, lista za ostatni zamknięty miesiąc.
+    Ceny USA tylko dla spółek po sicie, trzymanych (held) i kandydatów z poprzedniej listy; Finviz niedostępny -> wszystkie. Za mało cen -> ValueError."""
     import datetime as dt
+    import time
     from .prices import last_closed_month
     today = today or dt.date.today()
     upto = last_closed_month(today)
     mem = members(old, log)
-    tickers = ["SPY", "QQQ"] + sorted(set(mem["sp"]) | set(mem["nq"])) + [t + ".WA" for t in sorted(set(gpw["WIG20"]) | set(gpw["mWIG40"]))]
+    allu = sorted(set(mem["sp"]) | set(mem["nq"]))
+    usa, prefilter = allu, None
+    if sieve:
+        try:
+            sp = finviz_tickers(SIEVE[0])
+            time.sleep(0.8)
+            nq = finviz_tickers(SIEVE[1])
+            if len(sp) < 10:
+                raise ValueError(f"podejrzanie mało spółek ({len(sp)})")
+            usa = usa_to_fetch(mem, sp + nq, held, old)
+            prefilter = {"sp": len(sp), "nq": len(nq), "filtr": "6M > +20 %"}
+            log(f"Sito Finviz (6M > +20 %): S&P 500 {len(sp)}, Nasdaq-100 {len(nq)} -> {len(usa)} spółek USA do pobrania")
+        except Exception as e:
+            log(f"Finviz niedostępny ({e}) — pobieram wszystkie spółki S&P 500 i Nasdaq-100")
+    tickers = ["SPY", "QQQ"] + usa + [t + ".WA" for t in sorted(set(gpw["WIG20"]) | set(gpw["mWIG40"]))]
     px = download(tickers, log, progress)
     have = sum(1 for t in tickers if t in px)
     if have < 0.9 * len(tickers) or "SPY" not in px or "QQQ" not in px:
         raise ValueError(f"za mało cen: {have}/{len(tickers)}")
-    return build(mem, gpw, px, upto, today)
+    out = build(mem, gpw, px, upto, today)
+    if prefilter:
+        u = out["usa"]
+        u["prefilter"], u["all"] = prefilter, allu
+        u["missing"] = sorted(set(usa) - {r["t"] for r in u["rows"]})
+    return out
 
 
 def parse_tickers(text):

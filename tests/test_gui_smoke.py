@@ -1317,3 +1317,22 @@ def test_cem10_dialog_from_cache(app):
     assert vals == {"AAA": "trzymaj", "CCC": "sprzedaj", "ALE.WA": "trzymaj", "ZZZ": "sprawdź"}
     assert app.store.settings["cem10_hold"] == "AAA, CCC, ALE.wa, ZZZ"
     d.destroy()
+
+
+def test_cem10_portfolio_tab_from_xtb_cache(app):
+    """Zakładka Portfel z zapisanego raportu XTB (bez sieci): pozycje z udziałem i stopem, plan wpłaty, krzywa przybliżona."""
+    from desktop import app as A
+    from tests.test_portfel import CEM, _zip
+    from desktop import portfel
+    app.store.save_cache("cem10", {"generated_at": "2026-04-02", "month": "2026-03", **{k: {**v, "n": 10 if k == "usa" else 5, **(
+        {"spy5": 0.0, "qqq5": 0.0, "spy": 1.0, "spy_sma12": 1.0, "missing": []} if k == "usa" else {"lv": 1.0, "lv12": 1.0, "rewizja": "x", "missing": []})} for k, v in CEM.items()}})
+    app.store.save_cache("xtb", {"accounts": portfel.load_report(_zip())})
+    d = A.CEM10Dialog(app)
+    app.root.update()
+    assert set(d.pf.get_children()) == {"AAA", "BBB.WA", "CCC"}
+    assert "SPRZEDAJ" in d.pf.item("CCC", "values")[-1]
+    d.dep_var.set("1000")
+    d.render_plan()
+    assert any(d.plan_tree.item(i, "values")[0] == "SPRZEDAJ" for i in d.plan_tree.get_children())
+    assert d.curve_points() and d.ev.get_children()
+    d.destroy()

@@ -99,8 +99,8 @@ def symbol(sym, store, log=print, weekly=prices.weekly, monthly=prices.monthly, 
     return row, w
 
 
-def run(store, log=print, fetch_list=finviz.fetch, weekly=prices.weekly, monthly=prices.monthly, fund=sec.update, now=None, progress=None, est=estimates.update):
-    sc = store.scanner
+def run(store, log=print, fetch_list=finviz.fetch, weekly=prices.weekly, monthly=prices.monthly, fund=sec.update, now=None, progress=None, est=estimates.update, scanner=None):
+    sc = scanner or store.scanner   # `scanner` = inna lista niż aktywna (Sync odświeża też listy dołączone do watchlisty)
     sectors = None
     if sc.get("top_sectors"):
         fp = stage_progress(progress, 0)
@@ -149,7 +149,7 @@ def run(store, log=print, fetch_list=finviz.fetch, weekly=prices.weekly, monthly
         r["sector_rs"] = by_sector.get(r.get("sector"))   # RS sektora spółki (% nad SMA 52 tyg.) — tylko w skanerze sektorowym
     calc.assign_eps_rating(rows + list(tracked_rows.values()))   # EPS Rating 1–99: percentyl wśród spółek tej listy
     keep = {r["ticker"] for r in rows} | set(tracked_rows) | {BENCH} | ({e for e, _, _ in calc.SECTOR_ETFS} if sectors else set())
-    store.save_scan(rows, {t: s for t, s in series.items() if t in keep}, (now or dt.datetime.now()).isoformat(timespec="minutes"), sectors=sectors)
+    store.save_scan(rows, {t: s for t, s in series.items() if t in keep}, (now or dt.datetime.now()).isoformat(timespec="minutes"), sectors=sectors, name=sc["name"])
     ok = sum(1 for r in rows if r["ok"])
     sig = sum(1 for r in rows if r["ok"] and r["glb_state"] in ("SYGNAŁ", "WYBICIE"))
     if progress:

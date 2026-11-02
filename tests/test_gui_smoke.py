@@ -1295,3 +1295,25 @@ def test_momentum_6_column(app):
     from desktop import app as A
     keys = [c[0] for c in A.COLUMNS]
     assert keys.index("mom6") == keys.index("mom121") + 1 and "tempo" not in keys       # kolumna obok Momentum 12-1
+
+
+def test_cem10_dialog_from_cache(app):
+    """Okno CEM10 z zapisanej listy (bez sieci): zielone pierwsze N, trzymane spółki z decyzją, GPW przez .WA."""
+    from desktop import app as A
+    rows = [{"t": t, "n": t + " Inc", "sp": True, "nq": False, "c": 100.0, "sma": 90.0, "dist": d, "r3": 0.1, "r6": r6, "r12": 0.5}
+            for t, r6, d in (("AAA", 0.9, 0.1), ("BBB", 0.5, 0.05), ("CCC", 0.4, -0.02))]
+    grows = [{"t": "ALE", "n": "Allegro", "w20": True, "w40": False, "c": 40.0, "sma": 35.0, "dist": 0.1, "r3": 0.1, "r6": 1.0, "r12": 0.8}]
+    app.store.save_cache("cem10", {"generated_at": "2026-11-02", "month": "2026-10",
+                                   "usa": {"lead": "SP", "spy5": 0.01, "qqq5": -0.06, "spy": 700.0, "spy_sma12": 650.0, "bear": False, "n": 10, "rows": rows, "missing": []},
+                                   "gpw": {"w20_6": 0.2, "w40_6": 0.1, "lv": 1.8, "lv12": 1.6, "bear": False, "n": 5, "rows": grows, "rewizja": "2026-09-18", "missing": []}})
+    d = A.CEM10Dialog(app)
+    app.root.update()
+    assert d.usa.get_children() == ("AAA", "BBB")              # CCC pod SMA 10 — nie jest kandydatem
+    assert "buy" in d.usa.item("AAA", "tags")
+    assert d.gpw.get_children() == ("ALE.WA",)
+    d.hold.set("AAA, CCC, ALE.wa, ZZZ")
+    app.root.update()
+    vals = {i: d.held.item(i, "values")[-1] for i in d.held.get_children()}
+    assert vals == {"AAA": "trzymaj", "CCC": "sprzedaj", "ALE.WA": "trzymaj", "ZZZ": "sprawdź"}
+    assert app.store.settings["cem10_hold"] == "AAA, CCC, ALE.wa, ZZZ"
+    d.destroy()

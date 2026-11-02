@@ -47,21 +47,36 @@ jobs:
             --collect-submodules yfinance --collect-data yfinance \
             --collect-data certifi --copy-metadata yfinance \
             main.py
+      - name: PyInstaller CEM10 (osobny mały program, jeden plik)
+        shell: bash
+        run: |
+          pyinstaller --noconfirm --onefile --windowed --name CEM10 \
+            --collect-submodules yfinance --collect-data yfinance \
+            --collect-data certifi --copy-metadata yfinance \
+            cem10_main.py
       - name: Selftest zbudowanego pliku (biblioteki się ładują)
         shell: bash
         run: |
           if [ "$RUNNER_OS" = "Linux" ]; then xvfb-run -a "dist/MomentumDesktop${{ matrix.ext }}" --selftest; else "dist/MomentumDesktop${{ matrix.ext }}" --selftest; fi
+          if [ "$RUNNER_OS" = "Linux" ]; then xvfb-run -a "dist/CEM10${{ matrix.ext }}" --selftest; else "dist/CEM10${{ matrix.ext }}" --selftest; fi
       - name: Pakiet portable (plik + folder data/)
         shell: bash
         run: |
           mkdir -p pkg/MomentumDesktop-${{ matrix.name }}/data
           cp "dist/MomentumDesktop${{ matrix.ext }}" pkg/MomentumDesktop-${{ matrix.name }}/ || cp -r dist/MomentumDesktop.app pkg/MomentumDesktop-${{ matrix.name }}/
           cp README.md pkg/MomentumDesktop-${{ matrix.name }}/
-          cd pkg && python -c "import shutil; shutil.make_archive('MomentumDesktop-${{ matrix.name }}-portable', 'zip', '.', 'MomentumDesktop-${{ matrix.name }}')"
+          mkdir -p pkg/CEM10-${{ matrix.name }}/data
+          cp "dist/CEM10${{ matrix.ext }}" pkg/CEM10-${{ matrix.name }}/
+          cp CEM10.md pkg/CEM10-${{ matrix.name }}/
+          cd pkg && python -c "import shutil; shutil.make_archive('MomentumDesktop-${{ matrix.name }}-portable', 'zip', '.', 'MomentumDesktop-${{ matrix.name }}'); shutil.make_archive('CEM10-${{ matrix.name }}-portable', 'zip', '.', 'CEM10-${{ matrix.name }}')"
       - uses: actions/upload-artifact@v4
         with:
           name: MomentumDesktop-${{ matrix.name }}-portable
           path: pkg/MomentumDesktop-${{ matrix.name }}-portable.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: CEM10-${{ matrix.name }}-portable
+          path: pkg/CEM10-${{ matrix.name }}-portable.zip
 
   release:
     # Stała strona do pobrania: Releases -> "latest" (odnawiana po każdym udanym buildzie z main); tag v* tworzy osobne wydanie.
@@ -85,5 +100,5 @@ jobs:
           else
             gh release delete latest --cleanup-tag --yes || true
             gh release create latest zips/*.zip --target "$GITHUB_SHA" --title "Momentum Desktop (najnowszy build)" \
-              --notes "Automatyczny build z gałęzi main (${GITHUB_SHA::7}). Rozpakuj zip dla swojego systemu i uruchom MomentumDesktop. Dane: folder data/ obok programu; przy pierwszym uruchomieniu kliknij ⟳ Sync."
+              --notes "Automatyczny build z gałęzi main (${GITHUB_SHA::7}). Rozpakuj zip dla swojego systemu i uruchom MomentumDesktop (pełna aplikacja) albo CEM10 (sama strategia CEM10: portfel z raportu XTB, plan wpłat, krzywa kapitału, lista miesięczna). Dane: folder data/ obok programu; w MomentumDesktop przy pierwszym uruchomieniu kliknij ⟳ Sync, w CEM10 ⟳ Pobierz listę."
           fi

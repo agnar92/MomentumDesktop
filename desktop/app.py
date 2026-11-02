@@ -8,7 +8,7 @@ from tkinter import messagebox, simpledialog, ttk
 import datetime as dt
 import math
 
-from . import calc, finviz, gist, lines, prices, sec, sync
+from . import calc, cem10, finviz, gist, lines, prices, sec, sync
 from .chart import ChartWindow
 from .store import DEFAULT_SCANNERS, VIEW_LIST, VIEW_WATCH, Store, normalize_scanners, normalize_watchlists
 from .theme import BG, FG, PANEL, apply_dark, autowrap, setup_style
@@ -142,6 +142,7 @@ class App:
         self.alert_btn = tk.Button(bar, text="🔔 Alerty", command=lambda: AlertsDialog(self), relief="flat")
         self.alert_btn.pack(side="left", padx=4)
         tk.Button(bar, text="📌 Pozycje", command=lambda: PositionsDialog(self), relief="flat").pack(side="left", padx=4)
+        tk.Button(bar, text="📈 CEM10", command=lambda: CEM10Dialog(self), relief="flat").pack(side="left", padx=4)
         tk.Button(bar, text="Kolumny…", command=lambda: ColumnsDialog(self), relief="flat").pack(side="left", padx=4)
         tk.Button(bar, text="☁ Web (gist)…", command=lambda: GistDialog(self), relief="flat").pack(side="left", padx=4)
         tk.Label(bar, text="Ctrl+Space — dowolny symbol (np. SPY, NVDA)", bg=PANEL, fg="#8b95a3").pack(side="left", padx=12)
@@ -1308,6 +1309,253 @@ class AlertsDialog(tk.Toplevel):
     def clear(self):
         self.app.store.alerts["log"] = []
         self.app.store.save_alerts()
+        self.destroy()
+
+
+def pct(x):
+    return "" if x is None else f"{x * 100:+.1f} %".replace(".", ",")
+
+
+def num(x):
+    return "" if x is None else f"{x:,.2f}".replace(",", " ").replace(".", ",")
+
+
+class CEM10Dialog(tk.Toplevel):
+    """Miesięczna lista CEM10: USA (lider SPY / QQQ z 5M, 10 pozycji) i GPW (WIG20 + mWIG40, C-8, 5 pozycji), trzymane spółki.
+    Dane: data/cem10.json (⟳ Pobierz), skład GPW: data/cem10_gpw.json albo cem10.GPW_DEFAULT. Dwuklik = wykres."""
+
+    def __init__(self, app):
+        super().__init__(app.root)
+        self.app = app
+        self.title("CEM10 — lista miesięczna")
+        self.configure(bg=PANEL)
+        self.geometry("1120x780")
+        apply_dark(self)
+        self.q = queue.Queue()
+        self.busy = False
+        self.info = autowrap(tk.Label(self, text="", bg=PANEL, anchor="w", justify="left"))
+        self.info.pack(fill="x", padx=10, pady=(10, 4))
+        row = tk.Frame(self, bg=PANEL)
+        row.pack(fill="x", padx=10)
+        self.fetch_btn = tk.Button(row, text="⟳ Pobierz listę (ostatni zamknięty miesiąc)", command=self.start_fetch, relief="flat")
+        self.fetch_btn.pack(side="left")
+        tk.Button(row, text="Skład GPW…", command=lambda: CEM10GpwDialog(self), relief="flat").pack(side="left", padx=6)
+        tk.Button(row, text="Zamknij", command=self.destroy, relief="flat").pack(side="right")
+        self.pbar = ttk.Progressbar(row, orient="horizontal", mode="determinate", maximum=1000, length=220)
+        self.pbar.pack(side="left", padx=8)
+        self.plabel = tk.Label(row, text="", bg=PANEL, fg="#8b95a3")
+        self.plabel.pack(side="left")
+        # dół okna (zawsze widoczny): trzymane spółki + objaśnienie; listy USA / GPW dzielą resztę wysokości
+        bottom = tk.Frame(self, bg=PANEL)
+        bottom.pack(side="bottom", fill="x")
+        tk.Label(bottom, text="Spółki, które trzymasz (tickery USA i GPW oddzielone spacją lub przecinkiem; GPW można wymusić końcówką .WA, np. ALE.WA; zapisują się w ustawieniach):",
+                 bg=PANEL, anchor="w").pack(fill="x", padx=10, pady=(8, 2))
+        self.hold = tk.StringVar(value=app.store.settings.get("cem10_hold", ""))
+        tk.Entry(bottom, textvariable=self.hold, relief="flat").pack(fill="x", padx=10)
+        self.held = self._tree([("t", "Ticker", 70), ("n", "Spółka", 260), ("m", "Rynek", 150), ("c", "Zamknięcie", 100), ("sma", "SMA 10", 100),
+                                ("dist", "Od SMA 10", 100), ("r6", "Zwrot 6M", 90), ("dec", "Decyzja", 100)], 5, parent=bottom, expand=False)
+        self.held.tag_configure("sell", foreground="#ff8b7e")
+        tk.Label(bottom, text="Zielone = do kupienia (pierwsze 10 w USA, 5 w GPW; kupujesz tyle, ile masz wolnych miejsc). Wyjście: zamknięcie miesiąca pod SMA 10, "
+                 "stop awaryjny −40 %. Skład GPW popraw po każdej rewizji (marzec, czerwiec, wrzesień, grudzień). Dwuklik = wykres. To wynik reguł, nie rekomendacja.",
+                 bg=PANEL, fg="#8b95a3", anchor="w", justify="left", wraplength=1060).pack(fill="x", padx=10, pady=(6, 10))
+        # zakładki USA / GPW (cała wysokość nad trzymanymi spółkami)
+        self.tabs = ttk.Notebook(self)
+        self.tabs.pack(fill="both", expand=True, padx=10, pady=(8, 0))
+        tab_usa, tab_gpw = tk.Frame(self.tabs, bg=PANEL), tk.Frame(self.tabs, bg=PANEL)
+        self.tabs.add(tab_usa, text="USA")
+        self.tabs.add(tab_gpw, text="GPW")
+        self.usa_lbl = tk.Label(tab_usa, text="USA", bg=PANEL, anchor="w", font=("TkDefaultFont", 10, "bold"))
+        self.usa_lbl.pack(fill="x", padx=0, pady=(6, 2))
+        self.usa = self._tree([("rank", "#", 36), ("t", "Ticker", 70), ("n", "Spółka", 260), ("r6", "Zwrot 6M", 90), ("c", "Zamknięcie", 100),
+                               ("sma", "SMA 10", 100), ("dist", "Nad SMA 10", 100), ("idx", "Indeks", 140)], 14, parent=tab_usa)
+        self.gpw_lbl = tk.Label(tab_gpw, text="GPW", bg=PANEL, anchor="w", font=("TkDefaultFont", 10, "bold"))
+        self.gpw_lbl.pack(fill="x", padx=0, pady=(6, 2))
+        self.gpw = self._tree([("rank", "#", 36), ("t", "Ticker", 70), ("n", "Spółka", 260), ("r6", "Zwrot 6M", 90), ("r3", "3M", 80),
+                               ("r12", "12M", 80), ("c", "Zamknięcie", 100), ("sma", "SMA 10", 100), ("idx", "Indeks", 90)], 14, parent=tab_gpw)
+        self.hold.trace_add("write", lambda *_: self.on_hold())
+        self.bind("<Escape>", lambda e: self.destroy())
+        self.data = app.store.cache("cem10") or None
+        self.render()
+        self.after(150, self._poll)
+
+    def _tree(self, cols, height, parent=None, expand=True):
+        frame = tk.Frame(parent or self, bg=PANEL)
+        frame.pack(fill="both" if expand else "x", expand=expand, padx=0 if parent is not None and expand else 10)
+        tree = ttk.Treeview(frame, columns=[c[0] for c in cols], show="headings", height=height, selectmode="browse")
+        for key, head, width in cols:
+            tree.heading(key, text=head)
+            tree.column(key, width=width, anchor="w" if key in ("t", "n", "idx", "m", "dec") else "e", stretch=key == "n")
+        sb = ttk.Scrollbar(frame, orient="vertical", command=tree.yview)
+        tree.configure(yscrollcommand=sb.set)
+        tree.pack(side="left", fill="both", expand=True)
+        sb.pack(side="left", fill="y")
+        tree.tag_configure("buy", background="#123a24")
+        tree.bind("<Double-1>", lambda e, tr=tree: self.open(tr))
+        return tree
+
+    def open(self, tree):
+        sel = tree.selection()
+        if sel:
+            self.app.open_symbol(sel[0])
+
+    def gpw_members(self):
+        return self.app.store.cache("cem10_gpw") or cem10.GPW_DEFAULT
+
+    def render(self):
+        D = self.data
+        for tr in (self.usa, self.gpw):
+            tr.delete(*tr.get_children())
+        if not D:
+            self.info.config(text="Brak listy. Kliknij „⟳ Pobierz listę” (skład z Wikipedii, ceny miesięczne z Yahoo Finance dla ok. 580 spółek, 1–2 minuty).")
+            self.on_hold()
+            return
+        U, G = D["usa"], D["gpw"]
+        lead = "Nasdaq-100" if U["lead"] == "NDX" else "S&P 500"
+        self.info.config(text=f"Stan na zamknięcie {D['month']} (pobrano {D['generated_at']}).   USA: lider {lead} (5M: SPY {pct(U['spy5'])}, QQQ {pct(U['qqq5'])}), "
+                              f"filtr rynku {'BRAK ZAKUPÓW (SPY pod SMA 12)' if U['bear'] else 'zakupy dozwolone'} (SPY {num(U['spy'])} / SMA 12 {num(U['spy_sma12'])}).   "
+                              f"GPW: filtr rynku {'BRAK ZAKUPÓW' if G['bear'] else 'zakupy dozwolone'} (indeks koszyka {num(G['lv'])} / SMA 12 {num(G['lv12'])}), "
+                              f"skład z rewizji {G.get('rewizja') or '—'}.")
+        uc = cem10.usa_candidates(U["rows"], U["lead"])
+        self.usa_lbl.config(text=f"USA · {U['n']} pozycji · kandydaci z {lead}: {len(uc)}")
+        self.tabs.tab(0, text=f"USA · {lead} · {min(len(uc), U['n'])} do kupienia" if not U["bear"] else "USA · brak zakupów")
+        for i, r in enumerate(uc):
+            idx = ", ".join(x for x, f in (("S&P 500", r.get("sp")), ("NDX", r.get("nq"))) if f)
+            self.usa.insert("", "end", iid=r["t"], values=(i + 1, r["t"], r["n"], pct(r["r6"]), num(r["c"]), num(r["sma"]), pct(r["dist"]), idx),
+                            tags=("buy",) if i < U["n"] and not U["bear"] else ())
+        gc_ = cem10.gpw_candidates(G["rows"])
+        self.gpw_lbl.config(text=f"GPW · {G['n']} pozycji · WIG20 + mWIG40 bez lidera, C-8 · kandydaci: {len(gc_)}")
+        self.tabs.tab(1, text=f"GPW · {min(len(gc_), G['n'])} do kupienia" if not G["bear"] else "GPW · brak zakupów")
+        for i, r in enumerate(gc_):
+            self.gpw.insert("", "end", iid=r["t"] + ".WA", values=(i + 1, r["t"], r["n"], pct(r["r6"]), pct(r["r3"]), pct(r["r12"]), num(r["c"]), num(r["sma"]),
+                                                                   "WIG20" if r.get("w20") else "mWIG40"), tags=("buy",) if i < G["n"] and not G["bear"] else ())
+        self.on_hold()
+
+    def on_hold(self):
+        text = self.hold.get()
+        if self.app.store.settings.get("cem10_hold", "") != text:
+            self.app.store.settings["cem10_hold"] = text
+            self.app.store.save_settings()
+        self.held.delete(*self.held.get_children())
+        D = self.data or {"usa": {"rows": []}, "gpw": {"rows": []}}
+        us = {r["t"]: r for r in D["usa"]["rows"]}
+        gp = {r["t"]: r for r in D["gpw"]["rows"]}
+        for t in cem10.parse_tickers(text):
+            if t.endswith(".WA"):            # .WA = spółka z GPW (np. ALE.WA = Allegro, ALE = Allete w USA)
+                t = t[:-3]
+                r, m, iid = gp.get(t), "GPW", t + ".WA"
+            else:
+                r, m, iid = us.get(t) or us.get(t.replace(".", "-")), "USA", t
+                if r is None and t in gp:
+                    r, m, iid = gp[t], "GPW", t + ".WA"
+            if self.held.exists(iid):
+                continue
+            dec = cem10.decide(r)
+            if r is None:
+                self.held.insert("", "end", iid=iid, values=(t, "nie ma w S&P 500, Nasdaq-100, WIG20 ani mWIG40 — w USA oznacza to sprzedaż", "", "", "", "", "", dec), tags=("sell",))
+            else:
+                idx = ", ".join(x for x, f in (("S&P 500", r.get("sp")), ("NDX", r.get("nq")), ("WIG20", r.get("w20")), ("mWIG40", r.get("w40"))) if f)
+                self.held.insert("", "end", iid=iid, values=(r["t"], r["n"], f"{m} · {idx}", num(r["c"]), num(r["sma"]), pct(r["dist"]), pct(r["r6"]), dec),
+                                 tags=("sell",) if dec != "trzymaj" else ())
+
+    def start_fetch(self):
+        if self.busy:
+            return
+        self.busy = True
+        self.fetch_btn.config(state="disabled")
+        self.pbar["value"] = 0
+        gpw, old = self.gpw_members(), self.data
+
+        def work():
+            try:
+                d = cem10.fetch(gpw, old, log=lambda m: self.q.put(("log", m)), progress=lambda f: self.q.put(("progress", f)))
+                self.q.put(("done", d))
+            except Exception as exc:
+                self.q.put(("error", str(exc)))
+        threading.Thread(target=work, daemon=True).start()
+
+    def _poll(self):
+        if not self.winfo_exists():
+            return
+        try:
+            while True:
+                kind, val = self.q.get_nowait()
+                if kind == "log":
+                    self.plabel.config(text=val)
+                elif kind == "progress":
+                    self.pbar["value"] = val * 1000
+                elif kind == "done":
+                    self.busy = False
+                    self.fetch_btn.config(state="normal")
+                    self.data = val
+                    self.app.store.save_cache("cem10", val)
+                    self.plabel.config(text=f"✓ Lista za {val['month']}")
+                    self.render()
+                elif kind == "error":
+                    self.busy = False
+                    self.fetch_btn.config(state="normal")
+                    self.plabel.config(text=f"❌ {val}")
+        except queue.Empty:
+            pass
+        self.after(150, self._poll)
+
+
+class CEM10GpwDialog(tk.Toplevel):
+    """Skład WIG20 i mWIG40 do listy CEM10: jeden ticker na wiersz (opcjonalnie z nazwą), zapis w data/cem10_gpw.json."""
+
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.parent = parent
+        self.title("CEM10 — skład GPW")
+        self.configure(bg=PANEL)
+        apply_dark(self)
+        g = parent.gpw_members()
+        tk.Label(self, text="Po każdej rewizji GPW (marzec, czerwiec, wrzesień, grudzień) dopisz nowe spółki i usuń te, które wypadły.\n"
+                            "Jeden ticker GPW na wiersz (bez .WA), po spacji może być nazwa. Ceny pobierają się z Yahoo Finance jako TICKER.WA.",
+                 bg=PANEL, anchor="w", justify="left").pack(fill="x", padx=10, pady=(10, 4))
+        top = tk.Frame(self, bg=PANEL)
+        top.pack(fill="x", padx=10)
+        tk.Label(top, text="Data rewizji:", bg=PANEL).pack(side="left")
+        self.rev = tk.StringVar(value=g.get("rewizja", ""))
+        tk.Entry(top, textvariable=self.rev, width=12, relief="flat").pack(side="left", padx=6)
+        boxes = tk.Frame(self, bg=PANEL)
+        boxes.pack(fill="both", expand=True, padx=10, pady=6)
+        self.txt = {}
+        for col, key in enumerate(("WIG20", "mWIG40")):
+            f = tk.Frame(boxes, bg=PANEL)
+            f.grid(row=0, column=col, sticky="nsew", padx=4)
+            boxes.grid_columnconfigure(col, weight=1)
+            tk.Label(f, text=f"{key} ({len(g[key])})", bg=PANEL).pack(anchor="w")
+            t = tk.Text(f, width=44, height=24, bg=BG, fg=FG, insertbackground=FG, relief="flat")
+            t.pack(fill="both", expand=True)
+            t.insert("1.0", "\n".join(f"{k} {v}" for k, v in g[key].items()))
+            self.txt[key] = t
+        row = tk.Frame(self, bg=PANEL)
+        row.pack(fill="x", padx=10, pady=(0, 10))
+        tk.Button(row, text="Zapisz", command=self.save, relief="flat").pack(side="left")
+        tk.Button(row, text="Przywróć domyślny skład", command=self.reset, relief="flat").pack(side="left", padx=6)
+        tk.Button(row, text="Anuluj", command=self.destroy, relief="flat").pack(side="right")
+        self.bind("<Escape>", lambda e: self.destroy())
+
+    @staticmethod
+    def parse(text):
+        out = {}
+        for line in text.splitlines():
+            parts = line.strip().split(None, 1)
+            if parts:
+                t = parts[0].upper().replace(".WA", "")
+                out[t] = parts[1].strip() if len(parts) > 1 else t
+        return out
+
+    def save(self):
+        g = {"rewizja": self.rev.get().strip(), "WIG20": self.parse(self.txt["WIG20"].get("1.0", "end")),
+             "mWIG40": self.parse(self.txt["mWIG40"].get("1.0", "end"))}
+        self.parent.app.store.save_cache("cem10_gpw", g)
+        self.parent.plabel.config(text=f"✓ Zapisano skład GPW ({len(g['WIG20'])} + {len(g['mWIG40'])}); kliknij ⟳ Pobierz, żeby przeliczyć listę.")
+        self.destroy()
+
+    def reset(self):
+        self.parent.app.store.save_cache("cem10_gpw", {})
+        self.parent.plabel.config(text="✓ Przywrócono domyślny skład GPW; kliknij ⟳ Pobierz, żeby przeliczyć listę.")
         self.destroy()
 
 

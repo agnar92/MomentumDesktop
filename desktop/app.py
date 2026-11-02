@@ -9,7 +9,6 @@ import datetime as dt
 import math
 
 from . import calc, finviz, gist, lines, prices, sec, sync
-from .cem10_ui import CEM10Dialog, CEM10GpwDialog  # noqa: F401  (okno CEM10 = też osobny program cem10_main.py)
 from .chart import ChartWindow
 from .store import DEFAULT_SCANNERS, VIEW_LIST, VIEW_WATCH, Store, normalize_scanners, normalize_watchlists
 from .theme import BG, FG, PANEL, apply_dark, autowrap, setup_style
@@ -143,7 +142,7 @@ class App:
         self.alert_btn = tk.Button(bar, text="🔔 Alerty", command=lambda: AlertsDialog(self), relief="flat")
         self.alert_btn.pack(side="left", padx=4)
         tk.Button(bar, text="📌 Pozycje", command=lambda: PositionsDialog(self), relief="flat").pack(side="left", padx=4)
-        tk.Button(bar, text="📈 CEM10", command=lambda: CEM10Dialog(self), relief="flat").pack(side="left", padx=4)
+        tk.Button(bar, text="📈 CEM10", command=self.open_cem10, relief="flat").pack(side="left", padx=4)
         tk.Button(bar, text="Kolumny…", command=lambda: ColumnsDialog(self), relief="flat").pack(side="left", padx=4)
         tk.Button(bar, text="☁ Web (gist)…", command=lambda: GistDialog(self), relief="flat").pack(side="left", padx=4)
         tk.Label(bar, text="Ctrl+Space — dowolny symbol (np. SPY, NVDA)", bg=PANEL, fg="#8b95a3").pack(side="left", padx=12)
@@ -341,6 +340,15 @@ class App:
         exit_now = (r.get("glb") and price < r["glb"]) if st.settings.get("exit", "MACD") == "GLB" else \
             bool((ms and price < ms) or (plan["stop_init"] is not None and price <= plan["stop_init"]))
         return bool(r.get("slow") or exit_now or plan["half"])
+
+    def open_cem10(self):
+        """CEM10 (portfel XTB, plan, listy): ta sama strona co osobny program CEM10, tu w domyślnej przeglądarce (serwer lokalny w tle)."""
+        import webbrowser
+
+        from . import cem10_web
+        if not getattr(self, "cem10_url", None):
+            self.cem10_url = cem10_web.serve_in_background(cem10_web.Api(self.store))
+        webbrowser.open(self.cem10_url)
 
     def refresh(self):
         sel = self.current()

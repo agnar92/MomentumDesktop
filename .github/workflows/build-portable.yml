@@ -46,6 +46,7 @@ jobs:
           pyinstaller --noconfirm --onefile --windowed --name MomentumDesktop \
             --collect-submodules yfinance --collect-data yfinance \
             --collect-data certifi --copy-metadata yfinance \
+            --add-data "desktop/cem10_web${{ matrix.sep }}desktop/cem10_web" \
             main.py
       - name: PyInstaller CEM10 (osobny mały program, jeden plik)
         shell: bash
@@ -53,6 +54,8 @@ jobs:
           pyinstaller --noconfirm --onefile --windowed --name CEM10 \
             --collect-submodules yfinance --collect-data yfinance \
             --collect-data certifi --copy-metadata yfinance \
+            --add-data "desktop/cem10_web${{ matrix.sep }}desktop/cem10_web" \
+            $( [ "$RUNNER_OS" = "Windows" ] && echo "--collect-all webview" ) \
             cem10_main.py
       - name: Selftest zbudowanego pliku (biblioteki się ładują)
         shell: bash

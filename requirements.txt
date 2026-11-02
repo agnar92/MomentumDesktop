@@ -4,3 +4,4 @@ requests
 lxml
 yfinance
 openpyxl
+pywebview; sys_platform == "win32"

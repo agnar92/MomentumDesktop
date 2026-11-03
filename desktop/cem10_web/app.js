@@ -175,7 +175,7 @@ function planList(PL) {
     h += `<div class="actions">` + PL.actions.map((a) => `<div class="act" data-sym="${esc(a.yahoo)}" data-title="${esc(a.name || a.ticker)}" tabindex="0" role="button">
       <span class="pill ${kind[a.akcja] || ""}">${esc(a.akcja)}</span>
       <div class="who"><b>${esc(a.ticker)}</b> <span class="tag" style="--c:${BCOL[a.koszyk]}">${BUCKET[a.koszyk]}</span><small>${esc(a.name || "")}${a.uwagi ? " · " + esc(a.uwagi) : ""}</small></div>
-      <div class="amt"><b>${zl(a.kwota)}</b><small>${a.akcja === "SPRZEDAJ" ? "całą pozycję" : a.shares ? "≈ " + num(a.shares, a.shares < 10 ? 3 : 1) + " akcji po " + num(a.price) + " " + a.ccy : ""}</small></div></div>`).join("") + `</div>`;
+      <div class="amt"><b>${zl(a.kwota)}</b><small>${a.akcja === "SPRZEDAJ" ? "całą pozycję" : a.shares ? "≈ " + num(a.shares, a.shares < 10 ? 3 : 1) + " akcji po " + num(a.price) + " " + a.ccy : ""}</small>${a.akcja === "KUP" && a.price && a.koszyk !== "etf" ? `<small class="stopv">stop −40 % ≈ ${num(a.price * (1 - S.rules.stop))} ${a.ccy}</small>` : ""}</div></div>`).join("") + `</div>`;
   }
   const al = s.alloc;
   h += `<p class="note">Do rozdysponowania ${zl(s.free)} (gotówka + wpłata + sprzedaże): USA ${zl(al.usa)}, GPW ${zl(al.gpw)}, ETF ${zl(al.etf)}; zostaje w gotówce ${zl(s.cash_left)}.
@@ -252,32 +252,60 @@ function manualEditor() {
     <div class="row"><button class="btn" type="button" data-act="madd">＋ Dodaj pozycję</button><button class="btn primary" type="button" data-act="msave">Zapisz konto</button>
       ${M.has ? `<button class="btn" id="mPricesBtn" type="button" data-act="mprices" ${S.task.busy ? "disabled" : ""}>Odśwież ceny</button><button class="btn ghost" type="button" data-act="mcancel">Anuluj</button>` : ""}</div></section>`;
 }
+function adjustCard() {
+  const defc = { usa: "USD", gpw: "PLN", etf: "USD" };
+  const rows = S.adjust.map((a) => `<tr><td><span class="pill ${a.op === "buy" ? "good" : "bad"}">${a.op === "buy" ? "KUP" : "SPRZEDAJ"}</span></td>
+    <td><b>${esc(a.t)}</b> <span class="muted xs">${KIND_LAB[a.kind]}</span></td><td class="r">${num(a.shares, a.shares % 1 ? 4 : 0)}</td><td class="r">${num(a.price)} ${a.ccy || defc[a.kind]}</td>
+    <td class="r">${a.amount_pln ? zl(a.amount_pln) : ""}</td><td>${esc(a.ts.slice(0, 10))}</td><td><button class="icon" type="button" data-act="adel" data-id="${esc(a.id)}" aria-label="Usuń wpis">✕</button></td></tr>`).join("");
+  return `<section class="card" id="aCard"><div class="card-head"><div><h2>Dopisz zakup lub sprzedaż</h2><p>Transakcje po dacie raportu XTB (np. dzisiejszy zakup). Pozycje, średnia cena zakupu, stop i gotówka liczą się od razu; nowy raport XTB zastępuje te wpisy.</p></div></div>
+    <div class="mrow-k">
+      <label class="field"><span>Ticker</span><input type="text" id="ad_t" placeholder="np. NVDA, ALE, CSPX.UK" autocomplete="off" style="text-transform:uppercase"></label>
+      <label class="field"><span>Rynek</span><select id="ad_kind">${Object.entries(KIND_LAB).map(([k, v]) => `<option value="${k}">${v}</option>`).join("")}</select></label>
+      <label class="field"><span>Liczba akcji</span><input type="text" inputmode="decimal" id="ad_sh" placeholder="np. 2,5"></label>
+      <label class="field"><span>Cena transakcji (waluta instrumentu)</span><input type="text" inputmode="decimal" id="ad_pr" placeholder="np. 187,40"></label>
+      <label class="field"><span>Waluta</span><select id="ad_ccy"><option value="">auto (USD / PLN)</option>${["PLN", "USD", "EUR", "GBP"].map((c) => `<option>${c}</option>`).join("")}</select></label>
+      <label class="field"><span>Kwota z konta w zł (opcjonalnie)</span><input type="text" inputmode="decimal" id="ad_pln" placeholder="program policzy z kursu"></label>
+    </div>
+    <div class="row"><button class="btn primary" type="button" data-act="abuy">Dodaj zakup</button><button class="btn" type="button" data-act="asell">Dodaj sprzedaż</button>
+      ${S.adjust.length ? "" : `<button class="btn ghost" type="button" data-act="aclose">Zamknij</button>`}</div>
+    ${rows ? `<div class="tbl-wrap"><table><thead><tr><th></th><th>Spółka</th><th class="r">Ilość</th><th class="r">Cena</th><th class="r">Z konta</th><th>Dodano</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>` : ""}</section>`;
+}
+async function submitAdjust(op) {
+  const body = { op, t: $("#ad_t").value, kind: $("#ad_kind").value, shares: numOf($("#ad_sh").value), price: numOf($("#ad_pr").value), ccy: $("#ad_ccy").value || undefined, amount_pln: numOf($("#ad_pln").value) || undefined };
+  try {
+    setState(await post("adjust", body));
+    toast(op === "buy" ? "Dopisano zakup" : "Dopisano sprzedaż");
+    const r = await post("manual/prices");
+    if (r.started) { S.task.busy = true; setState(S); }
+  } catch (e) { toast(e.message, true); }
+}
 function viewPortfolio() {
   const P = S.portfolio;
   const sel = P && P.accounts.length > 1 ? `<label class="field"><span>Konto</span><select id="account">${P.accounts.map((a) => `<option ${a === P.label ? "selected" : ""}>${esc(a)}</option>`).join("")}</select></label>` : "";
   let h = `<header class="page-head"><div><h1>Portfel</h1><p>${P ? (P.manual ? "Konto ręczne" : `Konto ${esc(P.label)} · raport ${esc((P.generated || "").slice(0, 16).replace("T", " "))} UTC`) : "Pozycje z raportu XTB albo wpisane ręcznie"}</p></div>
-    <div class="row-tools">${sel}<button class="btn" type="button" data-act="mopen">${S.manual_acct.has ? "Edytuj konto ręczne" : "＋ Konto ręczne"}</button></div></header>`;
+    <div class="row-tools">${sel}${P && !P.manual ? `<button class="btn" type="button" data-act="aopen">＋ Dopisz zakup</button>` : ""}<button class="btn" type="button" data-act="mopen">${S.manual_acct.has ? "Edytuj konto ręczne" : "＋ Konto ręczne"}</button></div></header>`;
   if (ui.manualEdit && ui.draft) h += manualEditor();
+  if (P && !P.manual && (ui.adjOpen || S.adjust.length)) h += adjustCard();
   if (!P) return ui.manualEdit ? h : h + `<div class="card"><div class="empty"><b>Brak konta</b>Wczytaj raport z XTB (xStation → Historia konta → Eksport) albo wpisz gotówkę i pozycje ręcznie.
       <div class="row"><button class="btn" data-act="xtb" type="button">Wczytaj raport XTB…</button><button class="btn" data-act="mopen" type="button">Wpisz ręcznie</button></div></div></div>`;
   h += `<section class="card"><div class="tbl-wrap"><table><thead><tr><th>Spółka</th><th class="c-opt">Koszyk</th><th class="r">Wartość</th><th class="r">Udział</th><th class="r">Wynik</th>
-      <th class="r c-opt">Cena zakupu</th><th class="r c-opt">Cena teraz</th><th class="r">Od SMA 10</th><th class="r">Do stopu −40 %</th><th>Status</th></tr></thead><tbody>`;
+      <th class="r">Zakup / stop −40 %</th><th class="r c-opt">Cena teraz</th><th class="r">Od SMA 10</th><th class="r c-opt">Do stopu −40 %</th><th>Status</th></tr></thead><tbody>`;
   const max = Math.max(...P.rows.map((r) => r.share), 0.01);
   for (const r of P.rows) {
     const sell = r.status.startsWith("SPRZEDAJ"), dim = r.bucket === "etf" || r.bucket === "inne";
     const st = sell ? "bad" : r.status.startsWith("kandydat") ? "good" : r.status.startsWith("trzymaj") ? "info" : "";
     h += `<tr class="${sell ? "sell" : dim ? "dim" : ""}" data-sym="${esc(r.yahoo)}" data-title="${esc(r.name)}" data-entry="${r.open_price || ""}">
-      <td><span class="t">${esc(r.t)}</span> <span class="n">${esc(r.name === r.t ? "" : r.name)}</span> <span class="tag c-opt-inv" style="--c:${BCOL[r.bucket]}" title="${BUCKET[r.bucket]}"></span></td>
+      <td><span class="t">${esc(r.t)}</span> <span class="n">${esc(r.name === r.t ? "" : r.name)}</span>${r.adjusted ? ` <span class="pill info" title="Zmienione ręcznie po raporcie XTB">+</span>` : ""} <span class="tag c-opt-inv" style="--c:${BCOL[r.bucket]}" title="${BUCKET[r.bucket]}"></span></td>
       <td class="c-opt"><span class="tag" style="--c:${BCOL[r.bucket]}">${BUCKET[r.bucket]}</span></td>
       <td class="r">${zl(r.value)}</td>
       <td class="r">${pct(r.share, 1, false)}<span class="minibar" style="--c:${BCOL[r.bucket]}"><i style="width:${(r.share / max) * 100}%"></i></span></td>
       <td class="r ${cls(r.profit_pct)}">${pct(r.profit_pct == null ? null : r.profit_pct / 100)}</td>
-      <td class="r c-opt">${num(r.open_price)}</td><td class="r c-opt">${num(r.price)}</td>
+      <td class="r">${r.open_price ? `${num(r.open_price)}<small class="ccy"> ${esc(r.ccy || "")}</small><br><span class="stopv">stop ${num(r.stop)}</span>` : "—"}</td><td class="r c-opt">${num(r.price)}</td>
       <td class="r ${cls(r.dist)}">${r.dist == null ? "—" : pct(r.dist)}</td>
-      <td class="r ${r.stop_dist != null && r.stop_dist < 0.15 ? "neg" : ""}">${r.stop_dist == null ? "—" : pct(r.stop_dist)}</td>
+      <td class="r c-opt ${r.stop_dist != null && r.stop_dist < 0.15 ? "neg" : ""}">${r.stop_dist == null ? "—" : pct(r.stop_dist)}</td>
       <td><span class="pill ${st}" title="${esc(r.status)}">${esc(r.status)}</span></td></tr>`;
   }
-  h += `</tbody></table></div><p class="note">Kliknij spółkę, żeby zobaczyć wykres miesięczny z ceną zakupu i stopem. „Do stopu” = ile cena może jeszcze spaść do −40 % od średniej ceny zakupu.</p></section>`;
+  h += `</tbody></table></div><p class="note">Kliknij spółkę, żeby zobaczyć wykres miesięczny z ceną zakupu i stopem. „Zakup” to średnia cena zakupu, „stop” = 60 % tej ceny (−40 %), obie w walucie instrumentu, czyli tam, gdzie ustawiasz zlecenie stop w XTB. „Do stopu” = ile cena może jeszcze spaść do tego poziomu.</p></section>`;
   return h;
 }
 
@@ -516,6 +544,10 @@ document.addEventListener("click", async (e) => {
     if (act === "curve") { try { await post("curve"); S.task.busy = true; setState(S); } catch (err) { toast(err.message, true); } return; }
     if (act === "copy") return copyPlan();
     if (act === "mopen") return openManual();
+    if (act === "aopen") { ui.adjOpen = true; renderView(); const t = $("#ad_t"); if (t) t.focus(); return; }
+    if (act === "aclose") { ui.adjOpen = false; return renderView(); }
+    if (act === "abuy" || act === "asell") return submitAdjust(act === "abuy" ? "buy" : "sell");
+    if (act === "adel") { try { setState(await post("adjust/delete", { id: a.dataset.id })); } catch (err) { toast(err.message, true); } return; }
     if (act === "madd") { ui.draft.positions.push(blankPos()); renderView(); const rows = document.querySelectorAll(".mtable tbody tr"); const r = rows[rows.length - 1]; if (r) r.querySelector("input").focus(); return; }
     if (act === "mdel") { ui.draft.positions.splice(+a.dataset.i, 1); if (!ui.draft.positions.length) ui.draft.positions.push(blankPos()); return renderView(); }
     if (act === "mcancel") { ui.manualEdit = false; ui.draft = null; return renderView(); }
@@ -667,7 +699,7 @@ function renderChart(host, D, o) {
   const sma = D.c.map((_, i) => (i < 9 ? null : D.c.slice(i - 9, i + 1).reduce((a, b) => a + b, 0) / 10));
   const vsma = D.v.map((_, i) => (i < 9 ? null : D.v.slice(i - 9, i + 1).reduce((a, b) => a + b, 0) / 10));
   const stop = o.entry ? o.entry * (1 - S.rules.stop) : null;
-  const W = Math.max(host.clientWidth, 320), H = Math.max(host.clientHeight, 280), mL = 6, mR = 74, mT = 8, mB = 22, gap = 14;
+  const W = Math.max(host.clientWidth, 320), H = Math.max(host.clientHeight, 280), mL = 6, mR = o.entry ? 104 : 60, mT = 8, mB = 22, gap = 14;
   const plotH = H - mT - mB, volH = Math.max(Math.round(plotH * 0.22), 48), py0 = mT, py1 = mT + plotH - volH - gap, vy0 = py1 + gap, vy1 = H - mB, px0 = mL, px1 = W - mR;
   const vals = idx.flatMap((i) => [D.h[i], D.l[i]]).concat(idx.map((i) => sma[i]), [o.entry, stop]).filter((v) => v > 0);
   const lo = Math.min(...vals) * 0.96, hi = Math.max(...vals) * 1.04, T = o.log ? Math.log : (x) => x;
@@ -675,7 +707,11 @@ function renderChart(host, D, o) {
   let s = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Wykres miesięczny">`;
   let ticks = o.log ? niceLog(lo, hi) : niceLin(lo, hi, 5);
   if (ticks.length < 3) ticks = niceLin(lo, hi, 5);
-  for (const p of ticks) s += `<line x1="${px0}" x2="${px1}" y1="${Y(p)}" y2="${Y(p)}" stroke="var(--grid)"/><text x="${px1 + 6}" y="${Y(p) + 4}" font-size="11.5" fill="var(--muted)">${fmtTick(p)}</text>`;
+  const marks = [[o.entry, "var(--warn)", "zakup"], [stop, "var(--bad)", "stop"]].filter((m) => m[0]);
+  for (const p of ticks) {
+    s += `<line x1="${px0}" x2="${px1}" y1="${Y(p)}" y2="${Y(p)}" stroke="var(--grid)"/>`;
+    if (!marks.some((m) => Math.abs(Y(m[0]) - Y(p)) < 13)) s += `<text x="${px1 + 6}" y="${Y(p) + 4}" font-size="11.5" fill="var(--muted)">${fmtTick(p)}</text>`;
+  }
   const sw = Math.max(Math.min(step * 0.2, 2.4), 1.1), tw = Math.max(step * 0.34, 1.5);
   idx.forEach((i, j) => {
     const x = X(j), live = i === n - 1, col = live ? "var(--muted)" : "var(--bar)", op = D.o[i] || D.c[i];
@@ -684,9 +720,7 @@ function renderChart(host, D, o) {
   });
   const sp = idx.map((i, j) => (sma[i] ? `${X(j).toFixed(1)},${Y(sma[i]).toFixed(1)}` : null)).filter(Boolean);
   if (sp.length > 1) s += `<polyline points="${sp.join(" ")}" fill="none" stroke="var(--sma)" stroke-width="2.2"/>`;
-  for (const [lvl, col, lab] of [[o.entry, "var(--warn)", "zakup"], [stop, "var(--bad)", "stop −40 %"]]) {
-    if (lvl) s += `<line x1="${px0}" x2="${px1}" y1="${Y(lvl)}" y2="${Y(lvl)}" stroke="${col}" stroke-dasharray="6 4" stroke-width="1.5"/><text x="${px1 + 6}" y="${Y(lvl) + 4}" font-size="11" font-weight="650" fill="${col}">${lab}</text>`;
-  }
+  for (const [lvl, col, lab] of marks) s += `<line x1="${px0}" x2="${px1}" y1="${Y(lvl)}" y2="${Y(lvl)}" stroke="${col}" stroke-dasharray="6 4" stroke-width="1.5"/><text x="${px1 + 6}" y="${Y(lvl) + 4}" font-size="11.5" font-weight="650" fill="${col}">${lab} ${num(lvl)}</text>`;
   const vmax = Math.max(...idx.map((i) => D.v[i]), 1);
   idx.forEach((i, j) => {
     const up = D.c[i] >= (i > 0 ? D.c[i - 1] : D.o[i]), hh = (D.v[i] / vmax) * (vy1 - vy0);

@@ -94,6 +94,17 @@ def last_prices(symbols, download=None):
     return out
 
 
+def yahoo_symbol(sym):
+    """Symbol wpisany przez użytkownika -> symbol Yahoo: z końcówką XTB (CSPX.UK -> CSPX.L, ALE.PL -> ALE.WA, NVDA.US -> NVDA), BRK.B -> BRK-B; symbole Yahoo bez zmian."""
+    s = str(sym or "").strip().upper()
+    base, _, suf = s.rpartition(".")
+    if not base:
+        return s
+    if suf in ("A", "B"):   # klasa akcji (BRK.B, BF.B); inne jednoliterowe końcówki to giełdy Yahoo (.L, .T, .V)
+        return base + "-" + suf
+    return portfel.yahoo(s)
+
+
 def clean_bars(o, h, lo, c):
     """Świece miesięczne z Yahoo bywają błędne: puste albo zerowe Open / High / Low, Low = 1 przy cenie 300 (na skali log rozciąga cały wykres).
     Puste lub niezgodne z Open / Close wartości zastępujemy zakresem Open-Close, a High > 4 × i Low < 0,25 × korpusu uznajemy za błąd danych."""
@@ -553,12 +564,18 @@ class Api:
     @staticmethod
     def chart(sym):
         from .prices import _yf
-        df = _yf().download(sym, period="10y", interval="1mo", auto_adjust=False, progress=False)
-        if hasattr(df.columns, "levels"):
-            df.columns = df.columns.get_level_values(0)
-        df = df.dropna(subset=["Close"])
-        if df.empty:
-            raise ValueError(f"brak notowań {sym}")
+        want = yahoo_symbol(sym)
+        df = None
+        for cand in [want] + ([want + ".WA"] if "." not in want and "-" not in want else []):   # sam ticker bez rynku: najpierw USA, potem GPW
+            df = _yf().download(cand, period="10y", interval="1mo", auto_adjust=False, progress=False)
+            if hasattr(df.columns, "levels"):
+                df.columns = df.columns.get_level_values(0)
+            df = df.dropna(subset=["Close"])
+            if not df.empty:
+                sym = cand
+                break
+        if df is None or df.empty:
+            raise ValueError(f"brak notowań {want}")
         o, h, lo, c = clean_bars(df["Open"], df["High"], df["Low"], df["Close"])
         return {"sym": sym, "d": [x.strftime("%Y-%m") for x in df.index], "o": o, "h": h, "l": lo, "c": c, "v": [round(float(v), 0) if v == v else 0.0 for v in df["Volume"]]}
 

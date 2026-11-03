@@ -208,3 +208,7 @@ def test_clean_bars_fixes_bad_yahoo_candles():
     assert o[2] == 104 and lo[2] == 104 and h[2] == 105               # puste Open i zerowe Low -> zamknięcie
     assert h[3] == 102 and lo[3] == 95                                # High 900 przy cenie ~100 -> górna krawędź korpusu
     assert lo[4] == 100                                               # brak Low -> korpus
+
+
+def test_yahoo_symbol_accepts_xtb_and_yahoo_tickers():
+    assert [W.yahoo_symbol(x) for x in ("CSPX.UK", "cspx.l", "ALE.PL", "ale.wa", "NVDA.US", "NVDA", "BRK.B", "BRK-B", " pko ")] == ["CSPX.L", "CSPX.L", "ALE.WA", "ALE.WA", "NVDA", "NVDA", "BRK-B", "BRK-B", "PKO"]

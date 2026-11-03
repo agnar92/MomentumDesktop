@@ -308,7 +308,7 @@ function viewList(m) {
     const buy = r.rank <= n && !X.bear;
     const idx = [["S&P 500", r.sp], ["NDX", r.nq], ["WIG20", r.w20], ["mWIG40", r.w40]].filter((x) => x[1]).map((x) => x[0]).join(", ");
     h += `<tr class="${buy ? "buy" : ""}" data-sym="${esc(m === "gpw" ? r.t + ".WA" : r.t)}" data-title="${esc(r.n)}">
-      <td class="r muted">${r.rank}</td><td><span class="t">${esc(r.t)}</span> <span class="n">${esc(r.n)}</span></td>
+      <td class="r muted">${r.rank}</td><td><span class="t">${esc(r.t)}</span> <span class="n">${esc(r.n === r.t ? "" : r.n)}</span></td>
       <td class="r ${cls(r.r6)}"><b>${pct(r.r6)}</b></td>${m === "gpw" ? `<td class="r c-opt ${cls(r.r3)}">${pct(r.r3)}</td><td class="r c-opt ${cls(r.r12)}">${pct(r.r12)}</td>` : ""}
       <td class="r">${num(r.c)}</td><td class="r muted c-opt">${num(r.sma)}</td><td class="r ${cls(r.dist)}">${pct(r.dist)}</td><td class="muted c-opt">${idx}</td>
       <td>${held.has(r.t) ? `<span class="pill info">masz</span>` : buy ? `<span class="pill good">kup</span>` : ""}</td></tr>`;
@@ -447,12 +447,12 @@ function viewSettings() {
     <section class="card"><div class="card-head"><div><h2>Trzymane spółki (szybka kontrola)</h2><p>Tickery oddzielone spacją albo przecinkiem; GPW z końcówką .WA, np. ALE.WA. Po wybraniu konta uzupełnia się samo.</p></div></div>
       <textarea id="hold" rows="3" placeholder="np. NVDA, PLTR, ALE.WA">${esc(st.hold)}</textarea>
       ${S.manual.length && S.lists ? manualList() : ""}</section>
-    <section class="card"><div class="card-head"><div><h2>Skład GPW</h2><p>Popraw po każdej rewizji (marzec, czerwiec, wrzesień, grudzień): jeden ticker na wiersz, po spacji nazwa.</p></div>
+    <section class="card"><div class="card-head"><div><h2>Skład GPW</h2><p>Popraw po każdej rewizji (marzec, czerwiec, wrzesień, grudzień). Same tickery, bez nazw: jeden na wiersz albo po przecinku (np. skopiowane ze Stooq).</p></div>
       ${g.custom ? `<span class="pill info">własny</span>` : `<span class="pill">domyślny</span>`}</div>
       <label class="field"><span>Data rewizji</span><input type="text" id="g_rew" value="${esc(g.rewizja || "")}"></label>
       <div class="grid3" style="grid-template-columns:1fr 1fr">
-        <label class="field"><span>WIG20 (${Object.keys(g.WIG20).length})</span><textarea id="g_w20" rows="10">${esc(Object.entries(g.WIG20).map(([k, v]) => `${k} ${v}`).join("\n"))}</textarea></label>
-        <label class="field"><span>mWIG40 (${Object.keys(g.mWIG40).length})</span><textarea id="g_w40" rows="10">${esc(Object.entries(g.mWIG40).map(([k, v]) => `${k} ${v}`).join("\n"))}</textarea></label></div>
+        <label class="field"><span>WIG20 (${Object.keys(g.WIG20).length})</span><textarea id="g_w20" rows="10" placeholder="ALE&#10;PKO&#10;…">${esc(Object.keys(g.WIG20).join("\n"))}</textarea></label>
+        <label class="field"><span>mWIG40 (${Object.keys(g.mWIG40).length})</span><textarea id="g_w40" rows="10" placeholder="ABE&#10;ACP&#10;…">${esc(Object.keys(g.mWIG40).join("\n"))}</textarea></label></div>
       <div class="row"><button class="btn primary" data-act="gpw" type="button">Zapisz skład</button><button class="btn" data-act="gpwreset" type="button">Przywróć domyślny</button></div></section>
     <section class="card"><div class="card-head"><div><h2>Zasady</h2></div></div>
       <p class="note"><b>USA:</b> lider SPY albo QQQ z wyższym zwrotem 5 mies.; kandydaci z indeksu lidera: 6 mies. &gt; +30 %, zamknięcie nad SMA 10, ranking po 6 mies., 10 pozycji; brak zakupów, gdy SPY zamyka miesiąc pod SMA 12.<br>
@@ -461,7 +461,16 @@ function viewSettings() {
       <b>Wpłaty:</b> najpierw nowe spółki na wolne miejsca (waga = koszyk / liczba miejsc), potem dopełnienie trzymanych kandydatów do wagi, min. ${zl(S.rules.min_topup)}.</p></section>
   </div>`;
 }
-const parseLines = (t) => Object.fromEntries(t.split(/\n/).map((l) => l.trim().split(/\s+(.*)/s)).filter((p) => p[0]).map((p) => [p[0].toUpperCase().replace(/\.WA$/, ""), (p[1] || p[0]).trim()]));
+const TICKER = /^[A-Z0-9]{2,5}$/;   // tickery GPW: bez nazw, wiersze / spacje / przecinki, końcówka .WA ucinana
+function parseTickers(t) {
+  const ok = [], bad = [];
+  for (let x of t.split(/[\s,;]+/)) {
+    x = x.trim().toUpperCase().replace(/\.(WA|PL)$/, "");
+    if (!x) continue;
+    if (TICKER.test(x)) { if (!ok.includes(x)) ok.push(x); } else bad.push(x);
+  }
+  return { ok, bad };
+}
 
 // ------------------------------------------------------------------ zdarzenia widoku
 let saveTimer = null;
@@ -513,7 +522,8 @@ document.addEventListener("click", async (e) => {
     if (act === "msave") return saveManual();
     if (act === "mdeposit") return depositManual();
     if (act === "mprices") { try { await post("manual/prices"); S.task.busy = true; setState(S); } catch (err) { toast(err.message, true); } return; }
-    if (act === "gpw") { try { setState(await post("gpw", { rewizja: $("#g_rew").value, WIG20: parseLines($("#g_w20").value), mWIG40: parseLines($("#g_w40").value) })); toast("Zapisano skład GPW — pobierz listę, żeby przeliczyć"); } catch (err) { toast(err.message, true); } return; }
+    if (act === "gpw") { try { const w20 = parseTickers($("#g_w20").value), w40 = parseTickers($("#g_w40").value), bad = [...w20.bad, ...w40.bad];
+      setState(await post("gpw", { rewizja: $("#g_rew").value, WIG20: w20.ok, mWIG40: w40.ok })); toast(`Zapisano skład GPW (${w20.ok.length} + ${w40.ok.length}) — pobierz listę, żeby przeliczyć` + (bad.length ? `. Pominięto: ${bad.slice(0, 6).join(", ")}` : ""), bad.length > 0); } catch (err) { toast(err.message, true); } return; }
     if (act === "gpwreset") { try { setState(await post("gpw", { reset: true })); toast("Przywrócono domyślny skład GPW"); } catch (err) { toast(err.message, true); } return; }
   }
   const row = e.target.closest("[data-sym]");

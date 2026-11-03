@@ -74,7 +74,7 @@ def test_background_tasks_fetch_and_curve(api):
 
 def test_gpw_members_save_and_reset(api):
     s = api.save_gpw({"rewizja": "2026-12-19", "WIG20": {"pko.wa": "PKO BP"}, "mWIG40": {"ALE": ""}})
-    assert s["gpw"]["custom"] and s["gpw"]["WIG20"] == {"PKO": "PKO BP"} and s["gpw"]["mWIG40"] == {"ALE": "ALE"}
+    assert s["gpw"]["custom"] and s["gpw"]["WIG20"] == {"PKO": "PKO BP"} and s["gpw"]["mWIG40"] == {"ALE": "Allegro.eu S.A."}   # pusta nazwa = nazwa znanej spółki
     assert not api.save_gpw({"reset": True})["gpw"]["custom"]
 
 
@@ -158,3 +158,11 @@ def test_etf_share_targets(api):
     assert api.save_settings({"etf_pct": 150})["settings"]["etf_pct"] == 100.0           # ograniczone do 0-100 %
     s = api.save_settings({"etf_pct": 0})
     assert s["settings"]["targets"]["etf"] == 0.0 and abs(s["settings"]["targets"]["usa"] + s["settings"]["targets"]["gpw"] - 100) < 0.01
+
+
+def test_gpw_members_tickers_only(api):
+    """Same tickery (lista albo tekst, .WA ucinane, duplikaty i śmieci pomijane); nazwy znanych spółek zostają z wbudowanego składu."""
+    s = api.save_gpw({"rewizja": "2026-12-18", "WIG20": ["ale", "PKO.WA", "pko", "NOWA", "zły ticker!"], "mWIG40": "ABE, ACP;\nXYZ"})
+    g = s["gpw"]
+    assert g["custom"] and list(g["WIG20"]) == ["ALE", "PKO", "NOWA"] and list(g["mWIG40"]) == ["ABE", "ACP", "XYZ"]
+    assert g["WIG20"]["ALE"] == "Allegro.eu S.A." and g["WIG20"]["NOWA"] == "NOWA" and g["mWIG40"]["XYZ"] == "XYZ"

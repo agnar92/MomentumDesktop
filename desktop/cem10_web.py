@@ -14,6 +14,7 @@ API (nagłówek X-CEM10 = token z adresu strony; inne strony z przeglądarki nie
   POST /api/ping                  przeglądarka żyje (bez pywebview program kończy się ~90 s po zamknięciu karty)"""
 import datetime as dt
 import json
+import re
 import secrets
 import sys
 import threading
@@ -376,12 +377,27 @@ class Api:
         return self.save_settings({"account": accs[0].get("label") or ""}) | {"message": f"Wczytano raport XTB: {', '.join(a.get('label') or '?' for a in accs)}"}
 
     def save_gpw(self, body):
+        """Skład GPW: same tickery (lista, tekst po spacji / przecinku / w wierszach albo słownik ticker -> nazwa). Nazwy znanych spółek zostają z poprzedniego składu."""
         if body.get("reset"):
             self.store.save_cache("cem10_gpw", {})
-        else:
-            def clean(d):
-                return {str(k).upper().replace(".WA", "").strip(): str(v).strip() or str(k).upper() for k, v in (d or {}).items() if str(k).strip()}
-            self.store.save_cache("cem10_gpw", {"rewizja": str(body.get("rewizja") or "").strip(), "WIG20": clean(body.get("WIG20")), "mWIG40": clean(body.get("mWIG40"))})
+            return self.state()
+        known = {}
+        for k in ("WIG20", "mWIG40"):
+            known.update(self.gpw_members().get(k) or {})
+
+        def norm(t):
+            t = str(t).strip().upper()
+            return t.rsplit(".", 1)[0] if t.endswith((".WA", ".PL")) else t
+
+        def clean(x):
+            names = {norm(k): str(v or "").strip() for k, v in x.items()} if isinstance(x, dict) else {}
+            raw = list(x) if isinstance(x, (dict, list, tuple)) else re.split(r"[\s,;]+", str(x or ""))
+            out = {}
+            for t in map(norm, raw):
+                if re.fullmatch(r"[A-Z0-9]{2,5}", t) and t not in out:
+                    out[t] = names.get(t) or known.get(t) or t
+            return out
+        self.store.save_cache("cem10_gpw", {"rewizja": str(body.get("rewizja") or "").strip(), "WIG20": clean(body.get("WIG20")), "mWIG40": clean(body.get("mWIG40"))})
         return self.state()
 
     def _run(self, kind, work):

@@ -65,21 +65,23 @@ jobs:
       - name: Pakiet portable (plik + folder data/)
         shell: bash
         run: |
-          mkdir -p pkg/MomentumDesktop-${{ matrix.name }}/data
+          # foldery (nie zipy): artefakt Actions sam jest zipem, więc zip w środku dawał zip w zipie; gotowe zipy powstają w jobie release
+          mkdir -p pkg/MomentumDesktop-${{ matrix.name }}/data pkg/CEM10-${{ matrix.name }}/data
+          touch pkg/MomentumDesktop-${{ matrix.name }}/data/.gitkeep pkg/CEM10-${{ matrix.name }}/data/.gitkeep
           cp "dist/MomentumDesktop${{ matrix.ext }}" pkg/MomentumDesktop-${{ matrix.name }}/ || cp -r dist/MomentumDesktop.app pkg/MomentumDesktop-${{ matrix.name }}/
           cp README.md pkg/MomentumDesktop-${{ matrix.name }}/
-          mkdir -p pkg/CEM10-${{ matrix.name }}/data
           cp "dist/CEM10${{ matrix.ext }}" pkg/CEM10-${{ matrix.name }}/
           cp CEM10.md pkg/CEM10-${{ matrix.name }}/
-          cd pkg && python -c "import shutil; shutil.make_archive('MomentumDesktop-${{ matrix.name }}-portable', 'zip', '.', 'MomentumDesktop-${{ matrix.name }}'); shutil.make_archive('CEM10-${{ matrix.name }}-portable', 'zip', '.', 'CEM10-${{ matrix.name }}')"
       - uses: actions/upload-artifact@v4
         with:
           name: MomentumDesktop-${{ matrix.name }}-portable
-          path: pkg/MomentumDesktop-${{ matrix.name }}-portable.zip
+          path: pkg/MomentumDesktop-${{ matrix.name }}
+          include-hidden-files: true
       - uses: actions/upload-artifact@v4
         with:
           name: CEM10-${{ matrix.name }}-portable
-          path: pkg/CEM10-${{ matrix.name }}-portable.zip
+          path: pkg/CEM10-${{ matrix.name }}
+          include-hidden-files: true
 
   release:
     # Stała strona do pobrania: Releases -> "latest" (odnawiana po każdym udanym buildzie z main); tag v* tworzy osobne wydanie.
@@ -89,8 +91,16 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
-          path: zips
-          merge-multiple: true
+          path: art
+      - name: Zipy do wydania (jeden zip na program i system, z folderem na górze)
+        run: |
+          mkdir -p zips stage
+          for d in art/*/; do
+            n=$(basename "$d"); top="${n%-portable}"
+            mkdir -p "stage/$top"; cp -r "$d". "stage/$top/"
+            if [[ "$n" == *Linux* ]]; then chmod +x "stage/$top/MomentumDesktop" "stage/$top/CEM10" 2>/dev/null || true; fi   # upload-artifact gubi prawa wykonywania
+            (cd stage && zip -qr "../zips/$n.zip" "$top")
+          done
       - name: Publikacja wydania
         env:
           GH_TOKEN: ${{ github.token }}

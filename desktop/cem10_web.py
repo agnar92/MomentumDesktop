@@ -94,6 +94,23 @@ def last_prices(symbols, download=None):
     return out
 
 
+def clean_bars(o, h, lo, c):
+    """Świece miesięczne z Yahoo bywają błędne: puste albo zerowe Open / High / Low, Low = 1 przy cenie 300 (na skali log rozciąga cały wykres).
+    Puste lub niezgodne z Open / Close wartości zastępujemy zakresem Open-Close, a High > 4 × i Low < 0,25 × korpusu uznajemy za błąd danych."""
+    def ok(x):
+        return x is not None and x == x and x > 0
+    out = ([], [], [], [])
+    for oo, hh, ll, cc in zip(o, h, lo, c):
+        cc = float(cc)
+        oo = float(oo) if ok(oo) else cc
+        top, bot = max(oo, cc), min(oo, cc)
+        hh = float(hh) if ok(hh) and top <= float(hh) <= 4 * top else top
+        ll = float(ll) if ok(ll) and 0.25 * bot <= float(ll) <= bot else bot
+        for arr, v in zip(out, (oo, hh, ll, cc)):
+            arr.append(round(v, 4))
+    return out
+
+
 class Api:
     """Stan programu CEM10 nad magazynem danych (store: settings, cache, save_cache, save_settings)."""
 
@@ -542,8 +559,8 @@ class Api:
         df = df.dropna(subset=["Close"])
         if df.empty:
             raise ValueError(f"brak notowań {sym}")
-        return {"sym": sym, "d": [x.strftime("%Y-%m") for x in df.index],
-                **{k: [round(float(v), 4) for v in df[c].fillna(0)] for k, c in (("o", "Open"), ("h", "High"), ("l", "Low"), ("c", "Close"), ("v", "Volume"))}}
+        o, h, lo, c = clean_bars(df["Open"], df["High"], df["Low"], df["Close"])
+        return {"sym": sym, "d": [x.strftime("%Y-%m") for x in df.index], "o": o, "h": h, "l": lo, "c": c, "v": [round(float(v), 0) if v == v else 0.0 for v in df["Volume"]]}
 
 
 # ---------------------------------------------------------------- serwer

@@ -197,3 +197,14 @@ def test_adjust_purchase_on_xtb_account(api):
     api.save_manual({"cash": 100, "positions": [], "use": True})
     with pytest.raises(ValueError):
         api.add_adjust({"t": "AAA", "kind": "usa", "op": "buy", "shares": 1, "price": 1})   # konto ręczne edytuje się w tabeli pozycji
+
+
+def test_clean_bars_fixes_bad_yahoo_candles():
+    """Zerowe / puste / absurdalne High i Low nie rozciągają wykresu; poprawne świece zostają bez zmian."""
+    nan = float("nan")
+    o, h, lo, c = W.clean_bars([100, 100, nan, 100, 100], [110, 110, 105, 900, 105], [90, 1.0, 0, 95, nan], [105, 105, 104, 102, 101])
+    assert (o[0], h[0], lo[0], c[0]) == (100, 110, 90, 105)          # poprawna świeca bez zmian
+    assert lo[1] == 100 and h[1] == 110                               # Low = 1 przy cenie 100 -> dolna krawędź korpusu
+    assert o[2] == 104 and lo[2] == 104 and h[2] == 105               # puste Open i zerowe Low -> zamknięcie
+    assert h[3] == 102 and lo[3] == 95                                # High 900 przy cenie ~100 -> górna krawędź korpusu
+    assert lo[4] == 100                                               # brak Low -> korpus

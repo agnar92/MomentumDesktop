@@ -175,7 +175,7 @@ function planList(PL) {
     h += `<div class="actions">` + PL.actions.map((a) => `<div class="act" data-sym="${esc(a.yahoo)}" data-title="${esc(a.name || a.ticker)}" tabindex="0" role="button">
       <span class="pill ${kind[a.akcja] || ""}">${esc(a.akcja)}</span>
       <div class="who"><b>${esc(a.ticker)}</b> <span class="tag" style="--c:${BCOL[a.koszyk]}">${BUCKET[a.koszyk]}</span><small>${esc(a.name || "")}${a.uwagi ? " · " + esc(a.uwagi) : ""}</small></div>
-      <div class="amt"><b>${zl(a.kwota)}</b><small>${a.akcja === "SPRZEDAJ" ? "całą pozycję" : a.shares ? "≈ " + num(a.shares, a.shares < 10 ? 3 : 1) + " akcji po " + num(a.price) + " " + a.ccy : ""}</small></div></div>`).join("") + `</div>`;
+      <div class="amt"><b>${zl(a.kwota)}</b><small>${a.akcja === "SPRZEDAJ" ? "całą pozycję" : a.shares ? "≈ " + num(a.shares, a.shares < 10 ? 3 : 1) + " akcji po " + num(a.price) + " " + a.ccy : ""}</small>${a.akcja === "KUP" && a.price && a.koszyk !== "etf" ? `<small class="stopv">stop −40 % ≈ ${num(a.price * (1 - S.rules.stop))} ${a.ccy}</small>` : ""}</div></div>`).join("") + `</div>`;
   }
   const al = s.alloc;
   h += `<p class="note">Do rozdysponowania ${zl(s.free)} (gotówka + wpłata + sprzedaże): USA ${zl(al.usa)}, GPW ${zl(al.gpw)}, ETF ${zl(al.etf)}; zostaje w gotówce ${zl(s.cash_left)}.
@@ -261,7 +261,7 @@ function viewPortfolio() {
   if (!P) return ui.manualEdit ? h : h + `<div class="card"><div class="empty"><b>Brak konta</b>Wczytaj raport z XTB (xStation → Historia konta → Eksport) albo wpisz gotówkę i pozycje ręcznie.
       <div class="row"><button class="btn" data-act="xtb" type="button">Wczytaj raport XTB…</button><button class="btn" data-act="mopen" type="button">Wpisz ręcznie</button></div></div></div>`;
   h += `<section class="card"><div class="tbl-wrap"><table><thead><tr><th>Spółka</th><th class="c-opt">Koszyk</th><th class="r">Wartość</th><th class="r">Udział</th><th class="r">Wynik</th>
-      <th class="r c-opt">Cena zakupu</th><th class="r c-opt">Cena teraz</th><th class="r">Od SMA 10</th><th class="r">Do stopu −40 %</th><th>Status</th></tr></thead><tbody>`;
+      <th class="r">Zakup / stop −40 %</th><th class="r c-opt">Cena teraz</th><th class="r">Od SMA 10</th><th class="r c-opt">Do stopu −40 %</th><th>Status</th></tr></thead><tbody>`;
   const max = Math.max(...P.rows.map((r) => r.share), 0.01);
   for (const r of P.rows) {
     const sell = r.status.startsWith("SPRZEDAJ"), dim = r.bucket === "etf" || r.bucket === "inne";
@@ -272,12 +272,12 @@ function viewPortfolio() {
       <td class="r">${zl(r.value)}</td>
       <td class="r">${pct(r.share, 1, false)}<span class="minibar" style="--c:${BCOL[r.bucket]}"><i style="width:${(r.share / max) * 100}%"></i></span></td>
       <td class="r ${cls(r.profit_pct)}">${pct(r.profit_pct == null ? null : r.profit_pct / 100)}</td>
-      <td class="r c-opt">${num(r.open_price)}</td><td class="r c-opt">${num(r.price)}</td>
+      <td class="r">${r.open_price ? `${num(r.open_price)}<small class="ccy"> ${esc(r.ccy || "")}</small><br><span class="stopv">stop ${num(r.stop)}</span>` : "—"}</td><td class="r c-opt">${num(r.price)}</td>
       <td class="r ${cls(r.dist)}">${r.dist == null ? "—" : pct(r.dist)}</td>
-      <td class="r ${r.stop_dist != null && r.stop_dist < 0.15 ? "neg" : ""}">${r.stop_dist == null ? "—" : pct(r.stop_dist)}</td>
+      <td class="r c-opt ${r.stop_dist != null && r.stop_dist < 0.15 ? "neg" : ""}">${r.stop_dist == null ? "—" : pct(r.stop_dist)}</td>
       <td><span class="pill ${st}" title="${esc(r.status)}">${esc(r.status)}</span></td></tr>`;
   }
-  h += `</tbody></table></div><p class="note">Kliknij spółkę, żeby zobaczyć wykres miesięczny z ceną zakupu i stopem. „Do stopu” = ile cena może jeszcze spaść do −40 % od średniej ceny zakupu.</p></section>`;
+  h += `</tbody></table></div><p class="note">Kliknij spółkę, żeby zobaczyć wykres miesięczny z ceną zakupu i stopem. „Zakup” to średnia cena zakupu, „stop” = 60 % tej ceny (−40 %), obie w walucie instrumentu, czyli tam, gdzie ustawiasz zlecenie stop w XTB. „Do stopu” = ile cena może jeszcze spaść do tego poziomu.</p></section>`;
   return h;
 }
 
@@ -667,7 +667,7 @@ function renderChart(host, D, o) {
   const sma = D.c.map((_, i) => (i < 9 ? null : D.c.slice(i - 9, i + 1).reduce((a, b) => a + b, 0) / 10));
   const vsma = D.v.map((_, i) => (i < 9 ? null : D.v.slice(i - 9, i + 1).reduce((a, b) => a + b, 0) / 10));
   const stop = o.entry ? o.entry * (1 - S.rules.stop) : null;
-  const W = Math.max(host.clientWidth, 320), H = Math.max(host.clientHeight, 280), mL = 6, mR = 74, mT = 8, mB = 22, gap = 14;
+  const W = Math.max(host.clientWidth, 320), H = Math.max(host.clientHeight, 280), mL = 6, mR = o.entry ? 104 : 60, mT = 8, mB = 22, gap = 14;
   const plotH = H - mT - mB, volH = Math.max(Math.round(plotH * 0.22), 48), py0 = mT, py1 = mT + plotH - volH - gap, vy0 = py1 + gap, vy1 = H - mB, px0 = mL, px1 = W - mR;
   const vals = idx.flatMap((i) => [D.h[i], D.l[i]]).concat(idx.map((i) => sma[i]), [o.entry, stop]).filter((v) => v > 0);
   const lo = Math.min(...vals) * 0.96, hi = Math.max(...vals) * 1.04, T = o.log ? Math.log : (x) => x;
@@ -675,7 +675,11 @@ function renderChart(host, D, o) {
   let s = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Wykres miesięczny">`;
   let ticks = o.log ? niceLog(lo, hi) : niceLin(lo, hi, 5);
   if (ticks.length < 3) ticks = niceLin(lo, hi, 5);
-  for (const p of ticks) s += `<line x1="${px0}" x2="${px1}" y1="${Y(p)}" y2="${Y(p)}" stroke="var(--grid)"/><text x="${px1 + 6}" y="${Y(p) + 4}" font-size="11.5" fill="var(--muted)">${fmtTick(p)}</text>`;
+  const marks = [[o.entry, "var(--warn)", "zakup"], [stop, "var(--bad)", "stop"]].filter((m) => m[0]);
+  for (const p of ticks) {
+    s += `<line x1="${px0}" x2="${px1}" y1="${Y(p)}" y2="${Y(p)}" stroke="var(--grid)"/>`;
+    if (!marks.some((m) => Math.abs(Y(m[0]) - Y(p)) < 13)) s += `<text x="${px1 + 6}" y="${Y(p) + 4}" font-size="11.5" fill="var(--muted)">${fmtTick(p)}</text>`;
+  }
   const sw = Math.max(Math.min(step * 0.2, 2.4), 1.1), tw = Math.max(step * 0.34, 1.5);
   idx.forEach((i, j) => {
     const x = X(j), live = i === n - 1, col = live ? "var(--muted)" : "var(--bar)", op = D.o[i] || D.c[i];
@@ -684,9 +688,7 @@ function renderChart(host, D, o) {
   });
   const sp = idx.map((i, j) => (sma[i] ? `${X(j).toFixed(1)},${Y(sma[i]).toFixed(1)}` : null)).filter(Boolean);
   if (sp.length > 1) s += `<polyline points="${sp.join(" ")}" fill="none" stroke="var(--sma)" stroke-width="2.2"/>`;
-  for (const [lvl, col, lab] of [[o.entry, "var(--warn)", "zakup"], [stop, "var(--bad)", "stop −40 %"]]) {
-    if (lvl) s += `<line x1="${px0}" x2="${px1}" y1="${Y(lvl)}" y2="${Y(lvl)}" stroke="${col}" stroke-dasharray="6 4" stroke-width="1.5"/><text x="${px1 + 6}" y="${Y(lvl) + 4}" font-size="11" font-weight="650" fill="${col}">${lab}</text>`;
-  }
+  for (const [lvl, col, lab] of marks) s += `<line x1="${px0}" x2="${px1}" y1="${Y(lvl)}" y2="${Y(lvl)}" stroke="${col}" stroke-dasharray="6 4" stroke-width="1.5"/><text x="${px1 + 6}" y="${Y(lvl) + 4}" font-size="11.5" font-weight="650" fill="${col}">${lab} ${num(lvl)}</text>`;
   const vmax = Math.max(...idx.map((i) => D.v[i]), 1);
   idx.forEach((i, j) => {
     const up = D.c[i] >= (i > 0 ? D.c[i - 1] : D.o[i]), hh = (D.v[i] / vmax) * (vy1 - vy0);

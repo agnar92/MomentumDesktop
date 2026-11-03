@@ -253,3 +253,7 @@ input[type=range] { width: 100%; accent-color: var(--accent); padding: 0; }
 .has-pane td:last-child .pill { display: inline-block; max-width: 118px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: middle; }
 .mtable td:nth-child(2) select { min-width: 112px; } .mtable td:nth-child(5) select { min-width: 108px; }
 .money.sm { width: 112px; justify-self: start; }
+.stopv { color: var(--bad); font-size: 12px; font-weight: 560; } small.ccy { color: var(--muted); font-size: 11px; }
+.act .amt small.stopv { display: block; }
+.has-pane td, .has-pane th { padding-left: 6px; padding-right: 6px; }
+.has-pane td .n { max-width: 84px; } .has-pane td:last-child .pill { max-width: 96px; }

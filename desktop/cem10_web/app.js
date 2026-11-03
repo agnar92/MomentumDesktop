@@ -252,12 +252,40 @@ function manualEditor() {
     <div class="row"><button class="btn" type="button" data-act="madd">＋ Dodaj pozycję</button><button class="btn primary" type="button" data-act="msave">Zapisz konto</button>
       ${M.has ? `<button class="btn" id="mPricesBtn" type="button" data-act="mprices" ${S.task.busy ? "disabled" : ""}>Odśwież ceny</button><button class="btn ghost" type="button" data-act="mcancel">Anuluj</button>` : ""}</div></section>`;
 }
+function adjustCard() {
+  const defc = { usa: "USD", gpw: "PLN", etf: "USD" };
+  const rows = S.adjust.map((a) => `<tr><td><span class="pill ${a.op === "buy" ? "good" : "bad"}">${a.op === "buy" ? "KUP" : "SPRZEDAJ"}</span></td>
+    <td><b>${esc(a.t)}</b> <span class="muted xs">${KIND_LAB[a.kind]}</span></td><td class="r">${num(a.shares, a.shares % 1 ? 4 : 0)}</td><td class="r">${num(a.price)} ${a.ccy || defc[a.kind]}</td>
+    <td class="r">${a.amount_pln ? zl(a.amount_pln) : ""}</td><td>${esc(a.ts.slice(0, 10))}</td><td><button class="icon" type="button" data-act="adel" data-id="${esc(a.id)}" aria-label="Usuń wpis">✕</button></td></tr>`).join("");
+  return `<section class="card" id="aCard"><div class="card-head"><div><h2>Dopisz zakup lub sprzedaż</h2><p>Transakcje po dacie raportu XTB (np. dzisiejszy zakup). Pozycje, średnia cena zakupu, stop i gotówka liczą się od razu; nowy raport XTB zastępuje te wpisy.</p></div></div>
+    <div class="mrow-k">
+      <label class="field"><span>Ticker</span><input type="text" id="ad_t" placeholder="np. NVDA, ALE, CSPX.UK" autocomplete="off" style="text-transform:uppercase"></label>
+      <label class="field"><span>Rynek</span><select id="ad_kind">${Object.entries(KIND_LAB).map(([k, v]) => `<option value="${k}">${v}</option>`).join("")}</select></label>
+      <label class="field"><span>Liczba akcji</span><input type="text" inputmode="decimal" id="ad_sh" placeholder="np. 2,5"></label>
+      <label class="field"><span>Cena transakcji (waluta instrumentu)</span><input type="text" inputmode="decimal" id="ad_pr" placeholder="np. 187,40"></label>
+      <label class="field"><span>Waluta</span><select id="ad_ccy"><option value="">auto (USD / PLN)</option>${["PLN", "USD", "EUR", "GBP"].map((c) => `<option>${c}</option>`).join("")}</select></label>
+      <label class="field"><span>Kwota z konta w zł (opcjonalnie)</span><input type="text" inputmode="decimal" id="ad_pln" placeholder="program policzy z kursu"></label>
+    </div>
+    <div class="row"><button class="btn primary" type="button" data-act="abuy">Dodaj zakup</button><button class="btn" type="button" data-act="asell">Dodaj sprzedaż</button>
+      ${S.adjust.length ? "" : `<button class="btn ghost" type="button" data-act="aclose">Zamknij</button>`}</div>
+    ${rows ? `<div class="tbl-wrap"><table><thead><tr><th></th><th>Spółka</th><th class="r">Ilość</th><th class="r">Cena</th><th class="r">Z konta</th><th>Dodano</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>` : ""}</section>`;
+}
+async function submitAdjust(op) {
+  const body = { op, t: $("#ad_t").value, kind: $("#ad_kind").value, shares: numOf($("#ad_sh").value), price: numOf($("#ad_pr").value), ccy: $("#ad_ccy").value || undefined, amount_pln: numOf($("#ad_pln").value) || undefined };
+  try {
+    setState(await post("adjust", body));
+    toast(op === "buy" ? "Dopisano zakup" : "Dopisano sprzedaż");
+    const r = await post("manual/prices");
+    if (r.started) { S.task.busy = true; setState(S); }
+  } catch (e) { toast(e.message, true); }
+}
 function viewPortfolio() {
   const P = S.portfolio;
   const sel = P && P.accounts.length > 1 ? `<label class="field"><span>Konto</span><select id="account">${P.accounts.map((a) => `<option ${a === P.label ? "selected" : ""}>${esc(a)}</option>`).join("")}</select></label>` : "";
   let h = `<header class="page-head"><div><h1>Portfel</h1><p>${P ? (P.manual ? "Konto ręczne" : `Konto ${esc(P.label)} · raport ${esc((P.generated || "").slice(0, 16).replace("T", " "))} UTC`) : "Pozycje z raportu XTB albo wpisane ręcznie"}</p></div>
-    <div class="row-tools">${sel}<button class="btn" type="button" data-act="mopen">${S.manual_acct.has ? "Edytuj konto ręczne" : "＋ Konto ręczne"}</button></div></header>`;
+    <div class="row-tools">${sel}${P && !P.manual ? `<button class="btn" type="button" data-act="aopen">＋ Dopisz zakup</button>` : ""}<button class="btn" type="button" data-act="mopen">${S.manual_acct.has ? "Edytuj konto ręczne" : "＋ Konto ręczne"}</button></div></header>`;
   if (ui.manualEdit && ui.draft) h += manualEditor();
+  if (P && !P.manual && (ui.adjOpen || S.adjust.length)) h += adjustCard();
   if (!P) return ui.manualEdit ? h : h + `<div class="card"><div class="empty"><b>Brak konta</b>Wczytaj raport z XTB (xStation → Historia konta → Eksport) albo wpisz gotówkę i pozycje ręcznie.
       <div class="row"><button class="btn" data-act="xtb" type="button">Wczytaj raport XTB…</button><button class="btn" data-act="mopen" type="button">Wpisz ręcznie</button></div></div></div>`;
   h += `<section class="card"><div class="tbl-wrap"><table><thead><tr><th>Spółka</th><th class="c-opt">Koszyk</th><th class="r">Wartość</th><th class="r">Udział</th><th class="r">Wynik</th>
@@ -267,7 +295,7 @@ function viewPortfolio() {
     const sell = r.status.startsWith("SPRZEDAJ"), dim = r.bucket === "etf" || r.bucket === "inne";
     const st = sell ? "bad" : r.status.startsWith("kandydat") ? "good" : r.status.startsWith("trzymaj") ? "info" : "";
     h += `<tr class="${sell ? "sell" : dim ? "dim" : ""}" data-sym="${esc(r.yahoo)}" data-title="${esc(r.name)}" data-entry="${r.open_price || ""}">
-      <td><span class="t">${esc(r.t)}</span> <span class="n">${esc(r.name === r.t ? "" : r.name)}</span> <span class="tag c-opt-inv" style="--c:${BCOL[r.bucket]}" title="${BUCKET[r.bucket]}"></span></td>
+      <td><span class="t">${esc(r.t)}</span> <span class="n">${esc(r.name === r.t ? "" : r.name)}</span>${r.adjusted ? ` <span class="pill info" title="Zmienione ręcznie po raporcie XTB">+</span>` : ""} <span class="tag c-opt-inv" style="--c:${BCOL[r.bucket]}" title="${BUCKET[r.bucket]}"></span></td>
       <td class="c-opt"><span class="tag" style="--c:${BCOL[r.bucket]}">${BUCKET[r.bucket]}</span></td>
       <td class="r">${zl(r.value)}</td>
       <td class="r">${pct(r.share, 1, false)}<span class="minibar" style="--c:${BCOL[r.bucket]}"><i style="width:${(r.share / max) * 100}%"></i></span></td>
@@ -516,6 +544,10 @@ document.addEventListener("click", async (e) => {
     if (act === "curve") { try { await post("curve"); S.task.busy = true; setState(S); } catch (err) { toast(err.message, true); } return; }
     if (act === "copy") return copyPlan();
     if (act === "mopen") return openManual();
+    if (act === "aopen") { ui.adjOpen = true; renderView(); const t = $("#ad_t"); if (t) t.focus(); return; }
+    if (act === "aclose") { ui.adjOpen = false; return renderView(); }
+    if (act === "abuy" || act === "asell") return submitAdjust(act === "abuy" ? "buy" : "sell");
+    if (act === "adel") { try { setState(await post("adjust/delete", { id: a.dataset.id })); } catch (err) { toast(err.message, true); } return; }
     if (act === "madd") { ui.draft.positions.push(blankPos()); renderView(); const rows = document.querySelectorAll(".mtable tbody tr"); const r = rows[rows.length - 1]; if (r) r.querySelector("input").focus(); return; }
     if (act === "mdel") { ui.draft.positions.splice(+a.dataset.i, 1); if (!ui.draft.positions.length) ui.draft.positions.push(blankPos()); return renderView(); }
     if (act === "mcancel") { ui.manualEdit = false; ui.draft = null; return renderView(); }

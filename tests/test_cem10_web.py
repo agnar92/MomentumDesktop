@@ -166,3 +166,34 @@ def test_gpw_members_tickers_only(api):
     g = s["gpw"]
     assert g["custom"] and list(g["WIG20"]) == ["ALE", "PKO", "NOWA"] and list(g["mWIG40"]) == ["ABE", "ACP", "XYZ"]
     assert g["WIG20"]["ALE"] == "Allegro.eu S.A." and g["WIG20"]["NOWA"] == "NOWA" and g["mWIG40"]["XYZ"] == "XYZ"
+
+
+def test_adjust_purchase_on_xtb_account(api):
+    """Dzisiejsza transakcja dopisana do konta z raportu: nowa pozycja, dokupienie (średnia cena), sprzedaż, gotówka; nowy raport kasuje starsze wpisy."""
+    api.store.save_cache("cem10", LIST)
+    s = api.import_xtb(_zip(), "raport.zip")
+    base = {r["t"]: r for r in s["portfolio"]["rows"]}
+    cash0 = s["portfolio"]["cash"]
+    assert base["AAA"]["volume"] == 2 and base["AAA"]["open_price"] == 100.0
+    s = api.add_adjust({"t": "ddd", "kind": "usa", "op": "buy", "shares": 1, "price": 10})                       # nowa spółka: 10 USD * 3,8 = 38 zł
+    s = api.add_adjust({"t": "AAA", "kind": "usa", "op": "buy", "shares": 1, "price": 130, "amount_pln": 75})   # dokupienie: z konta zeszło 75 zł (kwota podana)
+    rows = {r["t"]: r for r in s["portfolio"]["rows"]}
+    assert rows["DDD"]["volume"] == 1 and rows["DDD"]["open_price"] == 10 and rows["DDD"]["bucket"] == "usa"
+    assert rows["AAA"]["volume"] == 3 and round(rows["AAA"]["open_price"], 4) == round((200 + 130) / 3, 4)
+    assert round(s["portfolio"]["cash"], 2) == round(cash0 - 38 - 75, 2) and len(s["adjust"]) == 2
+    s = api.add_adjust({"t": "CCC", "kind": "usa", "op": "sell", "shares": 1, "price": 100})                     # sprzedaż całej pozycji CCC
+    assert "CCC" not in {r["t"] for r in s["portfolio"]["rows"]} and round(s["portfolio"]["cash"], 2) == round(cash0 - 113 + 380, 2)
+    with pytest.raises(ValueError):
+        api.add_adjust({"t": "", "kind": "usa", "op": "buy", "shares": 1, "price": 1})
+    aid = s["adjust"][0]["id"]
+    assert len(api.del_adjust(aid)["adjust"]) == 2
+    api.add_adjust({"t": "ZZZ", "kind": "usa", "op": "buy", "shares": 1, "price": 10})
+    s = api.import_xtb(_zip(), "raport2.zip")                                  # raport z datą sprzed dopisanych transakcji: wpisy zostają
+    assert len(s["adjust"]) == 3
+    d = api.store.cache("cem10_adjust")
+    d["IKE"][0]["ts"] = "2000-01-01T00:00:00"
+    api.store.save_cache("cem10_adjust", d)
+    assert len(api.import_xtb(_zip(), "raport3.zip")["adjust"]) == 2          # wpis starszy niż raport znika (raport już go zawiera)
+    api.save_manual({"cash": 100, "positions": [], "use": True})
+    with pytest.raises(ValueError):
+        api.add_adjust({"t": "AAA", "kind": "usa", "op": "buy", "shares": 1, "price": 1})   # konto ręczne edytuje się w tabeli pozycji

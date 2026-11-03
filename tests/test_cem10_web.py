@@ -212,3 +212,12 @@ def test_clean_bars_fixes_bad_yahoo_candles():
 
 def test_yahoo_symbol_accepts_xtb_and_yahoo_tickers():
     assert [W.yahoo_symbol(x) for x in ("CSPX.UK", "cspx.l", "ALE.PL", "ale.wa", "NVDA.US", "NVDA", "BRK.B", "BRK-B", " pko ")] == ["CSPX.L", "CSPX.L", "ALE.WA", "ALE.WA", "NVDA", "NVDA", "BRK-B", "BRK-B", "PKO"]
+
+
+def test_plan_etf_action_uses_yahoo_symbol(api):
+    """Akcja KUP dla ETF-a prowadzi do wykresu po symbolu Yahoo (CSPX.UK -> CSPX.L), a nie po samym CSPX."""
+    api.store.save_cache("cem10", LIST)
+    api.import_xtb(_zip(), "raport.zip")
+    api.save_settings({"deposit": 5000, "etf_pct": 40, "etf": "cspx.uk"})
+    etf = [a for a in api.state()["plan"]["actions"] if a["koszyk"] == "etf"]
+    assert etf and etf[0]["ticker"] == "CSPX" and etf[0]["yahoo"] == "CSPX.L"

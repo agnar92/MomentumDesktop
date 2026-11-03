@@ -105,6 +105,26 @@ def yahoo_symbol(sym):
     return portfel.yahoo(s)
 
 
+def monthly_from_daily(df):
+    """Świece miesięczne z dziennych (Yahoo) po usunięciu jednodniowych błędnych tików: dzienny High / Low, który odbiega od korpusu świecy
+    o więcej niż 6 × typowy knot tej serii (min. 4 %), zastępujemy krawędzią korpusu (np. Low 231 przy cenie 625 w CSPX.L). Prawdziwe luki zostają,
+    bo przy nich Open / Close leżą blisko ekstremum. Open = pierwszy, High = max, Low = min, Close = ostatni, Volume = suma dnia z miesiąca."""
+    import numpy as np
+    import pandas as pd
+    o, h, lo, c = (df[k].astype(float) for k in ("Open", "High", "Low", "Close"))
+    o = o.where(o > 0, c)
+    top, bot = np.maximum(o, c), np.minimum(o, c)
+    up, dn = ((h - top) / top).where(h > 0), ((bot - lo) / bot).where(lo > 0)
+
+    def scale(x):
+        med = x.median()
+        return max(0.04, 6 * (med if med == med else 0.0))
+    h = h.where(h.notna() & (h >= top) & (up <= scale(up)), top)
+    lo = lo.where(lo.notna() & (lo > 0) & (lo <= bot) & (dn <= scale(dn)), bot)
+    return pd.DataFrame({"Open": o.resample("MS").first(), "High": h.resample("MS").max(), "Low": lo.resample("MS").min(), "Close": c.resample("MS").last(),
+                         "Volume": df["Volume"].astype(float).resample("MS").sum()}).dropna(subset=["Close"])
+
+
 def clean_bars(o, h, lo, c):
     """Świece miesięczne z Yahoo bywają błędne: puste albo zerowe Open / High / Low, Low = 1 przy cenie 300 (na skali log rozciąga cały wykres).
     Puste lub niezgodne z Open / Close wartości zastępujemy zakresem Open-Close, a High > 4 × i Low < 0,25 × korpusu uznajemy za błąd danych."""
@@ -567,12 +587,13 @@ class Api:
         want = yahoo_symbol(sym)
         df = None
         for cand in [want] + ([want + ".WA"] if "." not in want and "-" not in want else []):   # sam ticker bez rynku: najpierw USA, potem GPW
-            df = _yf().download(cand, period="10y", interval="1mo", auto_adjust=False, progress=False)
+            df = _yf().download(cand, period="10y", interval="1d", auto_adjust=False, progress=False)
             if hasattr(df.columns, "levels"):
                 df.columns = df.columns.get_level_values(0)
             df = df.dropna(subset=["Close"])
             if not df.empty:
                 sym = cand
+                df = monthly_from_daily(df)
                 break
         if df is None or df.empty:
             raise ValueError(f"brak notowań {want}")

@@ -221,3 +221,20 @@ def test_plan_etf_action_uses_yahoo_symbol(api):
     api.save_settings({"deposit": 5000, "etf_pct": 40, "etf": "cspx.uk"})
     etf = [a for a in api.state()["plan"]["actions"] if a["koszyk"] == "etf"]
     assert etf and etf[0]["ticker"] == "CSPX" and etf[0]["yahoo"] == "CSPX.L"
+
+
+def test_monthly_from_daily_removes_one_day_spikes_but_keeps_real_gaps():
+    """Błędny tik (Low 231 przy cenie 625, High +20 %) nie trafia do miesięcznego Low / High; prawdziwa luka w dół zostaje."""
+    import numpy as np
+    import pandas as pd
+    idx = pd.bdate_range("2025-01-01", periods=120)
+    c = pd.Series(600 + np.sin(np.arange(120) / 5) * 10, index=idx)
+    df = pd.DataFrame({"Open": c.shift(1).fillna(c.iloc[0]), "Close": c, "Volume": 1000.0})
+    df["High"], df["Low"] = df[["Open", "Close"]].max(axis=1) * 1.004, df[["Open", "Close"]].min(axis=1) * 0.996
+    df.loc[idx[30], "Low"] = 231.0                                  # błędny tik
+    df.loc[idx[31], "High"] = df.loc[idx[31], "Close"] * 1.22       # błędny tik w górę
+    gap = idx[90]
+    df.loc[gap, ["Open", "High", "Low", "Close"]] = [500.0, 505.0, 480.0, 492.0]   # prawdziwa luka -17 %, Open / Close przy ekstremum
+    m = W.monthly_from_daily(df)
+    assert m["Low"].min() >= 470 and m.loc["2025-02-01", "Low"] > 560 and m.loc["2025-02-01", "High"] < 650
+    assert m.loc[pd.Timestamp(gap).strftime("%Y-%m-01"), "Low"] == 480.0 and m["Volume"].iloc[0] > 0

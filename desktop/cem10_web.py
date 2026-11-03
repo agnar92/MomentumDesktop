@@ -309,7 +309,7 @@ class Api:
             a["ccy"] = "USD" if a["koszyk"] == "usa" else "PLN"
             k = usd if a["koszyk"] == "usa" else 1.0
             a["shares"] = (a["kwota"] / (a["price"] * k)) if a["price"] and a["akcja"] != "SPRZEDAJ" else None
-            a["yahoo"] = a["ticker"] + ".WA" if a["koszyk"] == "gpw" else a["ticker"]
+            a["yahoo"] = portfel.yahoo(st.get("cem10_etf", "CSPX.UK")) if a["koszyk"] == "etf" else a["ticker"] + ".WA" if a["koszyk"] == "gpw" else a["ticker"]   # ETF: CSPX.UK -> CSPX.L
         return {"actions": actions, "summary": s, "targets": tg, "usd": usd}
 
     def history(self):

@@ -95,3 +95,66 @@ def test_server_token_and_static(api):
         assert e.value.code == 404
     finally:
         srv.shutdown()
+
+
+def _fake_download(frames):
+    """Podmiana yfinance: {symbol: [(data, zamknięcie)]} -> DataFrame jak z group_by='ticker'."""
+    import pandas as pd
+
+    def download(syms):
+        cols = {}
+        for s in syms:
+            if s in frames:
+                d, c = zip(*frames[s])
+                cols[(s, "Close")] = pd.Series(c, index=pd.to_datetime(d))
+        df = pd.DataFrame(cols)
+        df.columns = pd.MultiIndex.from_tuples(df.columns)
+        return df
+    return download
+
+
+def test_manual_account_without_xtb(api):
+    api.store.save_cache("cem10", LIST)
+    s = api.save_manual({"cash": "1 000", "deposited": 10000, "positions": [
+        {"t": "aaa", "kind": "usa", "shares": "2", "open_price": "100"},                  # lista: zamknięcie 120 USD, kurs USD 3,8
+        {"t": "bbb.wa", "kind": "gpw", "shares": 10, "open_price": 50},                    # lista: 60 zł
+        {"t": "CSPX.UK", "kind": "etf", "shares": 1, "open_price": 800, "price": 900},      # cena wpisana ręcznie, USD
+        {"t": "AAA", "kind": "usa", "shares": 2, "open_price": 140},                      # duplikat scalany: 4 akcje po 120
+        {"t": "", "kind": "usa", "shares": 5}, {"t": "ZZZ", "kind": "usa", "shares": 0}]})  # puste i zerowe pomijane
+    P = s["portfolio"]
+    assert P["manual"] and P["label"] == "Ręczne" and P["accounts"] == ["Ręczne"] and s["history"] is None
+    by = {r["t"]: r for r in P["rows"]}
+    assert set(by) == {"AAA", "BBB", "CSPX"} and by["AAA"]["volume"] == 4 and by["AAA"]["open_price"] == 120.0
+    assert by["AAA"]["value"] == 4 * 120.0 * 3.8 and by["BBB"]["value"] == 600.0 and by["CSPX"]["bucket"] == "etf" and by["CSPX"]["value"] == 900 * 3.8
+    assert P["cash"] == 1000.0 and P["deposited"] == 10000.0 and P["total"] == 1000 + 1824 + 600 + 3420
+    assert by["AAA"]["status"] == "kandydat #1" and s["manual_acct"]["positions"][2]["price_src"] == "ręczna"
+    assert s["plan"] is not None and api.state()["manual_acct"]["has"]
+    d = api.add_deposit("500")["manual_acct"]
+    assert d["cash"] == 1500.0 and d["deposited"] == 10500.0
+    assert api.add_deposit(-9999)["manual_acct"]["cash"] == 0.0
+
+
+def test_manual_prices_refresh_keeps_typed_price(api):
+    api.save_manual({"cash": 0, "positions": [{"t": "AAA", "kind": "usa", "shares": 1, "open_price": 100}, {"t": "CSPX.UK", "kind": "etf", "shares": 1, "open_price": 800, "price": 900}]})
+    dl = _fake_download({"AAA": [("2026-10-29", 130.0), ("2026-10-30", 131.5)], "CSPX.L": [("2026-10-30", 950.0)], "USDPLN=X": [("2026-10-30", 3.7)]})
+    assert api.start_prices(download=dl)
+    for _ in range(100):
+        if not api.task["busy"]:
+            break
+        time.sleep(0.02)
+    assert api.task["done"].startswith("Ceny odświeżone")
+    m = api.state()["manual_acct"]
+    by = {p["t"]: p for p in m["positions"]}
+    assert by["AAA"]["price"] == 131.5 and by["AAA"]["price_src"] == "Yahoo" and by["CSPX.UK"]["price"] == 900 and m["fx"]["USD"] == 3.7
+    assert api.state()["portfolio"]["rows"][0]["fx"] == 3.7
+
+
+def test_etf_share_targets(api):
+    s = api.state()
+    assert s["settings"]["etf_pct"] == 30.0 and s["settings"]["gpw_share"] == round(23 / 70 * 100, 1)
+    s = api.save_settings({"etf_pct": "40", "gpw_share": 25})
+    assert s["settings"]["targets"] == {"etf": 40.0, "usa": 45.0, "gpw": 15.0} and s["settings"]["etf_pct"] == 40.0 and s["settings"]["gpw_share"] == 25.0
+    assert api.save_settings({"etf_pct": 100})["settings"]["targets"]["usa"] == 0.0
+    assert api.save_settings({"etf_pct": 150})["settings"]["etf_pct"] == 100.0           # ograniczone do 0-100 %
+    s = api.save_settings({"etf_pct": 0})
+    assert s["settings"]["targets"]["etf"] == 0.0 and abs(s["settings"]["targets"]["usa"] + s["settings"]["targets"]["gpw"] - 100) < 0.01

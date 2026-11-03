@@ -7,13 +7,14 @@ Mały program (Windows / Linux, bez instalacji). Uruchom `CEM10`, dane zapisują
 Program otwiera się w swoim oknie (Windows: WebView2, wbudowany w Windows 10 / 11; bez niego — w domyślnej przeglądarce). Po lewej widoki, u góry stan rynku i dwa przyciski.
 
 1. **Pobierz listę** (prawy górny róg) — skład S&P 500 i Nasdaq-100 (Wikipedia), sito Finviz, ceny miesięczne z Yahoo Finance, skład WIG20 / mWIG40. Liczy tylko z zamkniętych miesięcy. Postęp widać pod paskiem.
-2. **Raport XTB** — w xStation: Historia konta → Eksport (zip z plikiem xlsx dla każdego konta). Program nie łączy się z XTB, czyta tylko plik.
-3. **Ten miesiąc** — wartość konta, wynik, wpłaty, zajęte miejsca; **Co zrobić**: wpisz wpłatę, a program pokaże gotowe zlecenia (SPRZEDAJ / KUP / DOPŁAĆ) z kwotą i przybliżoną liczbą akcji; „Kopiuj plan” kopiuje je jako tekst. Obok: lider USA, filtry rynku i udziały koszyków (teraz / cel).
-4. **Portfel** — każda pozycja: udział, wynik, cena zakupu, odległość od SMA 10 i od stopu −40 %, status CEM10.
-5. **Lista USA / Lista GPW** — kandydaci z rankingu; zielony pasek = do kupienia (pierwsze 10 / 5), „masz” = już w portfelu; wyszukiwarka.
-6. **Historia konta** — wartość konta i wpłaty w czasie, sprzedaże (zielona kropka = zysk); „Wyceń cenami dziennymi” pobiera ceny z Yahoo.
-7. **Ustawienia** — udziały docelowe (USA / GPW / ETF), ticker ETF, wybór konta, trzymane spółki bez raportu XTB, **skład GPW** (popraw po każdej rewizji: marzec, czerwiec, wrzesień, grudzień), jasny / ciemny motyw.
-8. Kliknięcie spółki = **wykres miesięczny**: słupki, SMA 10, wolumen (zielony = wzrost, czerwony = spadek) ze średnią 10 mies., linia zakupu i stop −40 %.
+2. **Konto**: albo **Raport XTB** (xStation: Historia konta → Eksport, zip z plikiem xlsx dla każdego konta; program nie łączy się z XTB), albo **konto ręczne** (Portfel → „＋ Konto ręczne”): wpisujesz gotówkę, „wpłacono netto” i pozycje (ticker, rynek USA / GPW / ETF, liczba akcji, średnia cena zakupu). Ceny i kurs USD/PLN program pobiera z Yahoo po zapisie albo przyciskiem „Odśwież ceny”, a wpisana „Cena teraz” zostaje na stałe. „＋ Wpłać” dopisuje wpłatę do gotówki i do „wpłacono netto”. Konta można przełączać; konto ręczne nie ma historii (tylko raport XTB ma daty transakcji).
+3. **Ten miesiąc** — wartość konta, wynik, wpłaty, zajęte miejsca; **Co zrobić**: wpisz wpłatę, a program pokaże gotowe zlecenia (SPRZEDAJ / KUP / DOPŁAĆ) z kwotą i przybliżoną liczbą akcji; „Kopiuj plan” kopiuje je jako tekst. Obok: lider USA, filtry rynku i **Udziały**.
+4. **Baza: ETF S&P 500** — w karcie „Udziały” (i w Ustawieniach, suwak + pole) ustawiasz, jaką część całego kapitału ma stanowić ETF jako baza. Reszta idzie w CEM10, a nowe wpłaty dzielą się według tych udziałów; podział części CEM10 na USA i GPW (domyślnie 2 : 1, jak miejsca 10 : 5) też zmienisz w Ustawieniach. Karta pokazuje „do uzupełnienia” w zł dla każdego koszyka.
+5. **Portfel** — każda pozycja: udział, wynik, cena zakupu, odległość od SMA 10 i od stopu −40 %, status CEM10.
+6. **Lista USA / Lista GPW** — kandydaci z rankingu; zielony pasek = do kupienia (pierwsze 10 / 5), „masz” = już w portfelu; wyszukiwarka.
+7. **Historia konta** — krzywa kapitału: wartość konta, wpłaty netto (schodki), zielony obszar = zysk, czerwony = strata; zakres 6 mies. / 1 rok / 3 lata / całość, najechanie myszą pokazuje datę, wartość, wpłaty i wynik; „pokaż sprzedaże” dokłada kropki. „Wyceń cenami dziennymi” pobiera ceny z Yahoo.
+8. **Ustawienia** — baza ETF, ticker ETF, konto, trzymane spółki (szybka kontrola), **skład GPW** (popraw po każdej rewizji: marzec, czerwiec, wrzesień, grudzień), jasny / ciemny motyw.
+9. **Wykres miesięczny po prawej** (okno szersze niż ok. 1320 px; przycisk „Wykres” u góry pokazuje / ukrywa panel): kliknij spółkę na liście, w portfelu albo w planie, a wykres przełączy się bez zamykania; strzałki ↑ ↓ przechodzą po spółkach. Słupki OHLC, SMA 10, wolumen (zielony = wzrost, czerwony = spadek) ze średnią 10 mies., linia zakupu i stop −40 %; zakres 3 / 5 / 10 lat, skala log / lin, podpowiedź z OHLC, SMA i wolumenem przy najechaniu. W polu nad wykresem sprawdzisz **dowolny ticker** (np. NVDA albo ALE.WA). Na węższym oknie wykres otwiera się w szufladzie.
 
 ## Reguły
 

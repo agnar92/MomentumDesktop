@@ -36,11 +36,28 @@
           <input type="file" id="xtbFile" accept=".zip,.xlsx" hidden>
           <svg viewBox="0 0 24 24"><path d="M12 4v11m0 0-4-4m4 4 4-4M5 20h14"/></svg><span>Raport XTB</span>
         </label>
+        <button class="btn ghost" id="paneBtn" type="button" aria-pressed="true" title="Pokaż / ukryj wykres po prawej" hidden><svg viewBox="0 0 24 24"><path d="M4 5h16v14H4zM14 5v14"/></svg><span>Wykres</span></button>
         <button class="btn primary" id="fetchBtn" type="button"><svg viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.3-5.7M20 4v5h-5"/></svg><span>Pobierz listę</span></button>
       </div>
       <div class="progress" id="progress" hidden><div class="bar"><i id="progressBar"></i></div><span id="progressTxt"></span></div>
     </div>
-    <div id="view" class="view" tabindex="-1"></div>
+    <div class="work" id="work">
+      <div id="view" class="view" tabindex="-1"></div>
+      <aside class="pane" id="pane" hidden aria-label="Wykres miesięczny">
+        <div class="pane-head">
+          <div class="pane-title"><h2 id="pTitle">Wykres miesięczny</h2><p id="pSub" class="muted xs"></p></div>
+          <button class="icon" id="pClose" type="button" aria-label="Ukryj wykres" title="Ukryj wykres">✕</button>
+        </div>
+        <form class="sym-form" id="pForm" autocomplete="off"><input type="text" id="pSym" placeholder="Dowolny ticker, np. NVDA albo ALE.WA" aria-label="Ticker"><button class="btn sm" type="submit">Pokaż</button></form>
+        <div class="pane-ctrl">
+          <div class="seg" id="pRange" role="group" aria-label="Zakres"><button type="button" data-r="36">3 lata</button><button type="button" data-r="60">5 lat</button><button type="button" data-r="120">10 lat</button></div>
+          <div class="seg" id="pScale" role="group" aria-label="Skala ceny"><button type="button" data-s="log">log</button><button type="button" data-s="lin">lin</button></div>
+          <span class="muted xs">↑ ↓ przełącza spółki</span>
+        </div>
+        <div class="pane-body" id="pBody"></div>
+        <p class="muted xs legend"><i class="lg sma"></i> SMA 10 <i class="lg buy"></i> cena zakupu <i class="lg stop"></i> stop −40 % · wolumen: zielony wzrost, czerwony spadek, linia = średnia 10 mies. · ostatni słupek = miesiąc w toku</p>
+      </aside>
+    </div>
   </main>
 </div>
 

@@ -648,25 +648,50 @@ function syncPane() {
   } else if (!paneCur || paneCur.sym !== ui.sel.sym) loadPane();
   else drawPane();
 }
-async function loadPane() {
+const FRESH_MS = 30 * 60 * 1000;   // w tej sesji świece uznajemy za świeże 30 min; dalej decyduje cache serwera (6 godz., data/charts/)
+const cachedChart = (sym) => { const h = charts[sym]; return h && Date.now() - h._at < FRESH_MS ? h : null; };
+const inflight = {};   // to samo zapytanie nie leci dwa razy naraz (klik + podgląd w tle)
+async function fetchChart(sym, refresh = false) {
+  const hit = refresh ? null : cachedChart(sym);
+  if (hit) return hit;
+  const k = sym + (refresh ? "!" : "");
+  if (!inflight[k]) inflight[k] = api("chart?sym=" + encodeURIComponent(sym) + (refresh ? "&refresh=1" : "")).then((D) => { D._at = Date.now(); charts[sym] = D; return D; }).finally(() => { delete inflight[k]; });
+  return inflight[k];
+}
+async function loadPane(refresh = false) {
   const sel = ui.sel, id = ++paneReq;
   paneCur = null;
   $("#pTitle").textContent = sel.sym + (sel.title && sel.title !== sel.sym ? " · " + sel.title : "");
-  $("#pSub").textContent = "Pobieram świece miesięczne…";
+  const hit = refresh ? null : cachedChart(sel.sym);
+  if (hit) { paneCur = { sym: sel.sym, D: hit }; drawPane(); prefetchNeighbors(); return; }   // z pamięci: bez migania i bez zapytania
+  $("#pSub").textContent = refresh ? "Odświeżam dane z Yahoo…" : "Pobieram świece miesięczne…";
   $("#pBody").innerHTML = `<div class="spinner" aria-label="Ładowanie"></div>`;
   try {
-    const D = charts[sel.sym] || (charts[sel.sym] = await api("chart?sym=" + encodeURIComponent(sel.sym)));
+    const D = await fetchChart(sel.sym, refresh);
     if (id !== paneReq) return;
-    paneCur = { sym: sel.sym, D }; drawPane();
+    paneCur = { sym: sel.sym, D }; drawPane(); prefetchNeighbors();
   } catch (e) { delete charts[sel.sym]; if (id === paneReq) { $("#pSub").textContent = ""; $("#pBody").innerHTML = `<div class="alert">${esc(e.message)} — sprawdź ticker (GPW z końcówką .WA).</div>`; } }
+}
+let prefetching = false;
+async function prefetchNeighbors() {   // dociąga w tle następne i poprzednią spółkę z listy, żeby przełączanie strzałkami było natychmiastowe
+  if (prefetching || !paneOn() || !ui.sel) return;
+  prefetching = true;
+  try {
+    const syms = [...new Set([...$("#view").querySelectorAll("[data-sym]")].map((e) => e.dataset.sym))], i = syms.indexOf(ui.sel.sym);
+    if (i < 0) return;
+    for (const s of [syms[i + 1], syms[i + 2], syms[i - 1]].filter(Boolean)) if (!cachedChart(s)) { try { await fetchChart(s); } catch (e) { /* podgląd w tle: błędy pomijamy */ } }
+  } finally { prefetching = false; }
 }
 function drawPane() {
   if (!paneCur || !ui.sel || paneCur.sym !== ui.sel.sym || $("#pane").hidden) return;
-  $("#pSub").innerHTML = renderChart($("#pBody"), paneCur.D, { entry: ui.sel.entry, months: ui.range, log: ui.log });
+  const D = paneCur.D, when = D.cached_at ? new Date(D.cached_at * 1000).toLocaleString("pl-PL", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }) : "";
+  $("#pSub").innerHTML = renderChart($("#pBody"), D, { entry: ui.sel.entry, months: ui.range, log: ui.log }) +
+    (when ? ` · <span title="Dane z Yahoo, odświeżane co 6 godzin albo przyciskiem ↻">dane z ${when}${D.stale ? ", nieaktualne (brak sieci)" : ""}</span>` : "");
 }
 new ResizeObserver(() => drawPane()).observe($("#pBody"));
 $("#pRange").addEventListener("click", (e) => { const b = e.target.closest("button[data-r]"); if (!b) return; ui.range = +b.dataset.r; saveUi(); syncPane(); });
 $("#pScale").addEventListener("click", (e) => { const b = e.target.closest("button[data-s]"); if (!b) return; ui.log = b.dataset.s === "log"; saveUi(); syncPane(); });
+$("#pRefresh").addEventListener("click", () => { if (ui.sel) loadPane(true); });
 $("#pClose").addEventListener("click", () => { ui.paneOpen = false; saveUi(); renderView(); });
 $("#paneBtn").addEventListener("click", () => { ui.paneOpen = !ui.paneOpen; saveUi(); renderView(); });
 $("#pForm").addEventListener("submit", (e) => {
@@ -685,7 +710,7 @@ async function openChart(sym, title, entry) {   // szuflada (wąskie okno)
   $(".drawer-panel [data-close]").focus();
   const id = ++chartReq;
   try {
-    const D = charts[sym] || (charts[sym] = await api("chart?sym=" + encodeURIComponent(sym)));
+    const D = await fetchChart(sym);
     if (id !== chartReq) return;
     $("#chSub").innerHTML = renderChart($("#chBody"), D, { entry, months: ui.range, log: ui.log });
   } catch (e) { delete charts[sym]; if (id === chartReq) { $("#chSub").textContent = ""; $("#chBody").innerHTML = `<div class="alert">${esc(e.message)}</div>`; } }

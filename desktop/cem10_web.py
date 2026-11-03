@@ -2,13 +2,17 @@
 Okno: pywebview (Windows: WebView2 wbudowany w system), a gdy go brak — domyślna przeglądarka. Obliczenia bez zmian: cem10.py (lista) i portfel.py (XTB).
 API (nagłówek X-CEM10 = token z adresu strony; inne strony z przeglądarki nie wywołają API):
   GET  /api/state                 wszystko do widoków (lista, portfel, plan, historia, ustawienia, postęp zadania)
-  POST /api/settings  {...}       wpłata, udziały docelowe, ETF, konto, tickery trzymane ręcznie -> state
+  POST /api/settings  {...}       wpłata, udziały docelowe (etf_pct, gpw_share), ETF, konto, tickery trzymane ręcznie -> state
+  POST /api/manual {cash, deposited, positions, use}   konto wpisane ręcznie (bez raportu XTB) -> state
+  POST /api/manual/deposit {amount}                    wpłata na konto ręczne -> state
+  POST /api/manual/prices                              ceny i kursy walut pozycji ręcznych z Yahoo (w tle)
   POST /api/fetch                 pobranie listy (wątek w tle; postęp w state.task)
   POST /api/curve                 krzywa kapitału z cenami dziennymi Yahoo (wątek w tle)
   POST /api/xtb  (bajty pliku)    raport XTB (zip albo xlsx) -> state
   GET  /api/chart?sym=…           świece miesięczne (10 lat) do wykresu
   POST /api/gpw  {rewizja, WIG20, mWIG40} | {reset: true}   skład GPW
   POST /api/ping                  przeglądarka żyje (bez pywebview program kończy się ~90 s po zamknięciu karty)"""
+import datetime as dt
 import json
 import secrets
 import sys
@@ -22,6 +26,9 @@ from . import cem10, portfel
 
 TYPES = {".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".svg": "image/svg+xml"}
 BUCKET = {"usa": "CEM10 USA", "gpw": "CEM10 GPW", "etf": "ETF", "inne": "Inne"}
+MANUAL = "Ręczne"                                   # etykieta konta wpisanego ręcznie (obok kont z raportu XTB)
+KIND = {"usa": ("US", "USD", "STOCK"), "gpw": ("PL", "PLN", "STOCK"), "etf": ("UK", "USD", "ETF")}   # rynek -> (sufiks XTB, waluta, kategoria)
+MANUAL_CCY = ("PLN", "USD", "EUR", "GBP")
 
 
 def static_dir():
@@ -35,6 +42,48 @@ def _f(x, default=0.0):
         return float(str(x).replace(",", ".").replace(" ", "").replace(" ", "") or default)
     except (TypeError, ValueError):
         return default
+
+
+def _norm(kind, t):
+    """Ticker wpisany ręcznie -> klucz: USA 'NVDA' (BRK-B), GPW 'ALE' (bez .WA / .PL), ETF jak w XTB, np. 'CSPX.UK'."""
+    t = str(t or "").strip().upper().replace(" ", "")
+    if kind == "gpw":
+        return t.rsplit(".", 1)[0] if t.endswith((".WA", ".PL")) else t
+    if kind == "usa":
+        return (t[:-3] if t.endswith(".US") else t).replace(".", "-")
+    return t
+
+
+def _xtb_ticker(kind, t):
+    if kind == "usa":
+        return t.replace("-", ".") + ".US"
+    if kind == "gpw":
+        return t + ".PL"
+    return t if "." in t else t + ".UK"
+
+
+def last_prices(symbols, download=None):
+    """{symbol Yahoo: (ostatnie zamknięcie, data)} z ostatnich dni notowań (yfinance); `download` do podmiany w testach."""
+    symbols = sorted(set(symbols))
+    if not symbols:
+        return {}
+    if download is None:
+        from .prices import _yf
+
+        def download(syms):
+            return _yf().download(syms, period="7d", interval="1d", auto_adjust=False, group_by="ticker", progress=False, threads=True)
+    df = download(symbols)
+    out = {}
+    for sym in symbols:
+        try:
+            col = (df[sym] if len(symbols) > 1 else df)["Close"]
+            col = col.iloc[:, 0] if hasattr(col, "columns") else col
+            col = col.dropna()
+            if len(col):
+                out[sym] = (float(col.iloc[-1]), col.index[-1].strftime("%Y-%m-%d"))
+        except Exception:
+            continue
+    return out
 
 
 class Api:
@@ -51,8 +100,59 @@ class Api:
     def data(self):
         return self.store.cache("cem10") or None
 
+    def manual_data(self):
+        return self.store.cache("cem10_manual") or {}
+
+    def manual_has(self):
+        d = self.manual_data()
+        return bool(d.get("positions") or _f(d.get("cash")) or _f(d.get("deposited")))
+
+    def manual_price(self, p):
+        """Cena pozycji ręcznej (waluta instrumentu): wpisana > z Yahoo > ostatnie zamknięcie miesiąca z listy CEM10 > cena zakupu."""
+        if p.get("price"):
+            return p["price"], "ręczna" if p.get("fixed") else "Yahoo"
+        D = self.data
+        if D and p["kind"] in ("usa", "gpw"):
+            r = next((r for r in D[p["kind"]]["rows"] if r["t"] == p["t"]), None)
+            if r and r.get("c"):
+                return r["c"], "lista (zamknięcie miesiąca)"
+        return (p.get("open_price") or 0.0), "cena zakupu"
+
+    def manual_account(self):
+        """Konto z ręcznie wpisanych pozycji i gotówki w tym samym formacie co konto z raportu XTB (portfel.holdings / plan działają bez zmian)."""
+        d = self.manual_data()
+        fx = {**portfel.CCY, **(d.get("fx") or {})}
+        positions, value = [], 0.0
+        for p in d.get("positions") or []:
+            suf, ccy0, cat = KIND[p["kind"]]
+            ccy = p.get("ccy") or ccy0
+            price, _ = self.manual_price(p)
+            rate = 1.0 if ccy == "PLN" else fx.get(ccy, portfel.CCY.get(ccy, 1.0))
+            val = p["shares"] * price * rate
+            op = p.get("open_price") or None
+            positions.append({"ticker": _xtb_ticker(p["kind"], p["t"]), "name": p["t"], "category": cat, "volume": p["shares"], "value": val, "open_price": op,
+                              "profit": val - p["shares"] * (op or price) * rate, "profit_pct": ((price / op - 1) * 100) if op else None, "price": price, "fx": rate})
+            value += val
+        return {"file": "", "label": MANUAL, "account": "manual", "generated": (d.get("prices_at") or d.get("updated") or dt.datetime.now().isoformat(timespec="seconds")),
+                "open_value": value, "positions": positions, "lots": [], "cash_ops": [], "closed": [], "cash": _f(d.get("cash")), "manual": True,
+                "deposited": _f(d.get("deposited"))}
+
+    def manual_view(self):
+        """Konto ręczne do edycji na stronie (pozycje w formie wpisanej + źródło ceny)."""
+        d = self.manual_data()
+        out = []
+        for p in d.get("positions") or []:
+            price, src = self.manual_price(p)
+            out.append({"t": p["t"], "kind": p["kind"], "shares": p["shares"], "open_price": p.get("open_price"), "ccy": p.get("ccy") or KIND[p["kind"]][1],
+                        "price": price, "price_src": src, "price_date": p.get("price_date"), "fixed": bool(p.get("fixed"))})
+        return {"has": self.manual_has(), "cash": _f(d.get("cash")), "deposited": _f(d.get("deposited")), "updated": d.get("updated"), "prices_at": d.get("prices_at"),
+                "fx": {**{k: v for k, v in portfel.CCY.items() if k in MANUAL_CCY}, **(d.get("fx") or {})}, "positions": out}
+
     def accounts(self):
-        return self.store.cache("xtb").get("accounts") or []
+        accs = list(self.store.cache("xtb").get("accounts") or [])
+        if self.manual_has():
+            accs.append(self.manual_account())
+        return accs
 
     def account(self):
         accs = self.accounts()
@@ -83,7 +183,7 @@ class Api:
         if not acc:
             return None
         hold, buckets, total = portfel.holdings(acc, self.data)
-        dep = sum(x for _, x in portfel.flows(acc))
+        dep = acc["deposited"] if acc.get("manual") else sum(x for _, x in portfel.flows(acc))
         for h in hold:
             h["yahoo"] = portfel.yahoo(h["ticker"])
             h["stop_hit"] = h.get("stop_dist") is not None and h["stop_dist"] <= 0
@@ -91,7 +191,7 @@ class Api:
                 h["status"] = "SPRZEDAJ (stop −40 %)"
         return {"label": acc.get("label"), "generated": acc.get("generated"), "total": total, "positions_value": acc["open_value"], "cash": acc["cash"],
                 "deposited": dep, "profit": total - dep, "profit_pct": (total - dep) / dep if dep else None,
-                "buckets": buckets, "rows": hold, "accounts": [a.get("label") or "?" for a in self.accounts()]}
+                "buckets": buckets, "rows": hold, "accounts": [a.get("label") or "?" for a in self.accounts()], "manual": bool(acc.get("manual"))}
 
     def targets(self, pf):
         """Udziały docelowe; przy pierwszym raporcie = obecne udziały koszyków zaokrąglone do 5 %."""
@@ -101,8 +201,10 @@ class Api:
         base = {b: (pf or {}).get("buckets", {}).get(b, 0.0) for b in ("usa", "gpw", "etf")}
         s = sum(base.values())
         if not s:
-            return {"usa": 50.0, "gpw": 50.0, "etf": 0.0}
-        return {b: float(round(v / s * 20) * 5) for b, v in base.items()}
+            return {"usa": 47.0, "gpw": 23.0, "etf": 30.0}   # bez danych: baza ETF 30 %, reszta CEM10 w proporcji miejsc 10 : 5
+        e = float(round(base["etf"] / s * 20) * 5)                                  # pierwsze wczytanie: baza ETF zaokrąglona do 5 %, reszta CEM10 w proporcji USA : GPW
+        g = round(base["gpw"] / (base["usa"] + base["gpw"]) * 20) / 20 if base["usa"] + base["gpw"] else 1 / 3
+        return {"etf": e, "usa": round((100 - e) * (1 - g), 2), "gpw": round((100 - e) * g, 2)}
 
     def plan(self, pf):
         acc = self.account()
@@ -127,7 +229,7 @@ class Api:
 
     def history(self):
         acc = self.account()
-        if not acc:
+        if not acc or acc.get("manual"):
             return None
         c = self.store.cache("xtb_curve")
         exact = c.get("label") == acc.get("label") and c.get("generated") == acc.get("generated")
@@ -167,8 +269,12 @@ class Api:
         g = self.gpw_members()
         with self.lock:
             task = dict(self.task)
+        tg = self.targets(pf)
+        tot, cem = sum(tg.values()) or 1.0, tg["usa"] + tg["gpw"]
+        shares = {"targets": tg, "etf_pct": round(tg["etf"] / tot * 100, 1),
+                  "gpw_share": round(tg["gpw"] / cem * 100, 1) if cem else round(portfel.SLOTS["gpw"] / (portfel.SLOTS["usa"] + portfel.SLOTS["gpw"]) * 100, 1)}
         return {"lists": self.lists(), "portfolio": pf, "plan": self.plan(pf) if pf else None, "history": self.history(), "manual": self.manual(),
-                "settings": self.settings() | {"targets": self.targets(pf)}, "task": task, "data_dir": str(getattr(self.store, "dir", "")),
+                "manual_acct": self.manual_view(), "settings": self.settings() | shares, "task": task, "data_dir": str(getattr(self.store, "dir", "")),
                 "gpw": {"rewizja": g.get("rewizja"), "WIG20": g["WIG20"], "mWIG40": g["mWIG40"], "custom": bool(self.store.cache("cem10_gpw"))},
                 "rules": {"stop": portfel.STOP, "min_topup": portfel.MIN_TOPUP, "slots": portfel.SLOTS}}
 
@@ -179,6 +285,11 @@ class Api:
             st["cem10_deposit"] = max(_f(body["deposit"]), 0.0)
         if "targets" in body:
             st["cem10_targets"] = {b: max(_f(body["targets"].get(b)), 0.0) for b in ("usa", "gpw", "etf")}
+        if "etf_pct" in body or "gpw_share" in body:   # baza ETF S&P 500 w % całości; reszta = CEM10, z czego gpw_share % to GPW
+            cur = self.state()["settings"]
+            e = min(max(_f(body.get("etf_pct"), cur["etf_pct"]) if "etf_pct" in body else cur["etf_pct"], 0.0), 100.0)
+            g = min(max(_f(body.get("gpw_share"), cur["gpw_share"]) if "gpw_share" in body else cur["gpw_share"], 0.0), 100.0)
+            st["cem10_targets"] = {"etf": round(e, 2), "usa": round((100 - e) * (1 - g / 100), 2), "gpw": round((100 - e) * g / 100, 2)}
         if "etf" in body:
             st["cem10_etf"] = str(body["etf"]).strip().upper() or "CSPX.UK"
         if "hold" in body:
@@ -193,6 +304,71 @@ class Api:
                 st["cem10_hold"] = ", ".join(h["t"] + (".WA" if h["bucket"] == "gpw" else "") for h in hold if h["bucket"] in ("usa", "gpw"))
         self.store.save_settings()
         return self.state()
+
+    def save_manual(self, body):
+        """Konto ręczne: gotówka, wpłacono netto i pozycje [{t, kind: usa|gpw|etf, shares, open_price, ccy, price?}]. Duplikaty scalane średnią ważoną."""
+        old = self.manual_data()
+        oldp = {(p.get("kind"), p.get("t")): p for p in old.get("positions") or []}
+        merged = {}
+        for p in body.get("positions") or []:
+            kind = p.get("kind") if p.get("kind") in KIND else "usa"
+            t, shares = _norm(kind, p.get("t")), _f(p.get("shares"))
+            if not t or shares <= 0:
+                continue
+            op = max(_f(p.get("open_price")), 0.0)
+            key = (kind, t)
+            if key in merged:
+                m = merged[key]
+                tot = m["shares"] + shares
+                m["open_price"] = (m["open_price"] * m["shares"] + op * shares) / tot
+                m["shares"] = tot
+                continue
+            item = {"t": t, "kind": kind, "shares": shares, "open_price": op, "ccy": p.get("ccy") if p.get("ccy") in MANUAL_CCY else KIND[kind][1]}
+            typed, prev = _f(p.get("price")), oldp.get(key) or {}
+            if typed > 0:
+                item.update(price=typed, fixed=True)
+            elif prev.get("price") and not prev.get("fixed"):
+                item.update(price=prev["price"], price_date=prev.get("price_date"))
+            merged[key] = item
+        data = {**old, "cash": max(_f(body.get("cash")), 0.0), "deposited": max(_f(body.get("deposited")), 0.0), "positions": list(merged.values()),
+                "updated": dt.datetime.now().isoformat(timespec="seconds")}
+        self.store.save_cache("cem10_manual", data)
+        if (body.get("use") or not self.store.cache("xtb").get("accounts")) and self.manual_has():
+            return self.save_settings({"account": MANUAL})
+        return self.state()
+
+    def add_deposit(self, amount):
+        """Wpłata na konto ręczne: dopisuje do gotówki i do „wpłacono netto” (ujemna = wypłata, nie schodzi poniżej zera)."""
+        d = self.manual_data()
+        a = _f(amount)
+        d["cash"] = max(_f(d.get("cash")) + a, 0.0)
+        d["deposited"] = max(_f(d.get("deposited")) + a, 0.0)
+        d["updated"] = dt.datetime.now().isoformat(timespec="seconds")
+        self.store.save_cache("cem10_manual", d)
+        if self.manual_has() and not self.store.cache("xtb").get("accounts"):
+            return self.save_settings({"account": MANUAL})
+        return self.state()
+
+    def start_prices(self, download=None):
+        """Ceny pozycji ręcznych: ostatnie zamknięcia z Yahoo + kursy walut (w tle). Ceny wpisane ręcznie zostają."""
+        if not (self.manual_data().get("positions")):
+            return False
+
+        def work(log, progress):
+            d = self.manual_data()
+            want = {portfel.yahoo(_xtb_ticker(p["kind"], p["t"])): p for p in d["positions"]}
+            fxs = {c: f"{c}PLN=X" for c in sorted({p.get("ccy") or KIND[p["kind"]][1] for p in d["positions"]} - {"PLN"})}
+            log(f"Ceny z Yahoo: {len(want)} instrumentów")
+            got = last_prices(list(want) + list(fxs.values()), download)
+            for sym, p in want.items():
+                if sym in got and not p.get("fixed"):
+                    p["price"], p["price_date"] = got[sym]
+            d["fx"] = {**(d.get("fx") or {}), **{c: got[sym][0] for c, sym in fxs.items() if sym in got}}
+            d["prices_at"] = dt.datetime.now().isoformat(timespec="seconds")
+            self.store.save_cache("cem10_manual", d)
+            miss = [s_ for s_ in want if s_ not in got and not want[s_].get("fixed")]
+            return "Ceny odświeżone" + (f" (bez notowań: {', '.join(miss)})" if miss else "")
+        return self._run("prices", work)
 
     def import_xtb(self, blob, name=""):
         accs = portfel.load_report(blob, name)
@@ -245,7 +421,7 @@ class Api:
 
     def start_curve(self, prices=None):
         acc = self.account()
-        if not acc:
+        if not acc or acc.get("manual"):
             return False
         prices = prices or portfel.curve_prices
 
@@ -310,6 +486,12 @@ def make_server(api, port=0, token=None, root=None):
                     body = json.loads(raw or b"{}")
                     if name == "settings":
                         return self._send(200, api.save_settings(body))
+                    if name == "manual":
+                        return self._send(200, api.save_manual(body))
+                    if name == "manual/deposit":
+                        return self._send(200, api.add_deposit(body.get("amount")))
+                    if name == "manual/prices":
+                        return self._send(200, {"started": api.start_prices()})
                     if name == "gpw":
                         return self._send(200, api.save_gpw(body))
                     if name == "fetch":

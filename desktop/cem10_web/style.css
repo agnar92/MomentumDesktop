@@ -197,3 +197,59 @@ td .t { font-weight: 650; } td .n { color: var(--muted); max-width: 260px; overf
   .progress .bar { flex-basis: 120px; }
   .top-actions .btn span { display: none; }
 }
+
+/* ---- panel wykresu po prawej (szeroki ekran), przełączanie spółek bez zamykania */
+.work { display: grid; grid-template-columns: minmax(0, 1fr); }
+.work.has-pane { grid-template-columns: minmax(0, 1fr) clamp(440px, 38vw, 680px); align-items: start; }
+.work.has-pane .view { max-width: none; }
+.has-pane .c-opt { display: none; }
+.pane { position: sticky; top: var(--top, 72px); height: calc(100vh - var(--top, 72px)); padding: 16px 18px 12px; border-left: 1px solid var(--line); background: var(--surface); display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.pane-head { display: flex; justify-content: space-between; gap: 10px; align-items: start; }
+.pane-title { min-width: 0; } .pane-title h2 { font-size: 17px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pane-title p { margin-top: 3px; line-height: 1.7; }
+.pane-ctrl { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; }
+.pane-body { position: relative; flex: 1; min-height: 260px; display: grid; place-items: center; }
+.pane-body > svg { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+.sym-form { display: flex; gap: 8px; } .sym-form input { flex: 1; }
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.seg button { border: 0; background: var(--surface); padding: 5px 11px; font-size: 12.5px; font-weight: 560; cursor: pointer; color: var(--muted); }
+.seg button + button { border-left: 1px solid var(--line); }
+.seg button[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent); }
+.ctip { position: absolute; pointer-events: none; z-index: 3; background: var(--fg); color: var(--bg); font-size: 12px; line-height: 1.5; padding: 7px 10px; border-radius: 8px; white-space: nowrap; box-shadow: 0 4px 16px rgba(0, 0, 0, .2); }
+.ctip b { font-weight: 650; }
+tbody tr.sel td { background: var(--accent-soft); }
+.act.sel { border-color: var(--accent); background: var(--accent-soft); }
+#paneBtn[aria-pressed="false"] { opacity: .65; }
+
+/* ---- wykres kapitału */
+.curve-kpis { display: flex; flex-wrap: wrap; gap: 6px 28px; font-size: 12.5px; color: var(--muted); }
+.curve-kpis b { display: block; font-size: 19px; color: var(--fg); font-variant-numeric: tabular-nums; }
+.curve-host { position: relative; height: 360px; }
+.curve-host > svg { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+.chk { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--muted); cursor: pointer; }
+.row-tools { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+
+/* ---- konto ręczne */
+.mtable { min-width: 640px; } .mtable td { padding: 5px 6px; } .mtable th { padding: 6px; }
+.mtable input, .mtable select { padding: 6px 8px; font-size: 13px; }
+.mtable td:first-child input { min-width: 90px; text-transform: uppercase; }
+.mrow-k { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.src { font-size: 11.5px; color: var(--muted); }
+
+/* ---- udział ETF (baza) */
+.etf-ctl { display: grid; grid-template-columns: 1fr auto; gap: 14px; align-items: center; }
+input[type=range] { width: 100%; accent-color: var(--accent); padding: 0; }
+.money.sm input { font-size: 16px; padding: 6px 34px 6px 10px; width: 96px; } .money.sm b { right: 11px; font-size: 13px; }
+.chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.alloc-row.diff { color: var(--muted); }
+.chart-body { position: relative; }
+.c-opt-inv { display: none; } .has-pane .c-opt-inv { display: inline-flex; }
+
+/* przy otwartym panelu wykresu lewa kolumna jest węższa */
+.has-pane .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.has-pane .cols { grid-template-columns: minmax(0, 1fr); }
+.has-pane .view { padding-left: 20px; padding-right: 20px; }
+.has-pane td .n { max-width: 120px; } .has-pane .minibar { display: none; }
+.has-pane td:last-child .pill { display: inline-block; max-width: 118px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: middle; }
+.mtable td:nth-child(2) select { min-width: 112px; } .mtable td:nth-child(5) select { min-width: 108px; }
+.money.sm { width: 112px; justify-self: start; }

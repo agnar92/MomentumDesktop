@@ -238,3 +238,26 @@ def test_monthly_from_daily_removes_one_day_spikes_but_keeps_real_gaps():
     m = W.monthly_from_daily(df)
     assert m["Low"].min() >= 470 and m.loc["2025-02-01", "Low"] > 560 and m.loc["2025-02-01", "High"] < 650
     assert m.loc[pd.Timestamp(gap).strftime("%Y-%m-01"), "Low"] == 480.0 and m["Volume"].iloc[0] > 0
+
+
+def test_chart_cache_ttl_refresh_and_stale_fallback(api):
+    """Wykres: drugie otwarcie bierze dane z cache (pamięć i dysk), odświeżenie po TTL albo na żądanie, przy błędzie sieci stare dane."""
+    calls = []
+
+    def fetch(sym):
+        calls.append(sym)
+        return {"sym": "CSPX.L", "d": ["2026-10"], "o": [1.0], "h": [2.0], "l": [0.5], "c": [1.5], "v": [10.0]}
+    t0 = 1_000_000.0
+    a = api.chart_cached("CSPX.UK", fetch=fetch, now=t0)
+    b = api.chart_cached("cspx.l", fetch=fetch, now=t0 + 60)                       # ten sam symbol Yahoo: z cache
+    assert calls == ["CSPX.UK"] and not a["from_cache"] and b["from_cache"] and b["c"] == [1.5]
+    other = W.Api(api.store)                                                        # nowy proces: cache z dysku
+    assert other.chart_cached("CSPX.L", fetch=fetch, now=t0 + 120)["from_cache"] and len(calls) == 1
+    assert (api.store.dir / "charts" / "CSPX.L.json").is_file()
+    api.chart_cached("CSPX.L", fetch=fetch, now=t0 + W.CHART_TTL + 1)             # po TTL: nowe pobranie
+    api.chart_cached("CSPX.L", refresh=True, fetch=fetch, now=t0 + W.CHART_TTL + 2)   # odświeżenie na żądanie
+    assert len(calls) == 3
+    s = api.chart_cached("CSPX.L", refresh=True, fetch=lambda x: (_ for _ in ()).throw(ValueError("x")), now=t0 + 2 * W.CHART_TTL)
+    assert s["stale"] and s["c"] == [1.5]
+    with pytest.raises(ValueError):                                                 # bez cache i bez sieci: błąd
+        api.chart_cached("ZZZ", fetch=lambda x: (_ for _ in ()).throw(ValueError("brak")))

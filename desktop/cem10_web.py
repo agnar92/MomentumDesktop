@@ -10,7 +10,7 @@ API (nagłówek X-CEM10 = token z adresu strony; inne strony z przeglądarki nie
   POST /api/fetch                 pobranie listy (wątek w tle; postęp w state.task)
   POST /api/curve                 krzywa kapitału z cenami dziennymi Yahoo (wątek w tle)
   POST /api/xtb  (bajty pliku)    raport XTB (zip albo xlsx) -> state
-  GET  /api/chart?sym=…           świece miesięczne (10 lat) do wykresu
+  GET  /api/chart?sym=…[&refresh=1]  świece miesięczne (z dziennych, 10 lat) do wykresu; cache w pamięci i w data/charts/ (6 godz.)
   POST /api/gpw  {rewizja, WIG20, mWIG40} | {reset: true}   skład GPW
   POST /api/ping                  przeglądarka żyje (bez pywebview program kończy się ~90 s po zamknięciu karty)"""
 import copy
@@ -26,12 +26,15 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 from . import cem10, portfel
+from .store import read as _read, write as _write
 
 TYPES = {".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".svg": "image/svg+xml"}
 BUCKET = {"usa": "CEM10 USA", "gpw": "CEM10 GPW", "etf": "ETF", "inne": "Inne"}
 MANUAL = "Ręczne"                                   # etykieta konta wpisanego ręcznie (obok kont z raportu XTB)
 KIND = {"usa": ("US", "USD", "STOCK"), "gpw": ("PL", "PLN", "STOCK"), "etf": ("UK", "USD", "ETF")}   # rynek -> (sufiks XTB, waluta, kategoria)
 MANUAL_CCY = ("PLN", "USD", "EUR", "GBP")
+CHART_TTL = 6 * 3600                                # świece wykresu: tyle sekund uznajemy za świeże (miesiąc w toku zmienia się w ciągu dnia)
+CHART_KEEP = 30 * 86400                             # pliki cache wykresów starsze niż 30 dni są usuwane
 ADJ = "cem10_adjust"                                 # {etykieta konta XTB: [transakcje dopisane po raporcie]}
 
 
@@ -150,6 +153,8 @@ class Api:
         self.lock = threading.Lock()
         self.task = {"busy": False, "kind": None, "log": "", "progress": 0.0, "error": None, "done": None}
         self.last_ping = time.time()
+        self._charts = {}                                   # cache wykresów w pamięci: {symbol Yahoo: (czas, dane)}
+        self._chart_lock = threading.Lock()
 
     # ------------------------------------------------------------ dane
     @property
@@ -581,6 +586,42 @@ class Api:
             return "Krzywa kapitału przeliczona cenami dziennymi"
         return self._run("curve", work)
 
+    def chart_cached(self, sym, refresh=False, fetch=None, now=None):
+        """Świece wykresu z cache (pamięć, potem dysk data/charts/), pobranie z Yahoo tylko gdy cache starszy niż CHART_TTL albo `refresh`.
+        Błąd sieci przy istniejącym cache -> stare dane z `stale: true`. Zwraca dane wykresu + `cached_at` (epoch) i `from_cache`."""
+        fetch = fetch or self.chart
+        now = now if now is not None else time.time()
+        key = yahoo_symbol(sym)
+        safe = re.sub(r"[^A-Z0-9._-]", "_", key) or "_"
+        path = Path(getattr(self.store, "dir", ".")) / "charts" / f"{safe}.json"
+        with self._chart_lock:
+            hit = self._charts.get(key)
+            if hit is None:
+                disk = _read(path, None)
+                if disk and disk.get("data"):
+                    hit = self._charts[key] = (disk.get("t", 0), disk["data"])
+            if hit and not refresh and now - hit[0] < CHART_TTL:
+                return {**hit[1], "cached_at": hit[0], "from_cache": True, "stale": False}
+        try:
+            data = fetch(sym)
+        except Exception:
+            if hit:   # brak sieci / Yahoo nie odpowiada: pokaż to, co mamy
+                return {**hit[1], "cached_at": hit[0], "from_cache": True, "stale": True}
+            raise
+        with self._chart_lock:
+            for k in {key, data.get("sym", key)}:
+                self._charts[k] = (now, data)
+            try:
+                path.parent.mkdir(exist_ok=True)
+                real = path.parent / (re.sub(r"[^A-Z0-9._-]", "_", data.get("sym", key)) + ".json")
+                _write(real, {"t": now, "data": data})
+                for f in path.parent.glob("*.json"):
+                    if now - f.stat().st_mtime > CHART_KEEP:
+                        f.unlink()
+            except OSError:
+                pass
+        return {**data, "cached_at": now, "from_cache": False, "stale": False}
+
     @staticmethod
     def chart(sym):
         from .prices import _yf
@@ -632,7 +673,8 @@ def make_server(api, port=0, token=None, root=None):
                 if method == "GET" and name == "state":
                     return self._send(200, api.state())
                 if method == "GET" and name == "chart":
-                    return self._send(200, api.chart(parse_qs(u.query).get("sym", [""])[0]))
+                    q = parse_qs(u.query)
+                    return self._send(200, api.chart_cached(q.get("sym", [""])[0], refresh=q.get("refresh", ["0"])[0] == "1"))
                 if method == "POST":
                     api.last_ping = time.time()
                     if name == "ping":

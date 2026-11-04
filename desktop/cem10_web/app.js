@@ -362,7 +362,7 @@ function viewHistory() {
     <div class="curve-kpis" id="curveKpi"></div>
     ${H.points.length > 1 ? `<div class="curve-host" id="curveHost"></div>` : `<div class="empty">Za mało danych do wykresu.</div>`}
     <div class="legend-inline"><span><i style="background:var(--accent)"></i>wartość konta</span><span><i style="background:var(--muted)"></i>wpłacono netto</span>
-      <span><i style="background:var(--good);height:10px;opacity:.4"></i>zysk</span><span><i style="background:var(--bad);height:10px;opacity:.4"></i>strata</span></div></section>`;
+      <span><i style="background:var(--good);height:10px;opacity:.4"></i>zysk</span><span><i style="background:var(--bad);height:10px;opacity:.4"></i>strata</span><span><i style="background:var(--bad)"></i>obsunięcie od szczytu (indeks zwrotu, bez wpłat)</span></div></section>`;
   h += `<section class="card"><div class="card-head"><h2>Zdarzenia</h2><span class="muted xs">${H.events.length}</span></div><div class="tbl-wrap"><table><thead><tr><th>Data</th><th>Zdarzenie</th><th>Spółka</th><th class="r">Kwota / wynik</th><th class="r">Wynik %</th></tr></thead><tbody>
     ${(ui.allEv ? H.events : H.events.slice(0, 40)).map((e) => `<tr><td class="num">${esc(e.d)}</td><td><span class="pill ${e.kind === "wpłata" ? "info" : e.kind === "wypłata" ? "warn" : e.amount >= 0 ? "good" : "bad"}">${e.kind}</span></td>
       <td>${esc(e.t)}</td><td class="r ${e.kind === "sprzedaż" ? cls(e.amount) : ""}">${zl(e.amount)}</td><td class="r ${cls(e.pct)}">${e.pct == null ? "" : pct(e.pct)}</td></tr>`).join("")}
@@ -399,13 +399,25 @@ function drawCurve() {
   curveRO.observe(host);
   renderCurve(host);
 }
+// obsunięcie liczone na indeksie zwrotu (wpłaty i wypłaty nie robią z niego fałszywych spadków ani wzrostów): dzienny zwrot = wartość / (wczorajsza wartość + dzisiejszy przepływ) − 1
+function drawdownSeries(pts) {
+  let idx = 1, peak = 1, prev = null, worst = 0, worstI = 0;
+  pts.forEach((p, i) => {
+    if (prev) { const base = prev.v + (p.dep - prev.dep); if (base > 1 && p.v > 0) idx *= p.v / base; }
+    peak = Math.max(peak, idx); p.dd = idx / peak - 1; p.idx = idx; prev = p;
+    if (p.dd < worst) { worst = p.dd; worstI = i; }
+  });
+  return { worst, worstI };
+}
 function renderCurve(host) {
   if (!host.isConnected || !$("#curveKpi")) return;
   let pts = S.history.points.map((q) => ({ t: Date.parse(q[0]), d: q[0], v: q[1], dep: q[2] }));
   if (pts.length < 2) return;
   const t1 = pts[pts.length - 1].t, span = { "6m": 183, "1y": 365, "3y": 1096 }[ui.histRange];
   if (span) { const cut = t1 - span * 864e5, f = pts.filter((p) => p.t >= cut); if (f.length > 1) pts = f; }
-  const W = Math.max(host.clientWidth, 320), Hh = Math.max(host.clientHeight, 240), mL = 56, mR = 16, mT = 12, mB = 26, x0 = mL, x1 = W - mR, y0 = mT, y1 = Hh - mB;
+  const W = Math.max(host.clientWidth, 320), Hh = Math.max(host.clientHeight, 300), mL = 56, mR = 16, mT = 12, mB = 26, ddH = Math.round(Math.min(120, Hh * 0.26)), gap = 30;
+  const x0 = mL, x1 = W - mR, y0 = mT, y1 = Hh - mB - ddH - gap, yd0 = y1 + gap, yd1 = Hh - mB;
+  const dd = drawdownSeries(pts), ddFloor = Math.min(dd.worst * 1.1, -0.04), Yd = (d) => yd0 + (d / ddFloor) * (yd1 - yd0);
   const ta = pts[0].t, tb = pts[pts.length - 1].t;
   let lo = Math.min(...pts.map((p) => Math.min(p.v, p.dep))), hi = Math.max(...pts.map((p) => Math.max(p.v, p.dep)));
   const pad = (hi - lo) * 0.08 || hi * 0.05 || 1; lo = Math.max(lo - pad, 0); hi += pad;
@@ -420,7 +432,7 @@ function renderCurve(host) {
     const m = cur.getUTCMonth(), y = cur.getUTCFullYear();
     if ((y * 12 + m) % stepM === 0 || (stepM >= 12 && m === 0 && (y % (stepM / 12) === 0))) {
       const x = X(cur.getTime());
-      if (x - lastX > 44) { s += `<line x1="${x}" x2="${x}" y1="${y1}" y2="${y1 + 4}" stroke="var(--line)"/><text x="${x}" y="${Hh - 8}" text-anchor="middle" font-size="11.5" fill="var(--muted)">${m === 0 || stepM >= 12 ? y : MSHORT[m] + " " + String(y).slice(2)}</text>`; lastX = x; }
+      if (x - lastX > 44) { s += `<line x1="${x}" x2="${x}" y1="${yd1}" y2="${yd1 + 4}" stroke="var(--line)"/><text x="${x}" y="${Hh - 8}" text-anchor="middle" font-size="11.5" fill="var(--muted)">${m === 0 || stepM >= 12 ? y : MSHORT[m] + " " + String(y).slice(2)}</text>`; lastX = x; }
     }
     cur = new Date(Date.UTC(y, m + 1, 1));
   }
@@ -439,22 +451,31 @@ function renderCurve(host) {
     let a = 0, b = pts.length - 1; while (a < b) { const m = (a + b) >> 1; if (pts[m].t < t) a = m + 1; else b = m; }
     s += `<circle cx="${X(pts[a].t)}" cy="${Y(pts[a].v)}" r="3.2" fill="${e.amount >= 0 ? "var(--good)" : "var(--bad)"}" opacity=".85" stroke="var(--surface)" stroke-width="1"><title>${esc(e.d)} ${esc(e.t)} ${zl(e.amount)}</title></circle>`;
   }
+  // panel obsunięcia: pole pod zerem, siatka co ~5-10 pp
+  const ddStep = Math.abs(ddFloor) > 0.4 ? 0.2 : Math.abs(ddFloor) > 0.2 ? 0.1 : 0.05;
+  s += `<text x="${x0}" y="${yd0 - 6}" font-size="11.5" fill="var(--muted)">Obsunięcie od szczytu (bez wpłat)</text>`;
+  for (let v = 0; v >= ddFloor - 1e-9; v -= ddStep) s += `<line x1="${x0}" x2="${x1}" y1="${Yd(v)}" y2="${Yd(v)}" stroke="var(--grid)"/><text x="${x0 - 8}" y="${Yd(v) + 4}" text-anchor="end" font-size="11.5" fill="var(--muted)">${v === 0 ? "0" : "−" + num(-v * 100, 0)} %</text>`;
+  const dline = pts.map((p, i) => `${i ? "L" : "M"}${X(p.t).toFixed(1)},${Yd(p.dd).toFixed(1)}`).join("");
+  s += `<path d="${dline}L${X(pts[pts.length - 1].t).toFixed(1)},${Yd(0)}L${X(pts[0].t).toFixed(1)},${Yd(0)}Z" fill="var(--bad)" opacity=".22"/><path d="${dline}" fill="none" stroke="var(--bad)" stroke-width="1.6" stroke-linejoin="round"/>`;
+  if (dd.worst < -0.005) { const w = pts[dd.worstI]; s += `<circle cx="${X(w.t)}" cy="${Yd(w.dd)}" r="3.5" fill="var(--bad)" stroke="var(--surface)" stroke-width="1"><title>Maks. obsunięcie ${esc(w.d)} ${pct(w.dd)}</title></circle>`; }
   const last = pts[pts.length - 1];
-  s += `<line id="cvx" x1="0" x2="0" y1="${y0}" y2="${y1}" stroke="var(--muted)" stroke-dasharray="3 3" visibility="hidden"/><circle id="cvd" r="4.5" fill="var(--accent)" stroke="var(--surface)" stroke-width="2" visibility="hidden"/>
-    <rect id="cvhit" x="${x0}" y="${y0}" width="${x1 - x0}" height="${y1 - y0}" fill="transparent"/></svg>`;
+  s += `<line id="cvx" x1="0" x2="0" y1="${y0}" y2="${yd1}" stroke="var(--muted)" stroke-dasharray="3 3" visibility="hidden"/><circle id="cvd" r="4.5" fill="var(--accent)" stroke="var(--surface)" stroke-width="2" visibility="hidden"/><circle id="cvdd" r="4" fill="var(--bad)" stroke="var(--surface)" stroke-width="2" visibility="hidden"/>
+    <rect id="cvhit" x="${x0}" y="${y0}" width="${x1 - x0}" height="${yd1 - y0}" fill="transparent"/></svg>`;
   host.innerHTML = s;
   const kpi = (p, hov) => { const r = p.v - p.dep; $("#curveKpi").innerHTML = `<span>${hov ? esc(p.d) : "Na dzień " + esc(p.d)}<b>${zl(p.v)}</b></span><span>Wpłacono netto<b>${zl(p.dep)}</b></span>
-    <span>Wynik<b class="${cls(r)}">${zl(r)}${p.dep ? " · " + pct(r / p.dep) : ""}</b></span>`; };
+    <span>Wynik<b class="${cls(r)}">${zl(r)}${p.dep ? " · " + pct(r / p.dep) : ""}</b></span>
+    <span>Obsunięcie${hov ? "" : " teraz"}<b class="${cls(p.dd)}">${pct(p.dd)}</b></span><span>Maks. obsunięcie w zakresie<b class="${cls(dd.worst)}">${pct(dd.worst)}</b></span>`; };
   kpi(last, false);
-  const hit = $("#cvhit", host), vx = $("#cvx", host), vd = $("#cvd", host);
+  const hit = $("#cvhit", host), vx = $("#cvx", host), vd = $("#cvd", host), vdd = $("#cvdd", host);
   hit.addEventListener("mousemove", (e) => {
     const r = host.getBoundingClientRect(), t = ta + ((e.clientX - r.left - x0) / (x1 - x0)) * (tb - ta);
     let a = 0, b = pts.length - 1; while (a < b) { const m = (a + b) >> 1; if (pts[m].t < t) a = m + 1; else b = m; }
     if (a > 0 && Math.abs(pts[a - 1].t - t) < Math.abs(pts[a].t - t)) a--;
     const p = pts[a]; vx.setAttribute("x1", X(p.t)); vx.setAttribute("x2", X(p.t)); vx.setAttribute("visibility", "visible");
-    vd.setAttribute("cx", X(p.t)); vd.setAttribute("cy", Y(p.v)); vd.setAttribute("visibility", "visible"); kpi(p, true);
+    vd.setAttribute("cx", X(p.t)); vd.setAttribute("cy", Y(p.v)); vd.setAttribute("visibility", "visible");
+    vdd.setAttribute("cx", X(p.t)); vdd.setAttribute("cy", Yd(p.dd)); vdd.setAttribute("visibility", "visible"); kpi(p, true);
   });
-  hit.addEventListener("mouseleave", () => { vx.setAttribute("visibility", "hidden"); vd.setAttribute("visibility", "hidden"); kpi(last, false); });
+  hit.addEventListener("mouseleave", () => { vx.setAttribute("visibility", "hidden"); vd.setAttribute("visibility", "hidden"); vdd.setAttribute("visibility", "hidden"); kpi(last, false); });
 }
 
 // ------------------------------------------------------------------ Ustawienia

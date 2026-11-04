@@ -224,7 +224,7 @@ tbody tr.sel td { background: var(--accent-soft); }
 /* ---- wykres kapitału */
 .curve-kpis { display: flex; flex-wrap: wrap; gap: 6px 28px; font-size: 12.5px; color: var(--muted); }
 .curve-kpis b { display: block; font-size: 19px; color: var(--fg); font-variant-numeric: tabular-nums; }
-.curve-host { position: relative; height: 360px; }
+.curve-host { position: relative; height: 480px; }
 .curve-host > svg { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
 .chk { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--muted); cursor: pointer; }
 .row-tools { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }

@@ -344,11 +344,12 @@ class Api:
         c = self.store.cache("xtb_curve")
         exact = c.get("label") == acc.get("label") and c.get("generated") == acc.get("generated")
         pts = (c.get("points") or []) if exact else portfel.curve(acc)
+        stats = portfel.performance(pts, portfel.trades(acc), c.get("bench") if exact else None)   # na pełnej krzywej, przed przerzedzeniem do wykresu
         step = max(len(pts) // 700, 1)   # do wykresu wystarczy ~700 punktów
         pts = pts[::step] + ([pts[-1]] if pts and (len(pts) - 1) % step else [])
         ev = [{"d": d, "kind": "wpłata" if x > 0 else "wypłata", "t": "", "amount": x, "pct": None} for d, x in portfel.flows(acc)]
         ev += [{"d": d, "kind": "sprzedaż", "t": t, "amount": p, "pct": r} for d, t, p, r in portfel.exits(acc)]
-        return {"exact": exact, "points": pts, "events": sorted(ev, key=lambda e: e["d"], reverse=True)}
+        return {"exact": exact, "points": pts, "stats": stats, "events": sorted(ev, key=lambda e: e["d"], reverse=True)}
 
     def manual(self):
         """Tickery wpisane ręcznie (bez raportu XTB) -> decyzja wg SMA 10."""
@@ -582,7 +583,9 @@ class Api:
 
         def work(log, progress):
             px, fxs = prices(acc, log=log)
-            self.store.save_cache("xtb_curve", {"generated": acc.get("generated"), "label": acc.get("label"), "points": portfel.curve(acc, px, fxs)})
+            pts = portfel.curve(acc, px, fxs)
+            bench = portfel.bench_series([p[0] for p in pts], px.get(portfel.BENCH), fxs.get("USD"))
+            self.store.save_cache("xtb_curve", {"generated": acc.get("generated"), "label": acc.get("label"), "points": pts, "bench": bench})
             return "Krzywa kapitału przeliczona cenami dziennymi"
         return self._run("curve", work)
 

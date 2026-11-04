@@ -99,3 +99,61 @@ def test_curve_cash_plus_positions_and_deposits():
     d = {p[0]: p for p in pts}
     assert d["2026-01-02"][1] == 2000.0 and d["2026-01-02"][2] == 2000.0      # sama wpłata
     assert pts[-1][2] == 2000.0 and abs(pts[-1][1] - (436 + 2 * 120 * 3.8 + 600 + 102.1 * 3.8)) < 1
+
+
+# ---------------------------------------------------------------- wskaźniki jakości
+def _pts(vals, deps=None, start="2025-01-01"):
+    d0 = dt.date.fromisoformat(start)
+    return [((d0 + dt.timedelta(i)).isoformat(), v, (deps or [0] * len(vals))[i]) for i, v in enumerate(vals)]
+
+
+def test_performance_deposits_are_not_returns():
+    # 100 zł, potem wpłata 100 zł (200), spadek do 180 = −10 %, nie −45 %
+    vals = [100] * 10 + [200] * 10 + [180] * 10
+    deps = [100] * 10 + [200] * 20
+    m = P.performance(_pts(vals, deps))
+    assert abs(m["max_dd"] + 0.10) < 1e-9 and abs(m["twr"] + 0.10) < 1e-9
+    assert abs(m["dd"] + 0.10) < 1e-9
+
+
+def test_performance_cagr_vol_and_months():
+    vals = [100 * 1.001 ** i for i in range(400)]   # stały wzrost 0,1 % dziennie, bez wpłat po starcie
+    m = P.performance(_pts(vals, [100] * 400))
+    assert m["cagr"] is not None and m["cagr"] > 0.4 and m["max_dd"] == 0 and m["calmar"] is None
+    assert m["vol"] is not None and m["vol"] < 1e-6 and m["months"]["pos"] == 1.0 and m["years"] > 1.0
+    assert P.performance(_pts([100] * 5)) is None   # za mało danych
+
+
+def test_performance_xirr_matches_simple_growth():
+    # 1000 zł wpłacone na początku, wzrost 10 % rocznie przez ponad rok -> XIRR i CAGR ok. 10 %
+    vals = [1000 * 1.1 ** (i / 365) for i in range(400)]
+    m = P.performance(_pts(vals, [1000] * 400, start="2025-01-01"))
+    assert abs(m["xirr"] - 0.10) < 0.01 and abs(m["cagr"] - 0.10) < 0.01
+
+
+def test_trade_stats_and_hold():
+    acc = {"closed": [
+        {"ticker": "AAA.US", "close": "2025-03-10T10:00:00", "open": "2025-01-10T10:00:00", "profit": 200.0, "buy": 1000.0},
+        {"ticker": "BBB.US", "close": "2025-04-10T10:00:00", "open": "2025-03-10T10:00:00", "profit": -100.0, "buy": 1000.0},
+        {"ticker": "CCC.US", "close": "2025-05-10T10:00:00", "open": "2025-04-10T10:00:00", "profit": 400.0, "buy": 1000.0}]}
+    tr = P.trades(acc)
+    s = P.trade_stats(tr)
+    assert s["n"] == 3 and s["wins"] == 2 and abs(s["win_rate"] - 2 / 3) < 1e-9
+    assert abs(s["avg_win"] - 0.3) < 1e-9 and abs(s["avg_loss"] + 0.1) < 1e-9 and abs(s["payoff"] - 3.0) < 1e-9
+    assert abs(s["profit_factor"] - 6.0) < 1e-9 and abs(s["expectancy"] - 0.5 / 3) < 1e-9 and abs(s["avg_hold"] - (59 + 31 + 30) / 3) < 1e-9
+    assert P.trade_stats([]) is None
+
+
+def test_assess_early_and_bad_levels():
+    short = P.performance(_pts([100 + i for i in range(60)], [100] * 60))
+    assert short["verdict"]["level"] == "early"
+    # po 3 latach: spadek o 45 % od szczytu jest gorszy niż najgorszy w historii (−33,5 %) -> bad
+    vals = [100 * 1.0007 ** i for i in range(800)] + [100 * 1.0007 ** 800 * (1 - 0.45 * i / 200) for i in range(1, 201)]
+    m = P.performance(_pts(vals, [100] * len(vals)))
+    assert m["months_n"] >= 24 and m["verdict"]["level"] == "bad" and m["dd"] < -0.4
+
+
+def test_bench_series_aligns_last_known_price():
+    out = P.bench_series(["2025-01-02", "2025-01-03", "2025-01-06"], {"2025-01-02": 500.0, "2025-01-06": 510.0}, {"2025-01-01": 4.0})
+    assert out == [("2025-01-02", 2000.0), ("2025-01-03", 2000.0), ("2025-01-06", 2040.0)]
+    assert P.bench_series(["2025-01-02"], {}, {"2025-01-01": 4.0}) == []

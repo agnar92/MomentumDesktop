@@ -257,3 +257,15 @@ input[type=range] { width: 100%; accent-color: var(--accent); padding: 0; }
 .act .amt small.stopv { display: block; }
 .has-pane td, .has-pane th { padding-left: 6px; padding-right: 6px; }
 .has-pane td .n { max-width: 84px; } .has-pane td:last-child .pill { max-width: 96px; }
+
+/* wskaźniki jakości */
+.perf h3 { font-size: 13px; letter-spacing: .02em; color: var(--muted); font-weight: 650; margin: 4px 0 8px; }
+.perf-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 18px 28px; margin: 12px 0 8px; }
+.perf-g { display: flex; flex-direction: column; }
+.perf-t { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; padding: 7px 0; border-bottom: 1px solid var(--line-2); font-size: 14px; }
+.perf-t span { color: var(--muted); }
+.perf-t b { font-weight: 640; font-variant-numeric: tabular-nums; text-align: right; }
+.verdict { margin: 10px 0 4px; padding: 10px 14px; border-radius: 10px; font-size: 14px; background: var(--info-soft); }
+.verdict.good { background: var(--good-soft); } .verdict.warn { background: var(--warn-soft); } .verdict.bad { background: var(--bad-soft); }
+.perf .tbl-wrap { margin-top: 6px; }
+.perf .note { margin-top: 12px; }

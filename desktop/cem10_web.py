@@ -272,10 +272,15 @@ class Api:
     def gpw_members(self):
         return self.store.cache("cem10_gpw") or cem10.GPW_DEFAULT
 
+    def topup_mode(self):
+        """Dopłaty do trzymanych: 'plus' (tylko na plusie), 'all' (też na minusie), 'off'. Stare ustawienie bool: True -> plus, False -> off."""
+        v = self.store.settings.get("cem10_topup", "plus")
+        return v if v in ("plus", "all", "off") else ("off" if v is False else "plus")
+
     def settings(self):
         st = self.store.settings
         return {"deposit": st.get("cem10_deposit", 500), "targets": st.get("cem10_targets") or {}, "etf": st.get("cem10_etf", "CSPX.UK"),
-                "topup": bool(st.get("cem10_topup", True)), "hold": st.get("cem10_hold", ""), "account": (self.account() or {}).get("label", ""), "theme": st.get("cem10_theme", "auto")}
+                "topup": self.topup_mode(), "hold": st.get("cem10_hold", ""), "account": (self.account() or {}).get("label", ""), "theme": st.get("cem10_theme", "auto")}
 
     # ------------------------------------------------------------ widoki
     def lists(self):
@@ -323,7 +328,7 @@ class Api:
         st = self.store.settings
         tg = self.targets(pf)
         actions, s = portfel.plan(acc, self.data, deposit=max(_f(st.get("cem10_deposit", 500)), 0.0), targets=tg, etf_ticker=st.get("cem10_etf", "CSPX.UK"),
-                                    topup=bool(st.get("cem10_topup", True)))
+                                    topup=self.topup_mode())
         D = self.data
         rows = {("usa", r["t"]): r for r in D["usa"]["rows"]} | {("gpw", r["t"]): r for r in D["gpw"]["rows"]}
         usd = next((h["fx"] for h in pf["rows"] if h.get("ccy") == "USD" and h.get("fx")), 3.8)
@@ -396,7 +401,7 @@ class Api:
         if "deposit" in body:
             st["cem10_deposit"] = max(_f(body["deposit"]), 0.0)
         if "topup" in body:
-            st["cem10_topup"] = bool(body["topup"])
+            st["cem10_topup"] = body["topup"] if body["topup"] in ("plus", "all", "off") else "plus"
         if "targets" in body:
             st["cem10_targets"] = {b: max(_f(body["targets"].get(b)), 0.0) for b in ("usa", "gpw", "etf")}
         if "etf_pct" in body or "gpw_share" in body:   # baza ETF S&P 500 w % całości; reszta = CEM10, z czego gpw_share % to GPW

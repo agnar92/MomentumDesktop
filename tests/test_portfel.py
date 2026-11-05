@@ -95,7 +95,7 @@ def test_plan_sells_buys_new_and_tops_up_to_target():
 
 def test_topup_switch_off_has_no_dopłać():
     acc = P.load_report(_zip())[0]
-    acts, s = P.plan(acc, CEM, deposit=1000.0, targets={"usa": 50, "gpw": 50, "etf": 0}, slots={"usa": 2, "gpw": 1}, topup=False)
+    acts, s = P.plan(acc, CEM, deposit=1000.0, targets={"usa": 50, "gpw": 50, "etf": 0}, slots={"usa": 2, "gpw": 1}, topup="off")
     assert not any(x["akcja"] == "DOPŁAĆ" for x in acts) and any("wyłączone" in n for n in s["notes"])
 
 

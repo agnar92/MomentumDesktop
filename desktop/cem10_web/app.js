@@ -151,7 +151,7 @@ function viewHome() {
         ${PL && PL.actions.length ? `<button class="btn sm" data-act="copy" type="button">Kopiuj plan</button>` : ""}</div>`;
   if (P && L) {
     h += `<div class="row"><label class="field" style="flex:1;min-width:200px"><span>Wpłata w tym miesiącu</span><span class="money"><input type="text" inputmode="decimal" id="deposit" value="${esc(num(S.settings.deposit, 0))}"><b>zł</b></span></label>
-      <button class="btn sm" type="button" data-act="topup" aria-pressed="${S.settings.topup !== false}" title="Wyłącz, gdy nie możesz kupować w pierwszych dniach miesiąca albo nie chcesz dokładać do trzymanych spółek">Dopłaty do trzymanych: ${S.settings.topup !== false ? "WŁĄCZONE" : "WYŁĄCZONE"}</button></div>`;
+      <button class="btn sm" type="button" data-act="topup" title="Zmienia, do których trzymanych spółek plan dokłada pieniądze. Plan działa o każdej porze miesiąca — możesz kupować także kilka dni czy tydzień po zamknięciu miesiąca.">Dopłaty do trzymanych: ${({ plus: 'tylko na plusie', all: 'do wszystkich kandydatów', off: 'wyłączone' })[S.settings.topup] || 'tylko na plusie'}</button></div>`;
     h += planList(PL);
   } else if (L && S.manual.length) {
     h += manualList();
@@ -613,7 +613,7 @@ document.addEventListener("click", async (e) => {
     if (act === "all") { ui.all[a.dataset.m] = true; return renderView(); }
     if (act === "allev") { ui.allEv = true; return renderView(); }
     if (act === "curve") { try { await post("curve"); S.task.busy = true; setState(S); } catch (err) { toast(err.message, true); } return; }
-    if (act === "topup") { try { setState(await post("settings", { topup: S.settings.topup === false })); } catch (err) { toast(err.message, true); } return; }
+    if (act === "topup") { try { setState(await post("settings", { topup: ({ plus: "all", all: "off", off: "plus" })[S.settings.topup] || "all" })); } catch (err) { toast(err.message, true); } return; }
     if (act === "copy") return copyPlan();
     if (act === "mopen") return openManual();
     if (act === "aopen") { ui.adjOpen = true; renderView(); const t = $("#ad_t"); if (t) t.focus(); return; }

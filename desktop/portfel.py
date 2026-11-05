@@ -179,11 +179,11 @@ def _in_profit(h):
     return bool(h.get("open_price") and h.get("price") and h["price"] >= h["open_price"])
 
 
-def plan(acc, cem, deposit=0.0, targets=None, etf_ticker="CSPX.UK", slots=None, topup=True):
+def plan(acc, cem, deposit=0.0, targets=None, etf_ticker="CSPX.UK", slots=None, topup="plus"):
     """Plan na zamknięcie miesiąca: 1) sprzedaj pozycje CEM10 ze statusem SPRZEDAJ, 2) gotówka + wpłata + sprzedaż rozdzielona na koszyki
     wg niedoboru do udziałów docelowych (targets = {'usa': %, 'gpw': %, 'etf': %}), 3) w koszyku CEM10: waga docelowa = (wartość koszyka po planie) / liczba miejsc,
     nowe spółki z listy na wolne miejsca, potem dopełnienie do wagi trzymanych KANDYDATÓW, które są na plusie względem ceny zakupu (od najmniejszej, min. 100 zł; do spadających spółek NIE dokładamy — user: „Dell spadł o 20 % i każe mi dopłacać”); filtr rynku = brak zakupów.
-    topup=False wyłącza całe dopełnianie (DOPŁAĆ) — nowe spółki na wolne miejsca zostają; powody braku zakupów trafiają do summary['notes'].
+    topup: "plus" (domyślnie) = dopełnianie tylko pozycji na plusie, "all" = także tych na minusie (świadoma decyzja), "off" (albo False) = bez DOPŁAĆ — nowe spółki na wolne miejsca zostają; powody braku zakupów trafiają do summary['notes'].
     -> (akcje [{akcja, ticker, koszyk, kwota, uwagi}], podsumowanie)."""
     from . import cem10
     slots = {**SLOTS, **(slots or {})}
@@ -234,16 +234,17 @@ def plan(acc, cem, deposit=0.0, targets=None, etf_ticker="CSPX.UK", slots=None, 
                 break
             actions.append({"akcja": "KUP", "ticker": r["t"], "koszyk": b, "kwota": amt, "uwagi": f"nowa pozycja, #{cands.index(r) + 1} na liście"})
             money -= amt
+        mode = "off" if topup is False else "plus" if topup in (True, None) else topup
         ups = [h for h in held if h["rank"]]
-        if not topup:
+        if mode == "off":
             if ups:
                 summary["notes"].append(f"{b.upper()}: dopłaty do trzymanych wyłączone")
             ups = []
-        elif any(not _in_profit(h) for h in ups):
+        elif mode == "plus" and any(not _in_profit(h) for h in ups):
             summary["notes"].append(f"{b.upper()}: bez dopłaty do spółek na minusie ({', '.join(h['t'] for h in ups if not _in_profit(h))})")
-        if len(held) >= slots[b] and money >= MIN_TOPUP and not any(h["rank"] and _in_profit(h) for h in held):
+        if len(held) >= slots[b] and money >= MIN_TOPUP and not any(h["rank"] and (mode == "all" or _in_profit(h)) for h in held):
             summary["notes"].append(f"{b.upper()}: brak wolnych miejsc ({len(held)} z {slots[b]})")
-        for h in sorted([h for h in ups if _in_profit(h)], key=lambda h: h["value"]):
+        for h in sorted([h for h in ups if mode == "all" or _in_profit(h)], key=lambda h: h["value"]):
             add = min(tgt - h["value"], money)
             if add >= MIN_TOPUP:
                 actions.append({"akcja": "DOPŁAĆ", "ticker": h["t"], "koszyk": b, "kwota": add, "uwagi": f"do wagi {tgt:,.0f} zł".replace(",", " ")})

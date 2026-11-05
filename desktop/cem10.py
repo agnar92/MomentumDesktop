@@ -6,7 +6,7 @@ Reguły (rekomendacja po badaniach, listopad 2026):
   GPW: bez lidera, pula WIG20 + mWIG40 razem; C-8: zwrot 3M > 0 %, 12M > +30 %, zamknięcie nad SMA 10; ranking po 6M, 5 pozycji;
        brak zakupów, gdy równo ważony indeks składników (średni miesięczny zwrot) jest pod SMA 12.
   Wyjście (oba rynki): zamknięcie miesiąca pod SMA 10; awaryjny stop -40 %. Przynależność do indeksu nie jest warunkiem wyjścia.
-Dane USA: najpierw lider (SPY / QQQ), potem sito Finviz (idx_sp500 ALBO idx_ndx z zwrotem 26 tygodni > +30 %) tylko dla indeksu lidera, bez Wikipedii; skład WIG20 / mWIG40 =
+Dane USA: najpierw lider (SPY / QQQ), potem z Finviz lista tickerów indeksu lidera (idx_sp500 ALBO idx_ndx, bez filtrów; bez Wikipedii), ceny z yfinance na koniec miesiąca i ranking po 6M liczone tu; skład WIG20 / mWIG40 =
 GPW_DEFAULT albo data/cem10_gpw.json (edycja w oknie CEM10 po każdej kwartalnej rewizji GPW), ceny = miesięczne świece yfinance
 (2 lata; GPW z końcówką .WA), tylko zamknięte miesiące.
 Zwroty i SMA na zamknięciach skorygowanych o dywidendy; pokazywane ceny są surowe (jak w notowaniach)."""
@@ -193,7 +193,7 @@ def leader(m):
 
 
 def build(mem, gpw, px, upto, today, held=()):
-    """Lista CEM10 (ten sam format co docs/data/cem10.json w Momentum). mem = {"sp": {ticker: nazwa}, "nq": {...}} z sita Finviz;
+    """Lista CEM10 (ten sam format co docs/data/cem10.json w Momentum). mem = {"sp": {ticker: nazwa}, "nq": {...}} z Finviz (indeks lidera);
     held = trzymane spółki USA (dostają wiersz niezależnie od sita, bez flagi indeksu — decyzja tylko po SMA 10)."""
     m = monthly(px, upto)
     spy = m["SPY"][1]
@@ -227,9 +227,9 @@ def build(mem, gpw, px, upto, today, held=()):
     return dict(generated_at=today.isoformat(), month=upto, usa=usa, gpw=gpw_out)
 
 
-# sito Finviz = reguła: zwrot 26 tygodni > +30 % (Finviz liczy od dzisiejszej ceny, reguła od zamknięcia miesiąca, więc tuż przy progu
-# wynik może się nieco różnić; ostateczny próg 6M > +30 % liczy aplikacja z miesięcznych zamknięć). Skład indeksów = wynik skanu idx_sp500 / idx_ndx.
-SIEVE = ("idx_sp500,ta_perf_26w30o", "idx_ndx,ta_perf_26w30o")
+# Finviz daje TYLKO skład indeksu (dzisiejszy; bez filtrów zwrotu — Finviz liczy od dzisiejszej ceny, a reguła od zamknięcia miesiąca).
+# Zwrot 6M, SMA 10 i ranking liczy aplikacja z miesięcznych zamknięć yfinance.
+INDEX_FILTERS = ("idx_sp500", "idx_ndx")
 
 
 def finviz_members(filters, get=None, pause=0.7):
@@ -258,20 +258,20 @@ def finviz_members(filters, get=None, pause=0.7):
     return out
 
 
-def sieve_members(lead, get=None, log=print):
-    """Spółki z 6M > +30 % (Finviz) TYLKO z indeksu lidera: {"sp": {ticker: nazwa}, "nq": {...}} (drugi indeks zostaje pusty — nie ma sensu go pobierać,
-    bo kandydaci pochodzą wyłącznie z indeksu lidera). Bez zapasowego źródła: błąd Finviz = błąd odświeżenia."""
-    k, name = ("nq", "Nasdaq-100") if lead == "NDX" else ("sp", "S&P 500")
+def index_members(lead, get=None, log=print):
+    """Skład indeksu lidera z Finviz: {"sp": {ticker: nazwa}, "nq": {...}} (drugi indeks zostaje pusty — kandydaci pochodzą tylko z indeksu lidera).
+    Bez zapasowego źródła: błąd Finviz albo podejrzana liczba spółek = błąd odświeżenia."""
+    k, name, lo, hi = ("nq", "Nasdaq-100", 80, 120) if lead == "NDX" else ("sp", "S&P 500", 400, 600)
     out = {"sp": {}, "nq": {}}
-    out[k] = finviz_members(SIEVE[1 if k == "nq" else 0], get=get)
-    log(f"Finviz ({name}, lider {lead}): {len(out[k])} spółek z 6M > +30 %")
-    if len(out[k]) > (80 if k == "nq" else 300):
-        raise ValueError("Finviz: filtr nie zadziałał (zbyt dużo spółek) — sprawdź kod filtra")
+    out[k] = finviz_members(INDEX_FILTERS[1 if k == "nq" else 0], get=get)
+    log(f"Finviz ({name}, lider {lead}): {len(out[k])} spółek w indeksie")
+    if not lo <= len(out[k]) <= hi:
+        raise ValueError(f"Finviz: {len(out[k])} spółek w {name} (oczekiwano {lo}–{hi}) — zmieniony układ strony albo blokada")
     return out
 
 
 def fetch(gpw, old=None, today=None, log=print, progress=None, held=()):
-    """Odświeżenie: najpierw lider (SPY i QQQ, 2 zapytania), potem sito Finviz TYLKO dla indeksu lidera, ceny kandydatów + trzymanych + GPW.
+    """Odświeżenie: najpierw lider (SPY i QQQ), potem skład indeksu lidera z Finviz, ceny miesięczne całego indeksu + trzymanych + GPW (yfinance).
     Finviz niedostępny albo za mało cen -> ValueError (bez zapasowego źródła składu)."""
     import datetime as dt
     from .prices import last_closed_month
@@ -282,7 +282,7 @@ def fetch(gpw, old=None, today=None, log=print, progress=None, held=()):
     if "SPY" not in m0 or "QQQ" not in m0:
         raise ValueError(f"brak cen SPY / QQQ za {upto}")
     lead = leader(m0)[0]
-    mem = sieve_members(lead, log=log)
+    mem = index_members(lead, log=log)
     heldu = sorted({t.replace(".", "-") for t in held if not str(t).upper().endswith(".WA")})
     usa = sorted((set(mem["sp"]) | set(mem["nq"]) | set(heldu)) - {"SPY", "QQQ"})
     tickers = usa + [t + ".WA" for t in sorted(set(gpw["WIG20"]) | set(gpw["mWIG40"]))]
@@ -291,7 +291,7 @@ def fetch(gpw, old=None, today=None, log=print, progress=None, held=()):
     if have < 0.9 * len(tickers):
         raise ValueError(f"za mało cen: {have}/{len(tickers)}")
     out = build(mem, gpw, px, upto, today, held=heldu)
-    out["usa"]["prefilter"] = {"lead": lead, "sp": len(mem["sp"]), "nq": len(mem["nq"]), "filtr": "6M > +30 %"}
+    out["usa"]["index"] = {"lead": lead, "n": len(mem["nq"] if lead == "NDX" else mem["sp"])}
     return out
 
 

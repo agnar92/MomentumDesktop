@@ -46,14 +46,30 @@ def test_default_gpw_members():
     assert len(g["WIG20"]) == 20 and len(g["mWIG40"]) == 40 and g["rewizja"]
 
 
-def test_finviz_sieve_parsing_and_fetch_set():
+def test_finviz_sieve_members():
     class R:
-        text = '<a data-ticker="MRNA">MRNA</a><a data-ticker="BRK.B">x</a><a data-ticker="MRNA">MRNA</a>'
+        def __init__(self, text):
+            self.text = text
 
         def raise_for_status(self):
             pass
-    assert cem10.finviz_tickers("idx_sp500,ta_perf_26w20o", get=lambda *a, **k: R()) == ["BRK-B", "MRNA"]
-    mem = {"sp": {"AAA": "A", "BBB": "B", "CCC": "C", "DDD": "D"}, "nq": {"EEE": "E"}}
-    old = {"usa": {"rows": [{"t": "CCC", "r6": 0.5}, {"t": "DDD", "r6": 0.1}, {"t": "OLD", "r6": 0.9}]}}
-    # sito AAA + spoza indeksów XXX, trzymane BBB, kandydat z poprzedniej listy CCC (DDD za słaby, OLD już nie w indeksie)
-    assert cem10.usa_to_fetch(mem, ["AAA", "XXX"], held=["BBB"], old=old) == ["AAA", "BBB", "CCC"]
+    calls = []
+
+    def get(url, params=None, **k):
+        calls.append(params["f"])
+        return R("")
+    from desktop import finviz
+    orig = finviz.parse_page
+    finviz.parse_page = lambda text: ([{"ticker": "BRK.B", "company": "Berkshire"}, {"ticker": "MRNA", "company": "Moderna"}], 2)
+    try:
+        out = cem10.finviz_members("idx_sp500,ta_perf_26w30o", get=get, pause=0)
+        assert out == {"BRK-B": "Berkshire", "MRNA": "Moderna"} and calls == ["idx_sp500,ta_perf_26w30o"]
+        finviz.parse_page = lambda text: ([], None)
+        try:
+            cem10.finviz_members("x", get=get, pause=0)
+            assert False
+        except ValueError:
+            pass
+    finally:
+        finviz.parse_page = orig
+    assert "26w30o" in cem10.SIEVE[0] and "26w30o" in cem10.SIEVE[1]

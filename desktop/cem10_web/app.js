@@ -132,7 +132,7 @@ function viewHome() {
     h += `<section class="card"><div class="card-head"><h2>Zacznij w dwóch krokach</h2></div><div class="steps">
       <div class="step ${P ? "done" : ""}"><span class="n">${P ? "✓" : "1"}</span><div><b>Dodaj konto</b><p class="muted">Wczytaj raport z XTB (xStation → Historia konta → Eksport) albo wpisz gotówkę i pozycje ręcznie. Program nie łączy się z XTB.</p>
         ${P ? `<span class="pill good">Konto ${esc(P.label)}</span>` : `<div class="row"><button class="btn" data-act="xtb" type="button">Wczytaj raport XTB…</button><button class="btn" data-act="mopen" type="button">Wpisz ręcznie</button></div>`}</div></div>
-      <div class="step ${L ? "done" : ""}"><span class="n">${L ? "✓" : "2"}</span><div><b>Pobierz listę CEM10</b><p class="muted">Skład indeksów, sito Finviz i ceny miesięczne z Yahoo Finance. Około minuty.</p>
+      <div class="step ${L ? "done" : ""}"><span class="n">${L ? "✓" : "2"}</span><div><b>Pobierz listę CEM10</b><p class="muted">Sito Finviz (S&P 500 i Nasdaq-100) i ceny miesięczne z Yahoo Finance. Około minuty.</p>
         ${L ? `<span class="pill good">Lista za ${esc(monthName(L.month))}</span>` : `<button class="btn primary" data-act="fetch" type="button">Pobierz listę</button>`}</div></div>
     </div></section>`;
   }
@@ -146,7 +146,7 @@ function viewHome() {
   }
   const warn = P ? P.rows.filter((r) => r.status.startsWith("SPRZEDAJ")) : S.manual.filter((m) => m.decision !== "trzymaj");
   h += `<div class="cols"><div class="stack">`;
-  if (warn.length) h += `<div class="alert">⚠ Do sprzedaży: ${warn.map((r) => esc(r.t)).join(", ")} — zamknięcie miesiąca pod SMA 10, spadek z indeksu albo stop −40 %.</div>`;
+  if (warn.length) h += `<div class="alert">⚠ Do sprzedaży: ${warn.map((r) => esc(r.t)).join(", ")} — zamknięcie miesiąca pod SMA 10 albo stop −40 %.</div>`;
   h += `<section class="card"><div class="card-head"><div><h2>Co zrobić</h2><p>Kupujesz i sprzedajesz po zamknięciu miesiąca, w pierwszych dniach nowego.</p></div>
         ${PL && PL.actions.length ? `<button class="btn sm" data-act="copy" type="button">Kopiuj plan</button>` : ""}</div>`;
   if (P && L) {
@@ -555,7 +555,7 @@ function viewSettings() {
     <section class="card"><div class="card-head"><div><h2>Zasady</h2></div></div>
       <p class="note"><b>USA:</b> lider SPY albo QQQ z wyższym zwrotem 5 mies.; kandydaci z indeksu lidera: 6 mies. &gt; +30 %, zamknięcie nad SMA 10, ranking po 6 mies., 10 pozycji; brak zakupów, gdy SPY zamyka miesiąc pod SMA 12.<br>
       <b>GPW:</b> WIG20 + mWIG40 razem, C-8 (3 mies. &gt; 0, 12 mies. &gt; +30 %, nad SMA 10), ranking po 6 mies., 5 pozycji; brak zakupów, gdy koszyk składników jest pod SMA 12.<br>
-      <b>Wyjście:</b> zamknięcie miesiąca pod SMA 10 (w USA także wypadnięcie z indeksów), stop awaryjny −40 % od ceny zakupu.<br>
+      <b>Wyjście:</b> zamknięcie miesiąca pod SMA 10, stop awaryjny −40 % od ceny zakupu.<br>
       <b>Wpłaty:</b> najpierw nowe spółki na wolne miejsca (waga = koszyk / liczba miejsc), potem dopełnienie trzymanych kandydatów do wagi, min. ${zl(S.rules.min_topup)}.</p></section>
   </div>`;
 }

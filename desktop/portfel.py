@@ -1,5 +1,5 @@
 """Portfel CEM10 z raportu XTB (zip albo xlsx „Closed Positions / Cash Operations / Open Positions”): pozycje, udziały, stop −40 %,
-plan wpłat (dopełnianie do wagi docelowej) i krzywa kapitału. Czyste funkcje; sieć tylko w `curve_prices` (yfinance)."""
+plan wpłat (nowe spółki na wolne miejsca, dopełnianie do wagi tylko pozycji na plusie) i krzywa kapitału. Czyste funkcje; sieć tylko w `curve_prices` (yfinance)."""
 import datetime as dt
 import io
 import math
@@ -174,10 +174,15 @@ def holdings(acc, cem=None):
 
 
 # ---------------------------------------------------------------- plan wpłaty
+def _in_profit(h):
+    """Czy pozycja jest na plusie względem ceny zakupu (brak ceny zakupu albo bieżącej = nie dokładamy)."""
+    return bool(h.get("open_price") and h.get("price") and h["price"] >= h["open_price"])
+
+
 def plan(acc, cem, deposit=0.0, targets=None, etf_ticker="CSPX.UK", slots=None):
     """Plan na zamknięcie miesiąca: 1) sprzedaj pozycje CEM10 ze statusem SPRZEDAJ, 2) gotówka + wpłata + sprzedaż rozdzielona na koszyki
     wg niedoboru do udziałów docelowych (targets = {'usa': %, 'gpw': %, 'etf': %}), 3) w koszyku CEM10: waga docelowa = (wartość koszyka po planie) / liczba miejsc,
-    nowe spółki z listy na wolne miejsca, potem dopełnienie trzymanych KANDYDATÓW do wagi (od najmniejszej, min. 100 zł); filtr rynku = brak zakupów.
+    nowe spółki z listy na wolne miejsca, potem dopełnienie do wagi trzymanych KANDYDATÓW, które są na plusie względem ceny zakupu (od najmniejszej, min. 100 zł; do spadających spółek NIE dokładamy — user: „Dell spadł o 20 % i każe mi dopłacać”); filtr rynku = brak zakupów.
     -> (akcje [{akcja, ticker, koszyk, kwota, uwagi}], podsumowanie)."""
     from . import cem10
     slots = {**SLOTS, **(slots or {})}
@@ -226,7 +231,7 @@ def plan(acc, cem, deposit=0.0, targets=None, etf_ticker="CSPX.UK", slots=None):
                 break
             actions.append({"akcja": "KUP", "ticker": r["t"], "koszyk": b, "kwota": amt, "uwagi": f"nowa pozycja, #{cands.index(r) + 1} na liście"})
             money -= amt
-        for h in sorted([h for h in held if h["rank"]], key=lambda h: h["value"]):
+        for h in sorted([h for h in held if h["rank"] and _in_profit(h)], key=lambda h: h["value"]):
             add = min(tgt - h["value"], money)
             if add >= MIN_TOPUP:
                 actions.append({"akcja": "DOPŁAĆ", "ticker": h["t"], "koszyk": b, "kwota": add, "uwagi": f"do wagi {tgt:,.0f} zł".replace(",", " ")})

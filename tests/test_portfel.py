@@ -93,6 +93,13 @@ def test_plan_sells_buys_new_and_tops_up_to_target():
     assert not any(x["koszyk"] == "usa" and x["akcja"] != "SPRZEDAJ" for x in acts2) and s2["notes"]
 
 
+def test_topup_only_for_positions_in_profit():
+    base = {"open_price": 100.0, "rank": 1}
+    assert P._in_profit({**base, "price": 100.0}) and P._in_profit({**base, "price": 130.0})
+    assert not P._in_profit({**base, "price": 80.0})                 # Dell -20 %: bez dopłaty
+    assert not P._in_profit({"price": 80.0}) and not P._in_profit({"open_price": 100.0})
+
+
 def test_curve_cash_plus_positions_and_deposits():
     acc = P.load_report(_zip())[0]
     pts = P.curve(acc, px={"AAA": {"2026-03-02": 100.0, "2026-04-01": 120.0}}, fxs={"USD": {"2026-01-01": 3.8}})

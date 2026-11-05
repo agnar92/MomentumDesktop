@@ -21,6 +21,6 @@ Program otwiera się w swoim oknie (Windows: WebView2, wbudowany w Windows 10 / 
 - **USA**: lider = SPY albo QQQ z wyższym zwrotem 5M; kandydaci z indeksu lidera: zwrot 6M > +30 % i zamknięcie miesiąca nad SMA 10; ranking po 6M; 10 pozycji.
 - **GPW**: WIG20 + mWIG40 bez lidera; C-8 (3M > 0, 12M > +30 %, nad SMA 10); ranking po 6M; 5 pozycji.
 - **Wyjście**: zamknięcie miesiąca pod SMA 10 ; stop awaryjny −40 % od ceny zakupu.
-- **Wpłaty**: symulacja 2009–2026 (3 000 zł + 500 zł / mies. + 5 000 zł w styczniu): dopełnianie do wagi ≥ trzymania reszty w gotówce we wszystkich 5 datach startu (+1…8 % po 3–5 latach), dokładanie do wszystkich spółek gorzej (−13 % po 17 latach).
+- **Wpłaty**: dopełnianie dotyczy tylko pozycji na plusie względem ceny zakupu (nie uśredniamy w dół — spadająca spółka nie dostaje dopłaty). Symulacja 2009–2026 (3 000 zł + 500 zł / mies. + 5 000 zł w styczniu): dopełnianie do wagi ≥ trzymania reszty w gotówce we wszystkich 5 datach startu (+1…8 % po 3–5 latach), dokładanie do wszystkich spółek gorzej (−13 % po 17 latach).
 
 To wynik reguł z backtestu, nie rekomendacja inwestycyjna.

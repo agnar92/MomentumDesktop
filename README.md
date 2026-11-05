@@ -39,10 +39,10 @@ Heurystyka z backtestu (spółki z dzisiejszej listy, bez spółek wycofanych z 
   **USA**: lider = SPY albo QQQ z wyższym zwrotem 5M; kandydaci z indeksu lidera (S&P 500 albo Nasdaq-100): zwrot 6M > +30 % i zamknięcie miesiąca nad SMA 10, ranking po 6M, 10 pozycji;
   brak zakupów, gdy SPY zamyka miesiąc pod SMA 12. **GPW**: bez lidera, WIG20 + mWIG40 razem, C-8 (3M > 0, 12M > +30 %, nad SMA 10), ranking po 6M, 5 pozycji; brak zakupów,
   gdy równo ważony indeks składników jest pod SMA 12. Zakładki USA / GPW (zielone = do kupienia), na dole **spółki, które trzymasz** (wpisz tickery; decyzja trzymaj / sprzedaj wg SMA 10;
-  GPW można wymusić końcówką `.WA`, np. `ALE.WA`), dwuklik = wykres. **⟳ Pobierz listę**: **sito Finviz** (2 skany: `idx_sp500,ta_perf_26w30o` i `idx_ndx,ta_perf_26w30o` = skład indeksu i próg 6M > +30 % w jednym, bez Wikipedii,
+  GPW można wymusić końcówką `.WA`, np. `ALE.WA`), dwuklik = wykres. **⟳ Pobierz listę**: najpierw **lider** (SPY i QQQ), potem **lista tickerów indeksu lidera z Finviz** (1 skan: `idx_sp500` albo `idx_ndx`, bez filtrów i bez Wikipedii; drugiego indeksu się nie pobiera; zwrot 6M, SMA 10 i ranking liczy aplikacja z zamknięć miesięcznych),
   widok Overview — Finviz liczy pół roku od dzisiejszej ceny, a reguła od zamknięcia miesiąca, więc tuż przy progu może pominąć pojedyncze spółki),
   ceny miesięczne z Yahoo Finance (yfinance, 2 lata) tylko dla spółek z sita i Twoich trzymanych (ręcznie i z konta XTB) oraz całej GPW (`TICKER.WA`) —
-  ok. 100 spółek, kilkanaście sekund; gdy Finviz nie odpowiada, odświeżenie kończy się błędem (bez zapasowego źródła). Tylko zamknięte miesiące; wynik w `data/cem10.json`. **Skład GPW…**: WIG20 i mWIG40 (domyślnie rewizja 09.2026) — popraw po każdej kwartalnej
+  kilkadziesiąt spółek, kilkanaście sekund; gdy Finviz nie odpowiada, odświeżenie kończy się błędem (bez zapasowego źródła). Tylko zamknięte miesiące; wynik w `data/cem10.json`. **Skład GPW…**: WIG20 i mWIG40 (domyślnie rewizja 09.2026) — popraw po każdej kwartalnej
   rewizji GPW (marzec, czerwiec, wrzesień, grudzień); zapis w `data/cem10_gpw.json`, „Przywróć domyślny skład” wraca do wbudowanego.
 - **CEM10 jako osobny program** (`CEM10.exe` w paczce `CEM10-…-portable.zip`, źródło `cem10_main.py`, opis `CEM10.md`): to samo okno CEM10 plus **📊 Portfel**
   (raport XTB: udziały, cena zakupu, stop −40 %, status CEM10, plan wpłaty z dopełnianiem do wagi docelowej), **📈 Krzywa kapitału** (wartość konta, wpłaty, sprzedaże) i wykres miesięczny

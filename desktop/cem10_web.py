@@ -285,7 +285,7 @@ class Api:
         U, G = D["usa"], D["gpw"]
         uc, gc = cem10.usa_candidates(U["rows"], U["lead"]), cem10.gpw_candidates(G["rows"])
         return {"month": D["month"], "generated_at": D.get("generated_at"),
-                "usa": {k: U.get(k) for k in ("lead", "spy5", "qqq5", "spy", "spy_sma12", "bear", "n", "prefilter", "missing")} | {"rows": uc, "count": len(U["rows"])},
+                "usa": {k: U.get(k) for k in ("lead", "spy5", "qqq5", "spy", "spy_sma12", "bear", "n", "index", "missing")} | {"rows": uc, "count": len(U["rows"])},
                 "gpw": {k: G.get(k) for k in ("lv", "lv12", "bear", "n", "rewizja", "w20_6", "w40_6", "missing")} | {"rows": gc, "count": len(G["rows"])}}
 
     def portfolio(self):
@@ -410,7 +410,7 @@ class Api:
         if "account" in body:
             st["xtb_account"] = str(body["account"])
             acc = self.account()
-            if acc:   # trzymane spółki CEM10 z raportu -> sito pobierania listy
+            if acc:   # trzymane spółki CEM10 z raportu -> dostają wiersz przy pobieraniu listy
                 hold, _, _ = portfel.holdings(acc, self.data)
                 st["cem10_hold"] = ", ".join(h["t"] + (".WA" if h["bucket"] == "gpw" else "") for h in hold if h["bucket"] in ("usa", "gpw"))
         self.store.save_settings()

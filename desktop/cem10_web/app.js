@@ -132,7 +132,7 @@ function viewHome() {
     h += `<section class="card"><div class="card-head"><h2>Zacznij w dwóch krokach</h2></div><div class="steps">
       <div class="step ${P ? "done" : ""}"><span class="n">${P ? "✓" : "1"}</span><div><b>Dodaj konto</b><p class="muted">Wczytaj raport z XTB (xStation → Historia konta → Eksport) albo wpisz gotówkę i pozycje ręcznie. Program nie łączy się z XTB.</p>
         ${P ? `<span class="pill good">Konto ${esc(P.label)}</span>` : `<div class="row"><button class="btn" data-act="xtb" type="button">Wczytaj raport XTB…</button><button class="btn" data-act="mopen" type="button">Wpisz ręcznie</button></div>`}</div></div>
-      <div class="step ${L ? "done" : ""}"><span class="n">${L ? "✓" : "2"}</span><div><b>Pobierz listę CEM10</b><p class="muted">Sito Finviz (S&P 500 i Nasdaq-100) i ceny miesięczne z Yahoo Finance. Około minuty.</p>
+      <div class="step ${L ? "done" : ""}"><span class="n">${L ? "✓" : "2"}</span><div><b>Pobierz listę CEM10</b><p class="muted">Skład indeksu lidera (Finviz) i ceny miesięczne z Yahoo Finance. Około minuty.</p>
         ${L ? `<span class="pill good">Lista za ${esc(monthName(L.month))}</span>` : `<button class="btn primary" data-act="fetch" type="button">Pobierz listę</button>`}</div></div>
     </div></section>`;
   }
@@ -326,7 +326,7 @@ function viewList(m) {
   let h = `<header class="page-head"><div><h1>${name}</h1><p>${sub}</p></div>
     <span class="chip ${X.bear ? "bad" : "good"}"><i></i>${X.bear ? "Filtr rynku: brak zakupów" : "Filtr rynku: zakupy dozwolone"}</span></header>
     <section class="card"><div class="card-head"><div class="tools"><input type="text" id="q_${m}" placeholder="Szukaj spółki…" value="${esc(ui.q[m])}" aria-label="Szukaj">
-      <span class="muted xs">${X.rows.length} kandydatów z ${X.count} spółek${m === "usa" && X.prefilter ? ` · sito Finviz: S&P 500 ${X.prefilter.sp}, Nasdaq-100 ${X.prefilter.nq}` : ""}</span></div>
+      <span class="muted xs">${X.rows.length} kandydatów z ${X.count} spółek${m === "usa" && X.index ? ` · skład ${X.index.lead === "NDX" ? "Nasdaq-100" : "S&P 500"} z Finviz: ${X.index.n}` : ""}</span></div>
       <span class="legend-inline"><span><i style="background:var(--good)"></i>do kupienia (pierwsze ${n})</span>${held.size ? `<span><span class="pill info">masz</span></span>` : ""}</span></div>
     <div class="tbl-wrap"><table><thead><tr><th class="r">#</th><th>Spółka</th><th class="r">6 mies.</th>${m === "gpw" ? `<th class="r c-opt">3 mies.</th><th class="r c-opt">12 mies.</th>` : ""}
       <th class="r">Zamknięcie</th><th class="r c-opt">SMA 10</th><th class="r">Nad SMA 10</th><th class="c-opt">Indeks</th><th></th></tr></thead><tbody>`;

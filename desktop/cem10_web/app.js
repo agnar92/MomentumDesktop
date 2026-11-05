@@ -150,7 +150,8 @@ function viewHome() {
   h += `<section class="card"><div class="card-head"><div><h2>Co zrobić</h2><p>Kupujesz i sprzedajesz po zamknięciu miesiąca, w pierwszych dniach nowego.</p></div>
         ${PL && PL.actions.length ? `<button class="btn sm" data-act="copy" type="button">Kopiuj plan</button>` : ""}</div>`;
   if (P && L) {
-    h += `<div class="row"><label class="field" style="flex:1;min-width:200px"><span>Wpłata w tym miesiącu</span><span class="money"><input type="text" inputmode="decimal" id="deposit" value="${esc(num(S.settings.deposit, 0))}"><b>zł</b></span></label></div>`;
+    h += `<div class="row"><label class="field" style="flex:1;min-width:200px"><span>Wpłata w tym miesiącu</span><span class="money"><input type="text" inputmode="decimal" id="deposit" value="${esc(num(S.settings.deposit, 0))}"><b>zł</b></span></label>
+      <button class="btn sm" type="button" data-act="topup" title="Zmienia, do których trzymanych spółek plan dokłada pieniądze. Plan działa o każdej porze miesiąca — możesz kupować także kilka dni czy tydzień po zamknięciu miesiąca.">Dopłaty do trzymanych: ${({ plus: 'tylko na plusie', all: 'do wszystkich kandydatów', off: 'wyłączone' })[S.settings.topup] || 'tylko na plusie'}</button></div>`;
     h += planList(PL);
   } else if (L && S.manual.length) {
     h += manualList();
@@ -169,7 +170,7 @@ function planList(PL) {
   const s = PL.summary;
   let h = "";
   if (!PL.actions.length) {
-    h += `<div class="empty"><b>Nic do zrobienia</b>Wszystkie pozycje trzymasz. ${zl(s.free)} zostaje w gotówce (za mało na zakup ≥ ${zl(S.rules.min_topup)} albo koszyki są na wadze docelowej).</div>`;
+    h += `<div class="empty"><b>Nic do zrobienia</b>Wszystkie pozycje trzymasz. ${zl(s.free)} zostaje w gotówce.${s.notes.length ? "<ul>" + s.notes.map((n) => `<li>${esc(n)}</li>`).join("") + "</ul>" : " (za mało na zakup ≥ " + zl(S.rules.min_topup) + " albo koszyki są na wadze docelowej)."}</div>`;
   } else {
     const kind = { SPRZEDAJ: "bad", KUP: "good", "DOPŁAĆ": "info" };
     h += `<div class="actions">` + PL.actions.map((a) => `<div class="act" data-sym="${esc(a.yahoo)}" data-title="${esc(a.name || a.ticker)}" tabindex="0" role="button">
@@ -612,6 +613,7 @@ document.addEventListener("click", async (e) => {
     if (act === "all") { ui.all[a.dataset.m] = true; return renderView(); }
     if (act === "allev") { ui.allEv = true; return renderView(); }
     if (act === "curve") { try { await post("curve"); S.task.busy = true; setState(S); } catch (err) { toast(err.message, true); } return; }
+    if (act === "topup") { try { setState(await post("settings", { topup: ({ plus: "all", all: "off", off: "plus" })[S.settings.topup] || "all" })); } catch (err) { toast(err.message, true); } return; }
     if (act === "copy") return copyPlan();
     if (act === "mopen") return openManual();
     if (act === "aopen") { ui.adjOpen = true; renderView(); const t = $("#ad_t"); if (t) t.focus(); return; }

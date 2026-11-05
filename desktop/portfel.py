@@ -179,10 +179,11 @@ def _in_profit(h):
     return bool(h.get("open_price") and h.get("price") and h["price"] >= h["open_price"])
 
 
-def plan(acc, cem, deposit=0.0, targets=None, etf_ticker="CSPX.UK", slots=None):
+def plan(acc, cem, deposit=0.0, targets=None, etf_ticker="CSPX.UK", slots=None, topup="plus"):
     """Plan na zamknięcie miesiąca: 1) sprzedaj pozycje CEM10 ze statusem SPRZEDAJ, 2) gotówka + wpłata + sprzedaż rozdzielona na koszyki
     wg niedoboru do udziałów docelowych (targets = {'usa': %, 'gpw': %, 'etf': %}), 3) w koszyku CEM10: waga docelowa = (wartość koszyka po planie) / liczba miejsc,
     nowe spółki z listy na wolne miejsca, potem dopełnienie do wagi trzymanych KANDYDATÓW, które są na plusie względem ceny zakupu (od najmniejszej, min. 100 zł; do spadających spółek NIE dokładamy — user: „Dell spadł o 20 % i każe mi dopłacać”); filtr rynku = brak zakupów.
+    topup: "plus" (domyślnie) = dopełnianie tylko pozycji na plusie, "all" = także tych na minusie (świadoma decyzja), "off" (albo False) = bez DOPŁAĆ — nowe spółki na wolne miejsca zostają; powody braku zakupów trafiają do summary['notes'].
     -> (akcje [{akcja, ticker, koszyk, kwota, uwagi}], podsumowanie)."""
     from . import cem10
     slots = {**SLOTS, **(slots or {})}
@@ -190,24 +191,33 @@ def plan(acc, cem, deposit=0.0, targets=None, etf_ticker="CSPX.UK", slots=None):
     hold, buckets, total = holdings(acc, cem)
     actions = []
     free = acc["cash"] + max(deposit, 0.0)
+    sold = {}   # wpływy ze sprzedaży pozycji CEM10 według koszyka
     for h in hold:
         if h["status"].startswith("SPRZEDAJ"):
             actions.append({"akcja": "SPRZEDAJ", "ticker": h["t"], "koszyk": h["bucket"], "kwota": h["value"], "uwagi": h["status"][9:].strip(" ()")})
             buckets[h["bucket"]] -= h["value"]
             free += h["value"]
+            sold[h["bucket"]] = sold.get(h["bucket"], 0.0) + h["value"]
     kept = [h for h in hold if not h["status"].startswith("SPRZEDAJ")]
     grand = total + max(deposit, 0.0)
     tsum = sum(max(v, 0.0) for v in targets.values()) or 1.0
     need = {b: max(grand * max(targets.get(b, 0.0), 0.0) / tsum - buckets.get(b, 0.0), 0.0) for b in ("usa", "gpw", "etf")}
     blocked = {"usa": bool(cem and cem["usa"]["bear"]), "gpw": bool(cem and cem["gpw"]["bear"]), "etf": False}
+    # sprzedane miejsce wraca do tego samego koszyka (kolejny kandydat z listy) — to nie jest „wpłata do rozdzielenia wg udziałów”;
+    # inaczej zwycięzcy, którzy urośli ponad udział docelowy, zostawiali koszyk bez zakupów, a całość szła w ETF
+    reserve = {b: sold.get(b, 0.0) for b in ("usa", "gpw") if not blocked[b]}
+    pool = free - sum(reserve.values())
+    need = {b: max(need[b] - reserve.get(b, 0.0), 0.0) for b in need}
     want = sum(v for b, v in need.items() if not blocked[b])
-    alloc = {b: (free * need[b] / want if want > free else need[b]) if not blocked[b] and want else 0.0 for b in need}
-    left = free - sum(alloc.values())
+    alloc = {b: (pool * need[b] / want if want > pool else need[b]) if not blocked[b] and want else 0.0 for b in need}
+    left = pool - sum(alloc.values())
     if left > 1 and want and any(not blocked[b] and targets.get(b, 0) > 0 for b in alloc):   # nadwyżka ponad niedobory: wg udziałów docelowych
         live = {b: targets.get(b, 0.0) for b in alloc if not blocked[b] and targets.get(b, 0) > 0}
         for b, w in live.items():
             alloc[b] += left * w / sum(live.values())
         left = 0.0
+    for b, v in reserve.items():
+        alloc[b] += v
     summary = {"free": free, "grand": grand, "alloc": dict(alloc), "need": need, "blocked": blocked, "cash_left": 0.0, "notes": []}
     if alloc["etf"] >= MIN_TOPUP:
         actions.append({"akcja": "KUP", "ticker": base_ticker(etf_ticker), "koszyk": "etf", "kwota": alloc["etf"], "uwagi": "ETF"})
@@ -219,6 +229,8 @@ def plan(acc, cem, deposit=0.0, targets=None, etf_ticker="CSPX.UK", slots=None):
             summary["notes"].append(f"{b.upper()}: filtr rynku — brak zakupów, gotówka czeka")
             continue
         if not cem or money < MIN_TOPUP:
+            if cem and money > 0:
+                summary["notes"].append(f"{b.upper()}: do rozdysponowania tylko {money:,.0f} zł (min. {MIN_TOPUP:,.0f} zł) — gotówka czeka".replace(",", " "))
             left += money
             continue
         held = [h for h in kept if h["bucket"] == b]
@@ -231,7 +243,17 @@ def plan(acc, cem, deposit=0.0, targets=None, etf_ticker="CSPX.UK", slots=None):
                 break
             actions.append({"akcja": "KUP", "ticker": r["t"], "koszyk": b, "kwota": amt, "uwagi": f"nowa pozycja, #{cands.index(r) + 1} na liście"})
             money -= amt
-        for h in sorted([h for h in held if h["rank"] and _in_profit(h)], key=lambda h: h["value"]):
+        mode = "off" if topup is False else "plus" if topup in (True, None) else topup
+        ups = [h for h in held if h["rank"]]
+        if mode == "off":
+            if ups:
+                summary["notes"].append(f"{b.upper()}: dopłaty do trzymanych wyłączone")
+            ups = []
+        elif mode == "plus" and any(not _in_profit(h) for h in ups):
+            summary["notes"].append(f"{b.upper()}: bez dopłaty do spółek na minusie ({', '.join(h['t'] for h in ups if not _in_profit(h))})")
+        if len(held) >= slots[b] and money >= MIN_TOPUP and not any(h["rank"] and (mode == "all" or _in_profit(h)) for h in held):
+            summary["notes"].append(f"{b.upper()}: brak wolnych miejsc ({len(held)} z {slots[b]})")
+        for h in sorted([h for h in ups if mode == "all" or _in_profit(h)], key=lambda h: h["value"]):
             add = min(tgt - h["value"], money)
             if add >= MIN_TOPUP:
                 actions.append({"akcja": "DOPŁAĆ", "ticker": h["t"], "koszyk": b, "kwota": add, "uwagi": f"do wagi {tgt:,.0f} zł".replace(",", " ")})

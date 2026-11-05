@@ -1,4 +1,4 @@
-"""CEM10 — osobny program (portfel z raportu XTB, plan wpłat, krzywa kapitału, lista miesięczna USA / GPW, wykres miesięczny).
+"""CEM10 — program (portfel z raportu XTB, plan wpłat, krzywa kapitału, lista miesięczna USA / GPW, wykres miesięczny).
 Interfejs: lokalna strona w oknie programu (pywebview / WebView2), a bez niego w domyślnej przeglądarce (desktop/cem10_web.py).
 Uruchomienie: python cem10_main.py  (--selftest: sprawdza, czy biblioteki i strona są w paczce; --browser: zawsze w przeglądarce). Dane: folder data/ obok programu."""
 import sys

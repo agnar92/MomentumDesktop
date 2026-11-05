@@ -738,7 +738,7 @@ def make_server(api, port=0, token=None, root=None):
 
 
 def serve_in_background(api):
-    """Serwer w wątku (np. z Momentum Desktop, gdzie główny wątek ma Tk) -> adres strony."""
+    """Serwer w wątku (główny wątek zostaje wolny dla okna pywebview) -> adres strony."""
     srv, url = make_server(api)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     return url

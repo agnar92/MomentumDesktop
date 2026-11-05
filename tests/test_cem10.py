@@ -73,3 +73,24 @@ def test_finviz_sieve_members():
     finally:
         finviz.parse_page = orig
     assert "26w30o" in cem10.SIEVE[0] and "26w30o" in cem10.SIEVE[1]
+
+
+def test_sieve_only_for_leader_index_and_fetch_order(monkeypatch):
+    calls = []
+    monkeypatch.setattr(cem10, "finviz_members", lambda f, get=None, pause=0.7: calls.append(f) or {"AAA": "A"})
+    assert cem10.sieve_members("SP", log=lambda *a: None) == {"sp": {"AAA": "A"}, "nq": {}} and calls == ["idx_sp500,ta_perf_26w30o"]
+    calls.clear()
+    assert cem10.sieve_members("NDX", log=lambda *a: None) == {"sp": {}, "nq": {"AAA": "A"}} and calls == ["idx_ndx,ta_perf_26w30o"]
+    # fetch: najpierw SPY + QQQ, potem jedno sito dla lidera, potem reszta
+    n = 24
+    order = []
+
+    def fake_download(tickers, log=print, progress=None):
+        order.append(list(tickers))
+        mk = {"SPY": [100] * n, "QQQ": [100 * 1.03 ** i for i in range(n)], "AAA": [50] * 12 + [50 * 1.1 ** i for i in range(12)]}
+        return {t: _px(mk.get(t, [10] * n)) for t in tickers}
+    monkeypatch.setattr(cem10, "download", fake_download)
+    calls.clear()
+    out = cem10.fetch({"rewizja": "x", "WIG20": {}, "mWIG40": {}}, today=dt.date(2026, 11, 2), log=lambda *a: None)
+    assert order[0] == ["SPY", "QQQ"] and order[1] == ["AAA"] and calls == ["idx_ndx,ta_perf_26w30o"]
+    assert out["usa"]["lead"] == "NDX" and out["usa"]["prefilter"]["lead"] == "NDX" and out["usa"]["prefilter"]["sp"] == 0

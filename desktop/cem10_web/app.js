@@ -326,7 +326,7 @@ function viewList(m) {
   let h = `<header class="page-head"><div><h1>${name}</h1><p>${sub}</p></div>
     <span class="chip ${X.bear ? "bad" : "good"}"><i></i>${X.bear ? "Filtr rynku: brak zakupów" : "Filtr rynku: zakupy dozwolone"}</span></header>
     <section class="card"><div class="card-head"><div class="tools"><input type="text" id="q_${m}" placeholder="Szukaj spółki…" value="${esc(ui.q[m])}" aria-label="Szukaj">
-      <span class="muted xs">${X.rows.length} kandydatów z ${X.count} spółek${m === "usa" && X.prefilter ? ` · sito Finviz: S&P 500 ${X.prefilter.sp}, Nasdaq-100 ${X.prefilter.nq}` : ""}</span></div>
+      <span class="muted xs">${X.rows.length} kandydatów z ${X.count} spółek${m === "usa" && X.prefilter ? ` · sito Finviz tylko dla indeksu lidera: ${X.prefilter.lead === "NDX" ? "Nasdaq-100 " + X.prefilter.nq : "S&P 500 " + X.prefilter.sp}` : ""}</span></div>
       <span class="legend-inline"><span><i style="background:var(--good)"></i>do kupienia (pierwsze ${n})</span>${held.size ? `<span><span class="pill info">masz</span></span>` : ""}</span></div>
     <div class="tbl-wrap"><table><thead><tr><th class="r">#</th><th>Spółka</th><th class="r">6 mies.</th>${m === "gpw" ? `<th class="r c-opt">3 mies.</th><th class="r c-opt">12 mies.</th>` : ""}
       <th class="r">Zamknięcie</th><th class="r c-opt">SMA 10</th><th class="r">Nad SMA 10</th><th class="c-opt">Indeks</th><th></th></tr></thead><tbody>`;

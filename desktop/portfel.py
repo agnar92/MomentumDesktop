@@ -154,8 +154,8 @@ def holdings(acc, cem=None):
             status = "poza CEM10"
         elif not cem:
             status = "brak listy"
-        elif r is None:   # spoza S&P 500 / Nasdaq-100 / WIG20 / mWIG40: nie jest pozycją CEM10 (gdyby wypadła z indeksu po zakupie — sprzedaj ręcznie)
-            b, status = "inne", "poza CEM10 (spoza indeksów)"
+        elif r is None:   # brak wiersza (USA: nie przeszła sita i nie była pobrana; GPW: spoza WIG20 / mWIG40) — pobierz listę jeszcze raz
+            b, status = "inne", "poza CEM10 (brak na liście)"
         elif r["dist"] is None or r["dist"] < 0:
             status = "SPRZEDAJ (pod SMA 10)"
         elif (b, t) in rank:

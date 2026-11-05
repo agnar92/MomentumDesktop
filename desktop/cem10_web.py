@@ -370,8 +370,8 @@ class Api:
             seen.add(key)
             note = ""
             if r is None:
-                note = ("jest w indeksie, ale nie było jej w pobranych danych — pobierz listę jeszcze raz" if m == "USA" and t in (D["usa"].get("all") or [])
-                        else "nie ma w S&P 500, Nasdaq-100, WIG20 ani mWIG40 — w USA oznacza to sprzedaż")
+                note = ("brak notowań w pobranych danych — pobierz listę jeszcze raz" if m == "USA"
+                        else "nie ma w WIG20 ani mWIG40 — sprawdź ticker")
             out.append({"t": t, "market": m, "row": r, "decision": cem10.decide(r), "note": note, "yahoo": t + ".WA" if m == "GPW" else t})
         return out
 
@@ -568,6 +568,8 @@ class Api:
     def start_fetch(self, fetch=None):
         fetch = fetch or cem10.fetch
         gpw, old, held = self.gpw_members(), self.data, cem10.parse_tickers(self.store.settings.get("cem10_hold", ""))
+        acc = self.account()   # akcje USA z konta też dostają wiersz (decyzja po SMA 10), nawet gdy nie przeszły sita
+        held += [portfel.base_ticker(p["ticker"]) for p in (acc or {}).get("positions", []) if portfel.bucket(p) == "usa"]
 
         def work(log, progress):
             d = fetch(gpw, old, log=log, progress=progress, held=held)

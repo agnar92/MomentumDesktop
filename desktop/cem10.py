@@ -5,12 +5,11 @@ Reguły (rekomendacja po badaniach, listopad 2026):
        miesiąca nad SMA 10; ranking po 6M malejąco, 10 pozycji; brak zakupów, gdy SPY zamyka miesiąc pod SMA 12.
   GPW: bez lidera, pula WIG20 + mWIG40 razem; C-8: zwrot 3M > 0 %, 12M > +30 %, zamknięcie nad SMA 10; ranking po 6M, 5 pozycji;
        brak zakupów, gdy równo ważony indeks składników (średni miesięczny zwrot) jest pod SMA 12.
-  Wyjście (oba rynki): zamknięcie miesiąca pod SMA 10 (w USA także wypadnięcie z S&P 500 i Nasdaq-100); awaryjny stop -40 %.
-Dane: skład S&P 500 / Nasdaq-100 z Wikipedii, skład WIG20 / mWIG40 = GPW_DEFAULT albo data/cem10_gpw.json (edycja w oknie CEM10 po każdej
-kwartalnej rewizji GPW), ceny = miesięczne świece yfinance (2 lata; GPW z końcówką .WA), tylko zamknięte miesiące.
+  Wyjście (oba rynki): zamknięcie miesiąca pod SMA 10; awaryjny stop -40 %. Przynależność do indeksu nie jest warunkiem wyjścia.
+Dane USA: sito Finviz (idx_sp500 / idx_ndx z zwrotem 26 tygodni > +30 %) daje kandydatów i ich indeks, bez Wikipedii; skład WIG20 / mWIG40 =
+GPW_DEFAULT albo data/cem10_gpw.json (edycja w oknie CEM10 po każdej kwartalnej rewizji GPW), ceny = miesięczne świece yfinance
+(2 lata; GPW z końcówką .WA), tylko zamknięte miesiące.
 Zwroty i SMA na zamknięciach skorygowanych o dywidendy; pokazywane ceny są surowe (jak w notowaniach)."""
-import io
-
 N_USA = 10
 N_GPW = 5
 THR_USA = 0.30          # zwrot 6M
@@ -153,40 +152,6 @@ GPW_DEFAULT = {
  }
 }
 
-UA = {"User-Agent": "Mozilla/5.0 (Momentum Desktop CEM10)"}
-WIKI = {"sp": ("https://en.wikipedia.org/wiki/List_of_S%26P_500_companies", ("Symbol",), ("Security",)),
-        "nq": ("https://en.wikipedia.org/wiki/List_of_NASDAQ-100_companies", ("Ticker", "Symbol"), ("Company", "Security"))}
-
-
-def wiki_members(url, tcols, ncols):
-    """Tabela składu z Wikipedii -> {ticker: nazwa} (pierwsza tabela z kolumną tickera, >= 90 wierszy)."""
-    import pandas as pd
-    import requests
-    html = requests.get(url, headers=UA, timeout=30).text
-    for t in pd.read_html(io.StringIO(html)):
-        tc = next((c for c in tcols if c in t.columns), None)
-        nc = next((c for c in ncols if c in t.columns), None)
-        if tc and nc and len(t) >= 90:
-            return {str(a).strip().replace(".", "-"): str(b).strip() for a, b in zip(t[tc], t[nc])}
-    raise ValueError(f"brak tabeli składu: {url}")
-
-
-def members(old=None, log=print):
-    """{"sp": {...}, "nq": {...}}; przy błędzie Wikipedii skład z poprzedniego wyniku (old)."""
-    out = {}
-    for k, (url, tc, nc) in WIKI.items():
-        try:
-            out[k] = wiki_members(url, tc, nc)
-            log(f"Skład {k}: {len(out[k])} spółek (Wikipedia)")
-        except Exception as e:
-            prev = {r["t"]: r["n"] for r in (old or {}).get("usa", {}).get("rows", []) if r.get(k)}
-            if not prev:
-                raise
-            log(f"Skład {k}: błąd Wikipedii ({e}) — zostaje poprzedni skład ({len(prev)})")
-            out[k] = prev
-    return out
-
-
 def download(tickers, log=print, progress=None):
     """Miesięczne świece yfinance (2 lata, ceny surowe + skorygowane) -> {ticker: (daty, adj, raw)}."""
     from .prices import _yf
@@ -221,21 +186,23 @@ def monthly(px, upto):
     return out
 
 
-def build(mem, gpw, px, upto, today):
-    """Lista CEM10 (ten sam format co docs/data/cem10.json w Momentum)."""
+def build(mem, gpw, px, upto, today, held=()):
+    """Lista CEM10 (ten sam format co docs/data/cem10.json w Momentum). mem = {"sp": {ticker: nazwa}, "nq": {...}} z sita Finviz;
+    held = trzymane spółki USA (dostają wiersz niezależnie od sita, bez flagi indeksu — decyzja tylko po SMA 10)."""
     m = monthly(px, upto)
     spy, qqq = m["SPY"][1], m["QQQ"][1]
     s5, q5 = ret(spy, LEAD_MONTHS), ret(qqq, LEAD_MONTHS)
     lead = "NDX" if q5 > s5 else "SP"
     spy12 = sma(spy, MKT_N)
     names = {**mem["nq"], **mem["sp"]}
+    want = sorted(set(mem["sp"]) | set(mem["nq"]) | {t.replace(".", "-") for t in held})
     rows = []
-    for t in sorted(set(mem["sp"]) | set(mem["nq"])):
+    for t in want:
         if t in m and len(m[t][1]) >= SMA_N:
-            rows.append(stock_row(t, names[t][:40], m[t][1], m[t][2], sp=t in mem["sp"], nq=t in mem["nq"]))
+            rows.append(stock_row(t, (names.get(t) or t)[:40], m[t][1], m[t][2], sp=t in mem["sp"], nq=t in mem["nq"]))
     k = m["SPY"][2][-1] / spy[-1]
     usa = dict(lead=lead, spy5=round(s5, 4), qqq5=round(q5, 4), spy=round(m["SPY"][2][-1], 2), spy_sma12=round(spy12 * k, 2),
-               bear=bool(spy[-1] < spy12), n=N_USA, rows=rows, missing=sorted((set(mem["sp"]) | set(mem["nq"])) - {r["t"] for r in rows}))
+               bear=bool(spy[-1] < spy12), n=N_USA, rows=rows, missing=sorted(set(want) - {r["t"] for r in rows}))
     w20, w40 = gpw["WIG20"], gpw["mWIG40"]
     grows, ser = [], {}
     for t in sorted(set(w20) | set(w40)):
@@ -255,62 +222,68 @@ def build(mem, gpw, px, upto, today):
     return dict(generated_at=today.isoformat(), month=upto, usa=usa, gpw=gpw_out)
 
 
-# sito Finviz: zwrot z pół roku > +20 % (Finviz liczy od dzisiejszej ceny, reguła od zamknięcia miesiąca — przy progu +30 % 2026-11-02
-# odpadało 8 z 70 kandydatów tuż przy granicy, np. PLTR +32 %; przy +20 % tylko TWLO, którego Finviz jeszcze nie miał w S&P 500)
-SIEVE = ("idx_sp500,ta_perf_26w20o", "idx_ndx,ta_perf_26w20o")
+# sito Finviz = reguła: zwrot 26 tygodni > +30 % (Finviz liczy od dzisiejszej ceny, reguła od zamknięcia miesiąca, więc tuż przy progu
+# wynik może się nieco różnić; ostateczny próg 6M > +30 % liczy aplikacja z miesięcznych zamknięć). Skład indeksów = wynik skanu idx_sp500 / idx_ndx.
+SIEVE = ("idx_sp500,ta_perf_26w30o", "idx_ndx,ta_perf_26w30o")
 
 
-def finviz_tickers(filters, get=None):
-    """Widok „Tickers” screenera Finviz (v=411): wszystkie wyniki na jednej stronie -> lista tickerów (BRK.B -> BRK-B)."""
-    import re
-    import requests
-    from .finviz import HEADERS, URL
-    get = get or requests.get
-    r = get(URL, params={"v": "411", "f": filters}, headers=HEADERS, timeout=30)
-    r.raise_for_status()
-    return sorted({t.replace(".", "-") for t in re.findall(r'data-ticker="([A-Z0-9.\-]+)"', r.text)})
-
-
-def usa_to_fetch(mem, sieve, held=(), old=None):
-    """Spółki USA do pobrania: sito Finviz + trzymane + kandydaci z poprzedniej listy (tylko obecni członkowie indeksów)."""
-    allu = set(mem["sp"]) | set(mem["nq"])
-    prev = {r["t"] for r in (old or {}).get("usa", {}).get("rows", []) if r.get("r6") is not None and r["r6"] > 0.2}
-    return sorted(allu & (set(sieve) | {t.replace(".", "-") for t in held} | prev))
-
-
-def fetch(gpw, old=None, today=None, log=print, progress=None, held=(), sieve=True):
-    """Odświeżenie: skład (Wikipedia + GPW), sito Finviz (2 skany), ceny yfinance, lista za ostatni zamknięty miesiąc.
-    Ceny USA tylko dla spółek po sicie, trzymanych (held) i kandydatów z poprzedniej listy; Finviz niedostępny -> wszystkie. Za mało cen -> ValueError."""
-    import datetime as dt
+def finviz_members(filters, get=None, pause=0.7):
+    """Skan Finviz (widok Overview, 20 wierszy na stronę) -> {ticker: nazwa} (BRK.B -> BRK-B).
+    Strona bez liczby wyników (blokada albo zmieniony układ) = ValueError, żeby pusty wynik nie udawał braku kandydatów."""
     import time
+
+    import requests
+    from .finviz import HEADERS, PAGE, URL, parse_page
+    get = get or requests.get
+    out, offset, total = {}, 1, None
+    while total is None or offset <= total:
+        r = get(URL, params={"v": "111", "f": filters, "r": offset}, headers=HEADERS, timeout=30)
+        r.raise_for_status()
+        rows, t = parse_page(r.text)
+        if t is None:
+            raise ValueError("Finviz: brak liczby wyników na stronie (blokada albo zmieniony układ)")
+        total = t
+        if not rows:
+            break
+        for x in rows:
+            out[x["ticker"].replace(".", "-")] = x.get("company") or x["ticker"]
+        offset += PAGE
+        if offset <= total:
+            time.sleep(pause)
+    return out
+
+
+def sieve_members(get=None, log=print):
+    """{"sp": {ticker: nazwa}, "nq": {...}} spółek z 6M > +30 % (Finviz). Bez zapasowego źródła: błąd Finviz = błąd odświeżenia."""
+    import time
+    out = {}
+    for k, f in zip(("sp", "nq"), SIEVE):
+        out[k] = finviz_members(f, get=get)
+        log(f"Finviz ({'S&P 500' if k == 'sp' else 'Nasdaq-100'}): {len(out[k])} spółek z 6M > +30 %")
+        if k == "sp":
+            time.sleep(0.8)
+    if len(out["sp"]) > 300 or len(out["nq"]) > 80:
+        raise ValueError("Finviz: filtr nie zadziałał (zbyt dużo spółek) — sprawdź kod filtra")
+    return out
+
+
+def fetch(gpw, old=None, today=None, log=print, progress=None, held=()):
+    """Odświeżenie: sito Finviz (skład USA z 6M > +30 %, 2 skany), ceny yfinance (USA: sito + trzymane), lista za ostatni zamknięty miesiąc.
+    Finviz niedostępny albo za mało cen -> ValueError (bez zapasowego źródła składu)."""
+    import datetime as dt
     from .prices import last_closed_month
     today = today or dt.date.today()
     upto = last_closed_month(today)
-    mem = members(old, log)
-    allu = sorted(set(mem["sp"]) | set(mem["nq"]))
-    usa, prefilter = allu, None
-    if sieve:
-        try:
-            sp = finviz_tickers(SIEVE[0])
-            time.sleep(0.8)
-            nq = finviz_tickers(SIEVE[1])
-            if len(sp) < 10:
-                raise ValueError(f"podejrzanie mało spółek ({len(sp)})")
-            usa = usa_to_fetch(mem, sp + nq, held, old)
-            prefilter = {"sp": len(sp), "nq": len(nq), "filtr": "6M > +20 %"}
-            log(f"Sito Finviz (6M > +20 %): S&P 500 {len(sp)}, Nasdaq-100 {len(nq)} -> {len(usa)} spółek USA do pobrania")
-        except Exception as e:
-            log(f"Finviz niedostępny ({e}) — pobieram wszystkie spółki S&P 500 i Nasdaq-100")
+    mem = sieve_members(log=log)
+    heldu = sorted({t.replace(".", "-") for t in held if not str(t).upper().endswith(".WA")})
+    usa = sorted(set(mem["sp"]) | set(mem["nq"]) | set(heldu))
     tickers = ["SPY", "QQQ"] + usa + [t + ".WA" for t in sorted(set(gpw["WIG20"]) | set(gpw["mWIG40"]))]
     px = download(tickers, log, progress)
     have = sum(1 for t in tickers if t in px)
     if have < 0.9 * len(tickers) or "SPY" not in px or "QQQ" not in px:
         raise ValueError(f"za mało cen: {have}/{len(tickers)}")
-    out = build(mem, gpw, px, upto, today)
-    if prefilter:
-        u = out["usa"]
-        u["prefilter"], u["all"] = prefilter, allu
-        u["missing"] = sorted(set(usa) - {r["t"] for r in u["rows"]})
+    out = build(mem, gpw, px, upto, today, held=heldu)
+    out["usa"]["prefilter"] = {"sp": len(mem["sp"]), "nq": len(mem["nq"]), "filtr": "6M > +30 %"}
     return out
 
 
@@ -325,7 +298,7 @@ def parse_tickers(text):
 
 
 def decide(row):
-    """Decyzja dla trzymanej spółki: brak w indeksach -> sprawdź; zamknięcie pod SMA 10 -> sprzedaj."""
+    """Decyzja dla trzymanej spółki: brak danych -> sprawdź; zamknięcie miesiąca pod SMA 10 -> sprzedaj."""
     if not row:
         return "sprawdź"
     return "trzymaj" if row.get("dist") is not None and row["dist"] >= 0 else "sprzedaj"

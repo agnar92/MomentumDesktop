@@ -191,24 +191,33 @@ def plan(acc, cem, deposit=0.0, targets=None, etf_ticker="CSPX.UK", slots=None, 
     hold, buckets, total = holdings(acc, cem)
     actions = []
     free = acc["cash"] + max(deposit, 0.0)
+    sold = {}   # wpływy ze sprzedaży pozycji CEM10 według koszyka
     for h in hold:
         if h["status"].startswith("SPRZEDAJ"):
             actions.append({"akcja": "SPRZEDAJ", "ticker": h["t"], "koszyk": h["bucket"], "kwota": h["value"], "uwagi": h["status"][9:].strip(" ()")})
             buckets[h["bucket"]] -= h["value"]
             free += h["value"]
+            sold[h["bucket"]] = sold.get(h["bucket"], 0.0) + h["value"]
     kept = [h for h in hold if not h["status"].startswith("SPRZEDAJ")]
     grand = total + max(deposit, 0.0)
     tsum = sum(max(v, 0.0) for v in targets.values()) or 1.0
     need = {b: max(grand * max(targets.get(b, 0.0), 0.0) / tsum - buckets.get(b, 0.0), 0.0) for b in ("usa", "gpw", "etf")}
     blocked = {"usa": bool(cem and cem["usa"]["bear"]), "gpw": bool(cem and cem["gpw"]["bear"]), "etf": False}
+    # sprzedane miejsce wraca do tego samego koszyka (kolejny kandydat z listy) — to nie jest „wpłata do rozdzielenia wg udziałów”;
+    # inaczej zwycięzcy, którzy urośli ponad udział docelowy, zostawiali koszyk bez zakupów, a całość szła w ETF
+    reserve = {b: sold.get(b, 0.0) for b in ("usa", "gpw") if not blocked[b]}
+    pool = free - sum(reserve.values())
+    need = {b: max(need[b] - reserve.get(b, 0.0), 0.0) for b in need}
     want = sum(v for b, v in need.items() if not blocked[b])
-    alloc = {b: (free * need[b] / want if want > free else need[b]) if not blocked[b] and want else 0.0 for b in need}
-    left = free - sum(alloc.values())
+    alloc = {b: (pool * need[b] / want if want > pool else need[b]) if not blocked[b] and want else 0.0 for b in need}
+    left = pool - sum(alloc.values())
     if left > 1 and want and any(not blocked[b] and targets.get(b, 0) > 0 for b in alloc):   # nadwyżka ponad niedobory: wg udziałów docelowych
         live = {b: targets.get(b, 0.0) for b in alloc if not blocked[b] and targets.get(b, 0) > 0}
         for b, w in live.items():
             alloc[b] += left * w / sum(live.values())
         left = 0.0
+    for b, v in reserve.items():
+        alloc[b] += v
     summary = {"free": free, "grand": grand, "alloc": dict(alloc), "need": need, "blocked": blocked, "cash_left": 0.0, "notes": []}
     if alloc["etf"] >= MIN_TOPUP:
         actions.append({"akcja": "KUP", "ticker": base_ticker(etf_ticker), "koszyk": "etf", "kwota": alloc["etf"], "uwagi": "ETF"})

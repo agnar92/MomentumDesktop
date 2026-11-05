@@ -162,7 +162,7 @@ def download(tickers, log=print, progress=None):
         df = yf.download(part, period="2y", interval="1mo", auto_adjust=False, group_by="ticker", progress=False, threads=True)
         for t in part:
             try:
-                f = df[t] if len(part) > 1 else df
+                f = df[t] if getattr(df.columns, "nlevels", 1) > 1 else df   # jeden ticker w paczce: nowsze yfinance też zwraca kolumny (ticker, pole)
                 f = f.dropna(subset=["Close"])
             except KeyError:
                 continue

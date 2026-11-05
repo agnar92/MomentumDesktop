@@ -101,6 +101,18 @@ def test_sold_slot_goes_to_next_candidate_even_when_etf_is_underweight():
     assert round(next(x["kwota"] for x in acts if x["ticker"] == "DDD"), 2) == 388.0
 
 
+def test_plan_sells_position_below_stop_even_above_sma():
+    import copy
+    acc = copy.deepcopy(P.load_report(_zip())[0])
+    for p in acc["positions"]:
+        if p["ticker"].startswith("AAA"):
+            p["price"] = 55.0                                  # open 100 -> -45 %: stop -40 % przekroczony, choć wiersz listy jest nad SMA 10
+            p["value"] *= 55 / 120
+    acts, _ = P.plan(acc, CEM, deposit=1000.0, targets={"usa": 50, "gpw": 50, "etf": 0}, slots={"usa": 3, "gpw": 2}, topup="all")
+    assert ("SPRZEDAJ", "AAA") in [(x["akcja"], x["ticker"]) for x in acts]
+    assert not any(x["akcja"] == "DOPŁAĆ" and x["ticker"] == "AAA" for x in acts)
+
+
 def test_topup_switch_off_has_no_dopłać():
     acc = P.load_report(_zip())[0]
     acts, s = P.plan(acc, CEM, deposit=1000.0, targets={"usa": 50, "gpw": 50, "etf": 0}, slots={"usa": 2, "gpw": 1}, topup="off")

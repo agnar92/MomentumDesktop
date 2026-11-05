@@ -162,6 +162,8 @@ def holdings(acc, cem=None):
             status = f"kandydat #{rank[(b, t)]}"
         else:
             status = "trzymaj (poza listą zakupów)"
+        if bucket(p) in ("usa", "gpw") and stop and p.get("price") and p["price"] <= stop:   # awaryjny stop sprzedaje niezależnie od SMA 10 i od listy
+            b, status = bucket(p), "SPRZEDAJ (stop −40 %)"
         rows.append({**p, "bucket": b, "t": t, "share": p["value"] / total if total else 0.0, "stop": stop,
                      "stop_dist": (p["price"] / stop - 1) if stop and p.get("price") else None, "status": status, "rank": rank.get((b, t)),
                      "sma": r.get("sma") if r else None, "dist": r.get("dist") if r else None, "ccy": currency(p.get("fx"))})

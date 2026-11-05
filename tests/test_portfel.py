@@ -93,6 +93,12 @@ def test_plan_sells_buys_new_and_tops_up_to_target():
     assert not any(x["koszyk"] == "usa" and x["akcja"] != "SPRZEDAJ" for x in acts2) and s2["notes"]
 
 
+def test_topup_switch_off_has_no_dopłać():
+    acc = P.load_report(_zip())[0]
+    acts, s = P.plan(acc, CEM, deposit=1000.0, targets={"usa": 50, "gpw": 50, "etf": 0}, slots={"usa": 2, "gpw": 1}, topup=False)
+    assert not any(x["akcja"] == "DOPŁAĆ" for x in acts) and any("wyłączone" in n for n in s["notes"])
+
+
 def test_topup_only_for_positions_in_profit():
     base = {"open_price": 100.0, "rank": 1}
     assert P._in_profit({**base, "price": 100.0}) and P._in_profit({**base, "price": 130.0})

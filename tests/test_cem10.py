@@ -79,11 +79,11 @@ def test_index_members_only_for_leader_and_fetch_order(monkeypatch):
     calls = []
     sp = {f"S{i}": "x" for i in range(500)}
     nq = {f"N{i}": "x" for i in range(100)}
-    monkeypatch.setattr(cem10, "finviz_members", lambda f, get=None, pause=0.7: calls.append(f) or (sp if f == "idx_sp500" else nq))
+    monkeypatch.setattr(cem10, "finviz_members", lambda f, get=None, pause=0.7, **k: calls.append(f) or (sp if f == "idx_sp500" else nq))
     assert cem10.index_members("SP", log=lambda *a: None) == {"sp": sp, "nq": {}} and calls == ["idx_sp500"]
     calls.clear()
     assert cem10.index_members("NDX", log=lambda *a: None) == {"sp": {}, "nq": nq} and calls == ["idx_ndx"]
-    monkeypatch.setattr(cem10, "finviz_members", lambda f, get=None, pause=0.7: {"A": "a"})
+    monkeypatch.setattr(cem10, "finviz_members", lambda f, get=None, pause=0.7, **k: {"A": "a"})
     try:
         cem10.index_members("SP", log=lambda *a: None)
         assert False
@@ -91,7 +91,7 @@ def test_index_members_only_for_leader_and_fetch_order(monkeypatch):
         pass
     # fetch: najpierw SPY + QQQ, potem skład jednego indeksu, potem reszta
     n, order = 24, []
-    monkeypatch.setattr(cem10, "finviz_members", lambda f, get=None, pause=0.7: calls.append(f) or {f"N{i}": "x" for i in range(100)})
+    monkeypatch.setattr(cem10, "finviz_members", lambda f, get=None, pause=0.7, **k: calls.append(f) or {f"N{i}": "x" for i in range(100)})
 
     def fake_download(tickers, log=print, progress=None):
         order.append(list(tickers))

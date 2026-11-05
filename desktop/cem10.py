@@ -232,7 +232,7 @@ def build(mem, gpw, px, upto, today, held=()):
 INDEX_FILTERS = ("idx_sp500", "idx_ndx")
 
 
-def finviz_members(filters, get=None, pause=0.7):
+def finviz_members(filters, get=None, pause=0.7, log=None, progress=None):
     """Skan Finviz (widok Overview, 20 wierszy na stronę) -> {ticker: nazwa} (BRK.B -> BRK-B).
     Strona bez liczby wyników (blokada albo zmieniony układ) = ValueError, żeby pusty wynik nie udawał braku kandydatów."""
     import time
@@ -253,17 +253,21 @@ def finviz_members(filters, get=None, pause=0.7):
         for x in rows:
             out[x["ticker"].replace(".", "-")] = x.get("company") or x["ticker"]
         offset += PAGE
+        if log:
+            log(f"Finviz: pobrano {len(out)} z {total} spółek…")
+        if progress:
+            progress(min(1.0, len(out) / max(total, 1)))
         if offset <= total:
             time.sleep(pause)
     return out
 
 
-def index_members(lead, get=None, log=print):
+def index_members(lead, get=None, log=print, progress=None):
     """Skład indeksu lidera z Finviz: {"sp": {ticker: nazwa}, "nq": {...}} (drugi indeks zostaje pusty — kandydaci pochodzą tylko z indeksu lidera).
     Bez zapasowego źródła: błąd Finviz albo podejrzana liczba spółek = błąd odświeżenia."""
     k, name, lo, hi = ("nq", "Nasdaq-100", 80, 120) if lead == "NDX" else ("sp", "S&P 500", 400, 600)
     out = {"sp": {}, "nq": {}}
-    out[k] = finviz_members(INDEX_FILTERS[1 if k == "nq" else 0], get=get)
+    out[k] = finviz_members(INDEX_FILTERS[1 if k == "nq" else 0], get=get, log=log, progress=progress)
     log(f"Finviz ({name}, lider {lead}): {len(out[k])} spółek w indeksie")
     if not lo <= len(out[k]) <= hi:
         raise ValueError(f"Finviz: {len(out[k])} spółek w {name} (oczekiwano {lo}–{hi}) — zmieniony układ strony albo blokada")
@@ -277,16 +281,22 @@ def fetch(gpw, old=None, today=None, log=print, progress=None, held=()):
     from .prices import last_closed_month
     today = today or dt.date.today()
     upto = last_closed_month(today)
+    def stage(a, b):   # pasek postępu: etap zajmuje przedział [a, b] całości
+        return (lambda f: progress(a + (b - a) * f)) if progress else None
+    log("Sprawdzam lidera (SPY / QQQ)…")
     px = download(["SPY", "QQQ"], log)
+    if progress:
+        progress(0.05)
     m0 = monthly(px, upto)
     if "SPY" not in m0 or "QQQ" not in m0:
         raise ValueError(f"brak cen SPY / QQQ za {upto}")
-    lead = leader(m0)[0]
-    mem = index_members(lead, log=log)
+    lead, s5, q5 = leader(m0)
+    log(f"Lider: {'Nasdaq-100 (QQQ)' if lead == 'NDX' else 'S&P 500 (SPY)'} — zwrot 5M SPY {s5:+.1%}, QQQ {q5:+.1%}. Pobieram skład indeksu z Finviz…")
+    mem = index_members(lead, log=log, progress=stage(0.05, 0.2))
     heldu = sorted({t.replace(".", "-") for t in held if not str(t).upper().endswith(".WA")})
     usa = sorted((set(mem["sp"]) | set(mem["nq"]) | set(heldu)) - {"SPY", "QQQ"})
     tickers = usa + [t + ".WA" for t in sorted(set(gpw["WIG20"]) | set(gpw["mWIG40"]))]
-    px.update(download(tickers, log, progress))
+    px.update(download(tickers, log, stage(0.2, 1.0)))
     have = sum(1 for t in tickers if t in px)
     if have < 0.9 * len(tickers):
         raise ValueError(f"za mało cen: {have}/{len(tickers)}")

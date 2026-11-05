@@ -556,7 +556,7 @@ function viewSettings() {
       <p class="note"><b>USA:</b> lider SPY albo QQQ z wyższym zwrotem 5 mies.; kandydaci z indeksu lidera: 6 mies. &gt; +30 %, zamknięcie nad SMA 10, ranking po 6 mies., 10 pozycji; brak zakupów, gdy SPY zamyka miesiąc pod SMA 12.<br>
       <b>GPW:</b> WIG20 + mWIG40 razem, C-8 (3 mies. &gt; 0, 12 mies. &gt; +30 %, nad SMA 10), ranking po 6 mies., 5 pozycji; brak zakupów, gdy koszyk składników jest pod SMA 12.<br>
       <b>Wyjście:</b> zamknięcie miesiąca pod SMA 10, stop awaryjny −40 % od ceny zakupu.<br>
-      <b>Wpłaty:</b> najpierw nowe spółki na wolne miejsca (waga = koszyk / liczba miejsc), potem dopełnienie trzymanych kandydatów do wagi, min. ${zl(S.rules.min_topup)}.</p></section>
+      <b>Wpłaty:</b> najpierw nowe spółki na wolne miejsca (waga = koszyk / liczba miejsc), potem dopełnienie do wagi trzymanych kandydatów, które są na plusie względem ceny zakupu (do spadających nie dokładam), min. ${zl(S.rules.min_topup)}.</p></section>
   </div>`;
 }
 const TICKER = /^[A-Z0-9]{2,5}$/;   // tickery GPW: bez nazw, wiersze / spacje / przecinki, końcówka .WA ucinana

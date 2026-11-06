@@ -1,0 +1,77 @@
+name: Build Momentum Desktop
+
+# Momentum Desktop (skaner, wykresy, Zanger, linie) jako jeden plik MomentumDesktop.exe (Windows, bez instalacji). Budowany OSOBNO od CEM10:
+# uruchamia się tylko po zmianach plików tej aplikacji. Dane (Finviz + yfinance) program pobiera sam przyciskiem "Sync" do folderu data/ obok pliku.
+# Gotowy plik: Releases -> "momentum-latest" albo Actions -> uruchomienie -> Artifacts; tag m* tworzy osobne wydanie.
+on:
+  push:
+    branches: [main]
+    tags: ["m*"]
+    paths:
+      - "main.py"
+      - "desktop/app.py"
+      - "desktop/calc.py"
+      - "desktop/chart.py"
+      - "desktop/estimates.py"
+      - "desktop/finviz.py"
+      - "desktop/gist.py"
+      - "desktop/lines.py"
+      - "desktop/prices.py"
+      - "desktop/sec.py"
+      - "desktop/store.py"
+      - "desktop/sync.py"
+      - "desktop/theme.py"
+      - "requirements.txt"
+      - ".github/workflows/build-momentum.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-momentum
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt -r requirements-dev.txt
+      - name: PyInstaller (jeden plik)
+        shell: bash
+        run: |
+          pyinstaller --noconfirm --onefile --windowed --name MomentumDesktop \
+            --collect-submodules yfinance --collect-data yfinance \
+            --collect-data certifi --copy-metadata yfinance \
+            main.py
+      - name: Selftest zbudowanego pliku
+        run: dist/MomentumDesktop.exe --selftest
+      - name: Pakiet (plik + folder data/)
+        shell: bash
+        run: |
+          mkdir -p MomentumDesktop/data && touch MomentumDesktop/data/.gitkeep
+          cp dist/MomentumDesktop.exe README.md MomentumDesktop/
+          7z a -tzip MomentumDesktop-Windows.zip MomentumDesktop > /dev/null
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MomentumDesktop-Windows
+          path: MomentumDesktop-Windows.zip
+      - name: Publikacja wydania
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/m* ]]; then
+            TAG="${GITHUB_REF#refs/tags/}"
+            gh release create "$TAG" MomentumDesktop-Windows.zip --title "Momentum Desktop $TAG" --generate-notes
+          else
+            gh release delete momentum-latest --cleanup-tag --yes || true
+            gh release create momentum-latest MomentumDesktop-Windows.zip --target "$GITHUB_SHA" --title "Momentum Desktop (najnowszy build)" \
+              --notes "Automatyczny build z gałęzi main (${GITHUB_SHA::7}). Rozpakuj zip i uruchom MomentumDesktop.exe. Dane: folder data/ obok programu, przy pierwszym uruchomieniu kliknij Sync."
+          fi

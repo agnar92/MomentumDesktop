@@ -1,9 +1,15 @@
-"""Parser strony screenera Finviz (widok Overview) — CEM10 bierze z niego tylko skład indeksu (ticker i nazwa spółki).
-UWAGA: Finviz po cichu ignoruje nieznany kod filtra (lista robi się szersza zamiast błędu) — dlatego desktop/cem10.py sprawdza liczbę spółek."""
+"""Lista spółek z darmowego screenera Finviz (widok Overview: ticker, spółka, sektor, branża, kapitalizacja).
+Finviz robi tylko wstępne cięcie listy do pobrania; dokładne warunki liczy aplikacja. UWAGA: Finviz po cichu ignoruje nieznany kod
+filtra (lista robi się szersza zamiast błędu) — po zmianie filtra sprawdź liczbę spółek."""
 import re
+import time
 
+import requests
 from lxml import html as lxml_html
 
+# Bezpieczny filtr z backtestu: nie odcina żadnego z dużych zwycięzców (tylko akcje, cena > 10 $, śr. wolumen > 300 tys., przychody kw. > 15 % r/r)
+DEFAULT_FILTERS = "ind_stocksonly,sh_price_o10,sh_avgvol_o300,fa_salesqoq_o15"
+MAX_TICKERS = 1500
 PAGE = 20
 URL = "https://finviz.com/screener/stocks"
 HEADERS = {"User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"}
@@ -111,3 +117,74 @@ def parse_page(page):
                     row[key] = parse_number(txt)
         rows.append(row)
     return rows, total
+
+
+def fetch(filters, max_tickers=MAX_TICKERS, pause=0.7, log=print, get=None, progress=None):
+    """Wszystkie strony screenera (po 20 wierszy). -> (wiersze, łączna liczba wg Finviz). progress(wiersze, oczekiwane) po każdej stronie."""
+    get = get or requests.Session().get
+    out, seen, offset, total = [], set(), 1, None
+    failed_views = set()
+    while len(out) < max_tickers:
+        r = get(URL, params={"v": "111", "f": filters, "r": offset}, headers=HEADERS, timeout=30)
+        r.raise_for_status()
+        rows, t = parse_page(r.text)
+        total = t if t is not None else total
+        new = [x for x in rows if x["ticker"] not in seen]
+        if not new:
+            break
+
+        # PEG/Forward P/E z Valuation (v=121), ROE/Dividend z Financial (v=161),
+        # a ownership/float z Ownership (v=131). Zawsze dopasowujemy po tickerze.
+        page_metrics = {}
+        page_tickers = [x["ticker"] for x in new]
+        for view in ("121", "161", "131"):
+            if view in failed_views:
+                continue
+            view_rows_by_ticker = {}
+            try:
+                vr = get(URL, params={"v": view, "t": ",".join(page_tickers)}, headers=HEADERS, timeout=30)
+                vr.raise_for_status()
+                view_rows, _ = parse_page(vr.text)
+                view_rows_by_ticker = {item["ticker"]: item for item in view_rows}
+
+                # Fallback dla Finviz, który może zignorować listę tickerów lub zwrócić tylko część.
+                missing = [ticker for ticker in page_tickers if ticker not in view_rows_by_ticker]
+                if missing:
+                    fr = get(URL, params={"v": view, "f": filters, "r": offset}, headers=HEADERS, timeout=30)
+                    fr.raise_for_status()
+                    fallback_rows, _ = parse_page(fr.text)
+                    fallback_by_ticker = {item["ticker"]: item for item in fallback_rows}
+                    for ticker in missing:
+                        if ticker in fallback_by_ticker:
+                            view_rows_by_ticker[ticker] = fallback_by_ticker[ticker]
+
+                matched = sum(ticker in view_rows_by_ticker for ticker in page_tickers)
+                if matched == 0:
+                    log(f"⚠ Finviz widok {view}: nie udało się dopasować danych dla {len(page_tickers)} tickerów; metryki tego widoku pozostaną puste.")
+                page_metrics[view] = view_rows_by_ticker
+            except Exception as exc:  # brak wskaźników nie może przerwać całego skanu
+                failed_views.add(view)
+                log(f"Finviz widok {view} niedostępny — odpowiednie kolumny pozostaną puste ({exc})")
+                page_metrics[view] = {}
+        for x in new:
+            for view, keys in (
+                ("121", ("forward_pe", "peg")),
+                ("161", ("dividend_yield", "roe")),
+                ("131", ("shares_outstanding", "shares_float", "institutional_ownership",
+                         "institutional_transactions", "short_float", "short_ratio")),
+            ):
+                metrics = page_metrics.get(view, {}).get(x["ticker"], {})
+                for key in keys:
+                    if key in metrics:
+                        x[key] = metrics[key]
+            seen.add(x["ticker"])
+            out.append(x)
+        if progress:
+            progress(len(out), min(total or len(out), max_tickers))
+        if offset == 1 and total:
+            log(f"Finviz: {total} spółek z filtrem")
+        offset += PAGE
+        if total is not None and offset > total:
+            break
+        time.sleep(pause)
+    return out[:max_tickers], total

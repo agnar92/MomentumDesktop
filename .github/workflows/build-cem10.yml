@@ -1,12 +1,22 @@
 name: Build CEM10
 
 # CEM10 jako jeden plik CEM10.exe (Windows, bez instalacji). Dane (Finviz + yfinance) program pobiera sam przyciskiem "Pobierz listę" do folderu data/ obok pliku.
-# Gotowy plik: Releases -> "latest" (odnawiane po każdym udanym buildzie z main) albo Actions -> uruchomienie -> Artifacts; tag v* tworzy osobne wydanie.
+# Gotowy plik: Releases -> "cem10-latest" (odnawiane po każdym udanym buildzie z main) albo Actions -> uruchomienie -> Artifacts; tag v* tworzy osobne wydanie.
 on:
   push:
     branches: [main]
     tags: ["v*"]
-    paths-ignore: ["**.md", "tests/**", ".github/workflows/tests.yml"]
+    paths:
+      - "cem10_main.py"
+      - "desktop/cem10.py"
+      - "desktop/cem10_web.py"
+      - "desktop/cem10_web/**"
+      - "desktop/portfel.py"
+      - "desktop/store.py"
+      - "desktop/prices.py"
+      - "desktop/finviz.py"
+      - "requirements.txt"
+      - ".github/workflows/build-cem10.yml"
   workflow_dispatch:
 
 permissions:
@@ -57,7 +67,7 @@ jobs:
             TAG="${GITHUB_REF#refs/tags/}"
             gh release create "$TAG" CEM10-Windows.zip --title "CEM10 $TAG" --generate-notes
           else
-            gh release delete latest --cleanup-tag --yes || true
-            gh release create latest CEM10-Windows.zip --target "$GITHUB_SHA" --title "CEM10 (najnowszy build)" \
+            gh release delete cem10-latest --cleanup-tag --yes || true
+            gh release create cem10-latest CEM10-Windows.zip --target "$GITHUB_SHA" --title "CEM10 (najnowszy build)" \
               --notes "Automatyczny build z gałęzi main (${GITHUB_SHA::7}). Rozpakuj zip i uruchom CEM10.exe: portfel z raportu XTB, plan wpłaty, krzywa kapitału, lista miesięczna USA / GPW. Dane: folder data/ obok programu; przy pierwszym uruchomieniu kliknij ⟳ Pobierz listę."
           fi
